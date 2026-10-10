@@ -37,10 +37,6 @@ description=[h1]New! Puddle ripples[/h1]
 description=[img]https://da.gd/apbnR5[/img]
 description=[img]https://da.gd/9D5VC[/img]
 description=
-description=[h1]New! Glass, screens and steel reflect[/h1]
-description=[img]https://da.gd/eFzWak[/img]
-description=[img]https://da.gd/Uqus[/img]
-description=
 description=[h1]Features[/h1]
 description=[img]https://da.gd/xUnGwB[/img]
 description=[i]Desktop (Ryzen 7 9800X3D, GeForce RTX 4090, Crucial T705 2 TB NVMe SSD, 5120x2160, Linux). Launch to the world on screen, Continue pressed as soon as the menu answers, caches warm. Stock: the game as it ships. Enhanced: every optimization at its default. The clocks are the means of two runs per side without capture.[/i] [url=https://pzo.diegov.dev/d/pzopt-compare/compare?var-runs=boot-stock-20261006-205652&var-runs=boot-opt-20261006-205745&var-base=boot-stock-20261006-205652]The two runs on the dashboard[/url]
