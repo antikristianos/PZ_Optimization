@@ -6488,7 +6488,7 @@ change them.
 ### Reflective props (2026-10-08, `mirrorsProps`, docs/findings-prop-reflections-2026-10-08.md): FBORenderCell
 
 - `FBORenderCell.pzoptPerFrameTranslucentTile` already draws `Mirrors.perFrame` sprites per frame; that test now also takes
-  the reflective props (`Props.perFrame`: 434 sprites with glass, a screen, steel or ceramic), so they leave the chunk
+  the reflective props (`Props.perFrame`: 438 sprites with glass, a screen, steel or ceramic), so they leave the chunk
   textures while mirrors are on and their quads are captured as they draw.
 - `FBORenderCell.renderTranslucent` (the capture wrapper): an opaque reflective prop (a screen, steel, ceramic, opaque glass:
   `Props.writesDepth`) is drawn with depth writes on, as its baked self wrote depth in the chunk texture; the translucent

@@ -170,6 +170,8 @@ def weight_of(cls, props, img, face, off):
         if trans.sum() > 0.03 * max(1, (al > 0.1).sum()):
             mode = "alpha"
             m = has & (al > 0.1) & (lum > 0.3)  # (a sprite's soft drop shadow is translucent too, but dark)
+        elif props.get("DoorSound") == "SlidingGlassDoor":
+            return None, mode  # an open sliding leaf is its bare frame (the glass slid behind the fixed pane): the white frame is no glass
         else:
             m = has & opaque & (lum > 0.45) & (sat < 0.3) & (rgb[..., 2] >= rgb[..., 0] - 0.02) & (face >= 2)  # (opaque glass is a door / front: a light grey top is the cabinet)
             m = erode(dilate(m))

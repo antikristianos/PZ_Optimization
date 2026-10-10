@@ -1182,7 +1182,9 @@ public final class Mirrors {
       boolean anyRoom = (skipNow & 4194304) != 0;
       for (int i = 0; i < f.nP; i++) {
          int o = i * 10;
-         if ((int)f.planes[o] == r.axis && Math.abs(f.planes[o + 1] - cRel) < 0.05F && zlo < f.planes[o + 5] + 0.5F && zhi > f.planes[o + 4] - 0.5F && (anyRoom || f.planeRoom[i] == room)) {
+         // (within 0.1 of a square: a sliding door's leaf runs 0.06 in front of its fixed pane on its own track; as two
+         // planes each placed its own copy of the people, a doubled image over the leaf)
+         if ((int)f.planes[o] == r.axis && Math.abs(f.planes[o + 1] - cRel) < 0.1F && zlo < f.planes[o + 5] + 0.5F && zhi > f.planes[o + 4] - 0.5F && (anyRoom || f.planeRoom[i] == room)) {
             f.planes[o + 2] = Math.min(f.planes[o + 2], lo);
             f.planes[o + 3] = Math.max(f.planes[o + 3], hi);
             f.planes[o + 4] = Math.min(f.planes[o + 4], zlo);
@@ -1472,8 +1474,9 @@ public final class Mirrors {
             Integer last = DEV_PANE.put(r.key, state);
             if ((last == null || last != state) && devPaneLogs < 400) {
                devPaneLogs++;
-               Log.info(String.format(java.util.Locale.ROOT, "mirrors: dev pane %s %s: seen %b, light %.2f, reflection shown %.2f epoch_ms=%d", r.mirror ? "mirror" : "window",
-                     r.key instanceof IsoObject ko && ko.square != null ? ko.square.x + "," + ko.square.y + "," + ko.square.z : "?", r.seen, r.light, paneLight(r), System.currentTimeMillis()));
+               Log.info(String.format(java.util.Locale.ROOT, "mirrors: dev pane %s %s %s: seen %b, light %.2f, reflection shown %.2f epoch_ms=%d", r.mirror ? "mirror" : r.prop != 0 ? "prop" : "window",
+                     r.key instanceof IsoObject ko && ko.square != null ? ko.square.x + "," + ko.square.y + "," + ko.square.z : "?",
+                     r.key instanceof IsoObject ko && ko.getSprite() != null ? ko.getSprite().getName() : "?", r.seen, r.light, paneLight(r), System.currentTimeMillis()));
             }
          }
          if (Config.DEV_MIRRORS_LOG) {
@@ -2727,7 +2730,24 @@ public final class Mirrors {
             for (int j = 0; j < n; j++) {
                bits |= 1 << KS[j];
             }
-            int ref = KS[0];
+            // the reference: the plane most of the sharing models show in. KS[0], the frame's first plane of the axis, could
+            // be one nobody stands before (an N window five squares south of the sunroom's wall): the models mirrored that far
+            // fell out of the scratch draw and every copy was empty, so a person in two planes of one wall (a sliding door's
+            // leaf beside its fixed pane) showed in neither (2026-10-10)
+            int ref = KS[0], refModels = -1;
+            for (int j = 0; j < n; j++) {
+               int cnt = 0;
+               for (int i = 0; i < np; i++) {
+                  Pending p = PENDING.get(i);
+                  if ((p.planes & (1 << KS[j])) != 0 && Integer.bitCount(p.planes & bits) >= 2) {
+                     cnt++;
+                  }
+               }
+               if (cnt > refModels) {
+                  refModels = cnt;
+                  ref = KS[j];
+               }
+            }
             float cRef = axis == 2 ? f.planes[ref * 10 + 1] : f.planes[ref * 10 + 1] + (axis == 0 ? f.view.oy : f.view.ox);
             // the models that show in two or more of these planes, each one's reflection box in the reference plane
             float bx0 = Float.MAX_VALUE, by0 = Float.MAX_VALUE, bx1 = -Float.MAX_VALUE, by1 = -Float.MAX_VALUE;

@@ -24,7 +24,7 @@ the Mac never started a game this session (the released build neither: an enviro
 
 | Class | Sprites | Examples |
 |---|---|---|
-| glass, translucent texels | 286 | glass doors (`fixtures_doors_01/02`, the restaurant / shop brand doors, garage doors), store-front panes that are not windows (`walls_commercial_*`, Spiffo's), mall and escalator railings, shower screens, display counters and cases (shop, pie, pizza, Seahorse, theatre, cantina), the glass table, the china cabinet, the pinball glass |
+| glass, translucent texels | 290 | glass doors (`fixtures_doors_01/02`, the sliding glass doors' closed leaves, the restaurant / shop brand doors, garage doors), store-front panes that are not windows (`walls_commercial_*`, Spiffo's), mall and escalator railings, shower screens, display counters and cases (shop, pie, pizza, Seahorse, theatre, cantina), the glass table, the china cabinet, the pinball glass |
 | glass, opaque | 17 | glass-door fridges, the vending machines' fronts |
 | screen | 22 | televisions, the security monitors, the computers, arcade cabinets, the jukebox |
 | mirror | 6 | the gym's wall mirrors (`recreational_sports_01_74-79`: no `IsMirror` property, so the mirrors pass skipped them) |
@@ -139,24 +139,38 @@ A top z = c is a plane of the model pass too (the camera's reflection in the mod
 - dev views 7 / 8 (the raw layers over the reflector quads) must write `gl_FragDepth` on their early return in the props'
   program, or nothing draws (the first probes looked empty for that reason).
 
-## Open: sliding glass door leaves do not reflect (2026-10-09, maintainer: "I'll tackle it later")
+## Sliding glass door leaves (2026-10-09 open, fixed 2026-10-10)
 
-Found making the Workshop card (`harness/props-reflect-card.py`, runs `gpc2-stock-cap` / `gpc2-enh-cap`, the Rosewood back
-yard with two sliding doors at 7951,11503-04 and 11507-08): only half of each sliding glass door reflects. A sliding door is
-two tiles:
+Found making the Workshop card (`harness/props-reflect-card.py`, the Rosewood back yard, 7951,11503-04 and 11507-08): only half
+of each sliding glass door reflected. A sliding door is two tiles:
 
-| Part | Sprites | Tile data | Reflects |
-|---|---|---|---|
-| fixed pane | `fixtures_doors_01_104-107` (brown frame), `112-115` (white) | `WindowW` / `windowW`, `MaterialType=Glass`, `GlassRemovedOffset` | yes, as a window (the mirrors' window path) |
-| sliding leaf | `fixtures_doors_01_108-111` (brown), `116-119` (white) | `Material=Door`, `doorW` / `doorN`, `doorTrans`, no glass word anywhere; only `DoorSound=SlidingGlassDoor` tells it | no |
+| Part | Sprites | Tile data |
+|---|---|---|
+| fixed pane | `fixtures_doors_01_104-107` (brown frame), `112-115` (white) | `WindowW` / `WindowN`, `MaterialType=Glass`: a window, the mirrors' window path |
+| sliding leaf | `fixtures_doors_01_108-111` (brown), `116-119` (white) | `Material=Door`, `doorTrans`, no glass word; only `DoorSound=SlidingGlassDoor`, and that lives in `tiledefinitions_noiseworks.patch.tiles` |
 
-`harness/props/catalog.py` skips the leaves: `classify()` drops window tiles and tests only the material / group / name
-fields for "glass". Fix to try: class `glass` for `DoorSound=SlidingGlassDoor` tiles without a window key (or name the 8
-sprites), rerun `masks.py` (the open-state sprites 110/111, 118/119 are mostly frame: check their masks), rebuild, and check
-the leaf as an IsoDoor in both states (open / closed, the open one drawn as `doorTrans`); then a release. Other glass doors
-whose tile data has no glass word may be missing the same way: list the doors (`DoorSound`, `doorTrans`) the catalog leaves
-out. Repro: the card's walk (`walk=7951.0,11502.3;7951.0,11508.3`, `start=7952,11503`, zoom 0.5, noon), compare the two
-halves of the door at 7951,11507-08 (the player's image shows in the lower-left pane only).
+Three causes, one after the other:
+1. `catalog.py` read each `.tiles` file on its own, so the patch file's `DoorSound` never met the leaf's other properties. It
+   now merges every file per sprite and takes `DoorSound=SlidingGlassDoor` (without a window key) as glass; `masks.py` leaves
+   out the open leaves (110/111, 118/119: the bare frame, the glass slid behind the fixed pane; the white frame passed the
+   opaque-glass test). 434 -> 438 props, every old atlas cell byte-identical.
+2. With the leaf captured, the scene reflected in it (dev view 2: the leaf masked, static hits) but the player's image did not.
+   The leaf's glass stands 0.06 in front of the wall line (its own track), so it made a plane of its own beside the windows'
+   plane (`addPlane` merged within 0.05). A person before both was in two planes of one orientation, which sends them through
+   `Share.draw` (`mirrorsModelShare`): drawn once mirrored in a reference plane, copied into each plane. The reference was
+   `KS[0]`, the frame's first plane of that orientation, whoever stood before it: in the sunroom an N window five squares south.
+   Every copy came out empty (dev view 9: neither green nor red on the N wall; `mirrorsModelShare=false`: the image back).
+   The reference is now the plane most of the sharing models show in.
+3. Two planes on one wall line also gave two copies of the person, 0.14 squares apart, over the leaf: planes now merge within
+   0.1 of a square, so the leaf joins its wall's plane.
+
+Run `slide-leaf-fix1` (desktop, sunroom 7938-7945,11452: white leaf 7940,11452 between fixed panes; walk
+`7938.6,11452.4;7940.4,11452.4`, zoom 0.5, noon, view 9 every other second): one image of the player over the leaf and the N
+panes. Cause 2 was not measured on its own (with cause 3 fixed the sunroom has one N plane; two isolation walks smashed the leaf).
+Pitfalls of the rig: the Rosewood house burns down during runs (the leaf broke, the doors changed state between runs), and the
+movement-key walk opens or smashes a door it brushes, so keep the walk 0.4+ off the glass and away from its ends. Closed leaves
+anywhere on the map: `harness/props/findtile.py "<game>/media/maps/Muldraugh, KY" X Y <sprite>...` (the lotheader / lotpack reader, 394 squares; nearest the bench save
+7940,11452 and 7938,11463).
 
 ## Rigs
 

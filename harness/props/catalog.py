@@ -6,7 +6,8 @@ Classes (one per sprite, first rule that matches):
   mirror   the gym's wall mirrors (recreational_sports_01_74-79: no IsMirror property)
   screen   televisions, monitors, computers, arcade / pinball / jukebox fronts (dark glass)
   glass    a glass material or group (doors, store-front panes, railings, shower screens, display cases, glass-door fridges,
-           the glass table, chandeliers): its translucent texels, else its light grey-blue texels
+           the glass table, chandeliers), or a sliding glass door's leaf (only its DoorSound, from the .patch.tiles file,
+           says glass): its translucent texels, else its light grey-blue texels
   steel    steel / chrome / industrial counters, sinks, fridges, ovens, microwaves, toasters, ladders, 50s diner tables
   ceramic  toilets, white / beige sinks, bathtubs
 
@@ -43,6 +44,8 @@ def classify(name, p):
         return "screen"
     if any(glassy(p.get(k)) for k in ("MaterialType", "Material", "Material2", "Material3", "GroupName", "CustomName")):
         return "glass"
+    if p.get("DoorSound") == "SlidingGlassDoor":  # the leaf: Material=Door, doorTrans, no glass word (its fixed pane is a window)
+        return "glass"
     mats = [p.get(k, "") for k in ("MaterialType", "Material", "Material2", "Material3")]
     if STEEL.search(label) or "Steel" in mats:
         return "steel"
@@ -52,14 +55,15 @@ def classify(name, p):
 
 
 def catalog():
-    out = {}
+    props = {}  # a sprite's properties over every .tiles file (tiledefinitions_noiseworks.patch.tiles adds e.g. DoorSound)
     for f in sorted(glob.glob(os.path.join(GAME, "media", "*.tiles"))):
         for n, p in tiles.read(f):
-            if n in out:
-                continue
-            c = classify(n, p)
-            if c:
-                out[n] = (c, p)
+            props.setdefault(n, {}).update(p)
+    out = {}
+    for n, p in props.items():
+        c = classify(n, p)
+        if c:
+            out[n] = (c, p)
     return out
 
 
