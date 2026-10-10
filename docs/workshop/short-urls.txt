@@ -77,5 +77,7 @@ https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/imag
 https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/80-reflective-props.gif https://da.gd/UDPdzr
 https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/81-new-glass-reflections.avif https://da.gd/eFzWak
 https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/82-new-glass-reflections-changes.png https://da.gd/Uqus
+https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/83-new-puddle-ripples.avif https://da.gd/apbnR5
+https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/84-new-puddle-ripples-changes.png https://da.gd/9D5VC
 https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/link-discord-small.png https://da.gd/1vw0V
 https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/link-github-small.png https://da.gd/evzPKc
