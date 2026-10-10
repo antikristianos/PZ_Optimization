@@ -30,6 +30,10 @@ Linux, macOS: [code]curl -fsSL https://github.com/xD3I/PZ_Optimization/releases/
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/73-install-manual.avif[/img]
 Steam: right-click the game, Manage > Browse local files. Go up to [b]steamapps[/b], then workshop\content\108600\3805285544\mods\PZ_Optimization\42\pzopt-classes. Copy everything in it into the game folder (where projectzomboid.jar is), skipping files that already exist.
 
+[h1]New! Puddle ripples[/h1]
+[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/83-new-puddle-ripples.avif[/img]
+[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/84-new-puddle-ripples-changes.png[/img]
+
 [h1]New! Glass, screens and steel reflect[/h1]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/81-new-glass-reflections.avif[/img]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/82-new-glass-reflections-changes.png[/img]
