@@ -103,9 +103,9 @@ PzoptSettingsLayout = {
                 { title = "Ambient occlusion", sections = { "Ambient occlusion" } },
                 { title = "God rays", sections = { "God rays" } },
               } },
-            { id = "refl", title = "Reflections and glass", blurb = "Water and puddles, mirrors and windows, car glass, wet blood.",
+            { id = "refl", title = "Reflections and glass", blurb = "Water and puddles (reflections, ripples), mirrors and windows, car glass, wet blood.",
               subs = {
-                { title = "Water and puddles", sections = { "Reflections" } },
+                { title = "Water and puddles", sections = { "Reflections", "Puddle ripples" } },
                 { title = "Mirrors and windows", sections = { "Mirrors and windows" } },
                 { title = "Car glass", sections = { "Car glass" } },
                 { title = "Wet blood", sections = { "Wet blood" } },
@@ -147,7 +147,7 @@ PzoptSettingsLayout = {
         "gpuPstate", "audioLimiter", "modProfile", "updateCheck",
         "upscaler", "upscalerQuality", "dynRes", "dynResFps", "spriteFilter", "hdrAuto", "hdr", "pixelLight", "torchSource",
         "sunShadows", "sunShadowStrengthPct", "entityShadows", "moonShadows", "cloudShadows", "ambientOcclusion", "godRays", "godRaysStrengthPct",
-        "reflections", "reflectionPuddles", "mirrors", "mirrorsWindows", "mirrorsWallMirrors", "mirrorsProps", "carGlass", "carOccupant", "bloodWet", "darknessFloorPct",
+        "reflections", "reflectionPuddles", "ripples", "ripplesStrengthPct", "mirrors", "mirrorsWindows", "mirrorsWallMirrors", "mirrorsProps", "carGlass", "carOccupant", "bloodWet", "darknessFloorPct",
         "memoryTint", "colorGrading", "foliageSway", "foliageSwayPct", "relief", "occludedZombieOutlines",
         "overlaySampling", "overlay", "overlayStats", "overlayGraph", "overlayCorner", "overlayFont", "overlayFpsColor", "consoleLog" },
 

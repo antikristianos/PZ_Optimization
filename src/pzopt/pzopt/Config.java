@@ -1437,6 +1437,18 @@ public final class Config {
    public static volatile int OCCLUDED_OUTLINE_WIDTH; // occluded outlines: contour width in render pixels, 1..4 (live)
    public static volatile int OCCLUDED_OUTLINE_OPACITY; // occluded outlines: opacity in daylight, % (live)
    public static volatile String OCCLUDED_OUTLINE_COLOUR; // occluded outlines: RGB hex (live)
+   public static volatile boolean RIPPLES; // puddle ripples (pzopt.Ripples): footsteps and wheels ring the puddles they cross (the shader patch only when on at launch; off is live)
+   public static volatile String RIPPLES_MODE; // puddle ripples: how the rings are found and evaluated: alu (default) | tiled | loop | field | sim | world (live; docs/findings-puddle-ripples-2026-10-10.md)
+   public static volatile int RIPPLES_STRENGTH_PCT; // puddle ripples: how far the rings tilt the puddle's surface (live)
+   public static volatile boolean RIPPLES_VEHICLES;
+   public static volatile int RIPPLES_PER_SEC; // puddle ripples: footstep rings a second at most (a horde: each step passes with budget / rate; your own always) (live) // puddle ripples: the wheels of moving vehicles ring the puddles too (live)
+   public static final int DEV_RIPPLES_ALTERNATE = integer("devRipplesAlternate", 0); // dev: ms per phase, cycling off and each devRipplesModes mode (GPU section puddles.off / puddles.<mode>)
+   public static final String DEV_RIPPLES_MODES = string("devRipplesModes", ""); // dev: the modes devRipplesAlternate cycles, "loop|tiled" (empty: ripplesMode)
+   public static final boolean DEV_RIPPLES_VIEW = bool("devRipplesView", false); // dev: the puddles paint the ring slope (red / green right / down, blue up), every puddle square
+   public static final boolean DEV_RIPPLES_WORLD_STAGE = bool("devRipplesWorldStage", false); // dev: world mode lists a young ring with its 0.6 s reach, widened later (measured dearer)
+   public static final boolean DEV_RIPPLES_HOOK_TIMING = bool("devRipplesHookTiming", false); // dev: time the zombie hook (System.nanoTime a call: dearer than the hook itself)
+   public static final boolean DEV_RIPPLES_BIN_INLINE = bool("devRipplesBinInline", false); // dev: tiled / field bin on the game thread (the A/B of the binning worker)
+   public static final int DEV_RIPPLES_STRESS = integer("devRipplesStress", 0); // dev: N walkers round the player ringing every square they step on (a fixed load to measure)
    public static volatile boolean BLOOD_WET; // wet blood (pzopt.BloodWet): fresh floor splats reflect the scene (with reflections on) and catch the sun and the lamps (a GGX sheen; with HDR output, glints above white) until they dry (live)
    public static volatile int BLOOD_WET_MINUTES; // wet blood: game minutes a splat stays wet (drying from its edges in) (live)
    public static volatile int BLOOD_REFLECT_PCT; // wet blood: strength of the reflection in the film, % of the water's Fresnel (live)
@@ -1765,6 +1777,11 @@ public final class Config {
       OCCLUDED_OUTLINE_WIDTH = Math.max(1, Math.min(4, integer("occludedOutlineWidth", 1)));
       OCCLUDED_OUTLINE_OPACITY = Math.max(0, Math.min(100, integer("occludedOutlineOpacityPct", 70)));
       OCCLUDED_OUTLINE_COLOUR = string("occludedOutlineColour", "FFC740");
+      RIPPLES = bool("ripples", false);
+      RIPPLES_MODE = string("ripplesMode", "alu").trim().toLowerCase(java.util.Locale.ROOT);
+      RIPPLES_STRENGTH_PCT = Math.max(0, Math.min(400, integer("ripplesStrengthPct", 100)));
+      RIPPLES_VEHICLES = bool("ripplesVehicles", true);
+      RIPPLES_PER_SEC = Math.max(0, integer("ripplesPerSec", 160));
       BLOOD_WET = bool("bloodWet", false);
       BLOOD_WET_MINUTES = Math.max(1, integer("bloodWetMinutes", 120));
       BLOOD_REFLECT_PCT = Math.max(0, Math.min(200, integer("bloodReflectPct", 100)));
@@ -1957,7 +1974,7 @@ public final class Config {
       String[][] groups = {
          // the switch of each feature on the Enhancements tab; the rest of each section only tunes it
          {"enhancementsEnabled", "upscaler", "off", "dynRes", "false", "spriteFilter", "stock", "hdr", "false", "hdrAuto", "false",
-            "ambientOcclusion", "false", "sunShadows", "false", "reflections", "false", "bloodWet", "false", "occludedZombieOutlines", "false", "darknessFloorPct", "0",
+            "ambientOcclusion", "false", "sunShadows", "false", "reflections", "false", "ripples", "false", "bloodWet", "false", "occludedZombieOutlines", "false", "darknessFloorPct", "0",
             "memoryTint", "false", "colorGrading", "false", "pixelLight", "false", "godRays", "false", "foliageSway", "false", "relief", "false", "carGlass", "false",
             "torchSource", "false", "mirrors", "false"},
          // everything that makes the overlay measure or show (Overlay.configure; harness runs still measure)

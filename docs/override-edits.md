@@ -6566,3 +6566,20 @@ DEPTH16 step of the baked copy) fought a black baked copy of itself. `pplUnseenA
   before. Still frames on both floors: unseen wall mirrors luma 148 / 155 / 59 / 94 -> 0 / 0 / 24 / 0 = the
   `mirrors=false` frame; Jev (`harness/mirrors/undiscovered-judge.py`, pixel-based: the 10-08 `room-judge.py` read the
   `dev pane` log, which never saw this draw) `fixed` 1.00.
+### Puddle ripples (2026-10-10, `ripples`, Enhancements tab, off by default): IsoMovingObject, IsoZombie, ShaderUnit, PuddlesShader, FBORenderCell
+
+- `IsoMovingObject`: four fields for `pzopt.Ripples` (`pzoptRipX`, `pzoptRipY`, `pzoptRipT`: where / when the last ring was
+  started; `pzoptRipFoot`: the foot that stepped last). Read and written on the game thread only.
+- `IsoZombie.update`: after `updateInternal` returns, `pzopt.Ripples.zombieUpdated(this)`: the stride check while the zombie
+  is hot in cache (replaces walking the zombie list each frame: in the Louisville horde ~92 cold objects a frame cost ~25 us).
+  It returns at once unless the last frame drew puddles with ripples on (`armedFrame`), and in a crowd only on the zombie's
+  own frame (`(frame + id) % hookEvery`, one look per ~0.4 s, longer when the ring budget drops most footsteps). With
+  `entityUpdateParallel` (updates on the workers) the hook stays off and the old round-robin scan runs.
+- `ShaderUnit.compile`: `pzopt.Ripples.patchShader` is the innermost patch (before HDR's glint and Ssr's reflection read
+  the puddles' wave normal `gm`); it touches only `puddles_common.frag.glsl` (stock and the puddleEarlyZ copy) and only when
+  `ripples` is on at launch; the unit stays GLSL 1.20.
+- `PuddlesShader.updatePuddlesParams`: `pzopt.Ripples.puddleUniforms(getID(), z)`: the frame's rings (once a frame a
+  program), the tile / profile / field textures of the mode; nothing but one uniform when there is no ring.
+- `FBORenderCell.renderPuddles`: `pzopt.Ripples.gather(playerIndex)` at the top (once a frame: clock, players / animals /
+  moving vehicles, the frame's rings to the render thread ahead of the puddle draws); the puddles' GPU section is named by
+  `Ripples.puddleSection()` (`puddles`, or `puddles.<mode>` / `puddles.off` in the dev A/B).

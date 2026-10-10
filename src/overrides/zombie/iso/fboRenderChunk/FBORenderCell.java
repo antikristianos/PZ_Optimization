@@ -1906,7 +1906,7 @@ public final class FBORenderCell {
 
          try {
             pzopt.Ssr.devDump(playerIndex, "puddles", false); // pzopt: reflections, dev frame dump
-            pzopt.GpuSections.begin("puddles"); /* pzopt: GPU section */ this.renderPuddles(playerIndex); pzopt.GpuSections.end("puddles");
+            String pzoptSection = pzopt.Ripples.puddleSection(); /* pzopt: puddle ripples, the dev A/B names the section */ pzopt.GpuSections.begin(pzoptSection); /* pzopt: GPU section */ this.renderPuddles(playerIndex); pzopt.GpuSections.end(pzoptSection);
             pzopt.Ssr.devDump(playerIndex, "puddles", true); // pzopt: reflections, dev frame dump
          } catch (Throwable var27) {
             if (var29 != null) {
@@ -7375,6 +7375,7 @@ public final class FBORenderCell {
    private void renderPuddles(int playerIndex) {
       if (IsoPuddles.getInstance().shouldRenderPuddles()) {
          if (!FBORenderSnow.getInstance().isSnowAnywhere()) {
+            pzopt.Ripples.gather(playerIndex); // pzopt: puddle ripples, the frame's rings ahead of the puddle draws
             IsoChunkMap chunkMap = this.cell.chunkMap[playerIndex];
             int maxZ = chunkMap.maxHeight;
             if (Core.getInstance().getPerfPuddles() > 0) {

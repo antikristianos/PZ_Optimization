@@ -34,14 +34,14 @@ final class Enhancements {
          || key.equals("ambientOcclusion") || key.startsWith("ao") || key.startsWith("sunShadow") || key.startsWith("reflection")
          || key.startsWith("darknessFloor") || key.startsWith("memory") || key.startsWith("colorGrading")
          || key.startsWith("moonShadow") || key.startsWith("cloud") || key.equals("pplTorchFeetGlow")
-         || key.equals("bloodWet") || key.equals("bloodWetMinutes") || key.equals("bloodReflectPct") || key.equals("bloodSheenPct") || key.equals("bloodGlintPct");
+         || key.startsWith("ripples") || key.equals("bloodWet") || key.equals("bloodWetMinutes") || key.equals("bloodReflectPct") || key.equals("bloodSheenPct") || key.equals("bloodGlintPct");
    }
 
    /** Game thread, after Config.reloadLive(key) returned true. */
    static void apply(String key) {
       switch (key) {
          case "fsrSharpnessPct", "upscalerObjectMv", "dlssWaterCurrent", "dlssWaterHistoryPct", "reflections", "reflectionStrengthPct", "reflectionPuddles",
-               "bloodWet", "bloodWetMinutes", "bloodReflectPct", "bloodSheenPct", "bloodGlintPct", "occludedZombieOutlines", "occludedOutlineIgnorePlants",
+               "ripples", "ripplesMode", "ripplesStrengthPct", "ripplesVehicles", "ripplesPerSec", "bloodWet", "bloodWetMinutes", "bloodReflectPct", "bloodSheenPct", "bloodGlintPct", "occludedZombieOutlines", "occludedOutlineIgnorePlants",
                "occludedOutlineWidth", "occludedOutlineColour", "occludedOutlineOpacityPct" -> {
             // read every frame
          }

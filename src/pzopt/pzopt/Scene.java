@@ -80,6 +80,7 @@ public final class Scene {
    private static String torch = "";
    private static int fires; // fire=N: N fires lit near the player at the route start (HDR scenes)
    private static boolean headlights;
+   private static float puddleMud = -1F; // puddle_mud=V: the puddles' mud pinned (0 = clear puddles, as in a shower's first minutes; rain raises it to muddy)
    private static float puddles = -1F; // puddles=V: wet ground and puddle size pinned to V (0..1) through the puddles' admin overrides (HDR glint scenes) // headlights=on: the player's vehicle keeps its headlights on (HDR night drives)
    private static String lights = ""; // lights=on: grid power on and every light switch within 50 tiles on (HDR scenes)
    private static boolean visible;
@@ -145,6 +146,7 @@ public final class Scene {
       lights = HarnessFlags.get("lights", "").trim().toLowerCase(java.util.Locale.ROOT);
       headlights = "on".equalsIgnoreCase(HarnessFlags.get("headlights", "").trim());
       puddles = Float.parseFloat(HarnessFlags.get("puddles", "-1").trim());
+      puddleMud = Float.parseFloat(HarnessFlags.get("puddle_mud", "-1").trim());
       Showcase.apply(); // showcase=horde
       RoomLightRig.init(); // room_light=auto (PR #26 HDR rig)
       Showcase.worldReady(p); // showcase=horde: god mode, unseen, power off, the area cleared until the scene starts
@@ -702,6 +704,11 @@ public final class Scene {
          }
          Log.info("harness: puddles pinned to " + puddles + " (wet ground + puddle size, admin override)");
       }
+      if (puddleMud >= 0F) {
+         zombie.iso.IsoPuddles.getInstance().getPuddlesFloat(2).setEnableAdmin(true); // FLOAT_MUDDYPUDDLES
+         zombie.iso.IsoPuddles.getInstance().getPuddlesFloat(2).setAdminValue(puddleMud);
+         Log.info("harness: puddle mud pinned to " + puddleMud);
+      }
       if ("on".equals(lights)) {
          lightsOn();
       }
@@ -941,7 +948,7 @@ public final class Scene {
    }
 
    static boolean requested() {
-      return timeOfDay >= 0f || !weather.isEmpty() || fog >= 0f || wind >= 0f || !torch.isEmpty() || visible || population >= 0f || carSpawn > 0 || seeAll || zombiesOff || soundRadius > 0 || helicopter || fires > 0 || !lights.isEmpty() || headlights || puddles >= 0F || SoundProbe.requested() || CarGlassRig.active();
+      return timeOfDay >= 0f || !weather.isEmpty() || fog >= 0f || wind >= 0f || !torch.isEmpty() || visible || population >= 0f || carSpawn > 0 || seeAll || zombiesOff || soundRadius > 0 || helicopter || fires > 0 || !lights.isEmpty() || headlights || puddles >= 0F || puddleMud >= 0F || SoundProbe.requested() || CarGlassRig.active();
    }
 
    /** Flag see_all=true: read by the LightingJNI override on every player update (false until apply() ran). */

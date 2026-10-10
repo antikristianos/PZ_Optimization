@@ -3587,6 +3587,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
 
       try {
          this.updateInternal();
+         pzopt.Ripples.zombieUpdated(this); // pzopt: puddle ripples, the stride check while the zombie is hot in cache
       } catch (Throwable var5) {
          if (var1 != null) {
             try {
