@@ -629,7 +629,10 @@ must stay focused and uncovered.
 bench save rebuilt from `bench-save/pzopt-bench-template.tar.zst` (Windows tar reads zstd), flag
 file, pzopt.properties, Steam launch, a `Get-Counter` + `nvidia-smi` sampler with sysmon.sh's
 columns, collection into `harness/runs/`. No MangoHud, JFR or recording. `-Prop`/`-Flag` accept
-comma-joined values (`powershell -File` hands the script one string). The Java harness quits at
+comma-joined values (`powershell -File` hands the script one string). Since 2026-10-11 only a comma before the next `key=` splits
+(`start=12450,1280`, `path=...` stay whole), `-Option k=v` sets game options.ini keys for the run (restored), and `-Prop`
+replaces the default `instrument=true`: pass it. GDI desktop captures of the plain GL window are black on this desktop:
+judge pictures from `shot_at` / `devCapture` (`devCapture` frames to PNG without numpy: a 30-line stdlib converter). The Java harness quits at
 the route end by itself when no MangoHud is loaded. `analyze.py` runs on the embeddable Python
 (no installer needed); `analyze-win.ps1` is a PowerShell fallback. The game pauses on focus loss
 (`focusloss=true`), which stops `IsoChunk.update` and with it the frame sampler: keep the window

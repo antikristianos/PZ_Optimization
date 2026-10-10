@@ -127,3 +127,41 @@ Uncapped (`uncappedFps=true vrr=off`, no profiler), tab file vs defaults, runs `
 | highway 600 tiles | 202 / 14.4 / 21.2 / 10 | 569 / 4.8 / 8.8 / 2 |
 | Rosewood 487 tiles | 147 / 23.1 / 31.6 / 112 | 457 / 11.2 / 17.2 / 6 |
 | spin 15 s | 121 / 21.5 / 29.7 / 45 | 349 / 9.6 / 16.1 / 5 |
+
+## 2026-10-11 00:40-01:05 — Windows, uncapped: optimizations vs + enhancements (release fd0b693, desktop Windows boot)
+
+Desktop's Windows 11 side (RTX 4090, 5120x2160, NVIDIA 617.42), `harness/run-win.ps1` (Steam launch, in-game overlay log +
+sysmon), one run per cell, zoom 2.5 in every run, `uncappedFps=true`, `uiRenderOffscreen=true`, the player's tab file pinned
+off (`upscaler=off overlay=false hdr=false hdrAuto=false dynRes=false`). **Heap: the launcher's stock 3 GB ZGC** — the release's
+GC / heap writers cannot rewrite the JSON on Windows (fixed in fef2c5b, not released), so not comparable to Linux runs (4 GB).
+Configs: **opt** = the defaults; **enh** = + every Enhancements feature but the resolution / output ones (`sunShadows pixelLight
+relief foliageSway godRays ambientOcclusion reflections mirrors carGlass torchSource ripples bloodWet colorGrading memoryTint
+occludedZombieOutlines` on, `spriteFilter=sharp darknessFloorPct=20`); **enh2** = enh without remembered places
+(`memoryTint`) and zombie outlines (`occludedZombieOutlines`). Runs `win-unc-<scene>-<config>-20261011-*`.
+
+| scene | config | fps | p50 | p99 | p99.9 | > 33 ms | 1%-low | GPU | game / render thread |
+|---|---|---|---|---|---|---|---|---|---|
+| spin south (`route=S:450 turn=90`, 25 s) | opt | 179 | 4.5 ms | 18.5 ms | 32.5 ms | 3 | 54 | 77 % | 83 / 84 % |
+| | enh | 68 | 13.3 ms | 38.1 ms | 61.0 ms | 37 | 26 | 59 % | 82 / 67 % |
+| | enh2 | 77 | 11.9 ms | 33.8 ms | 42.0 ms | 20 | 30 | 59 % | 84 / 67 % |
+| Louisville horde (preset flags, 25 s) | opt | 36.6 | 24.0 ms | 83.2 ms | 148.9 ms | 153 | 12 | 38 % | 89 / 37 % |
+| | enh | 30.7 | 28.4 ms | 84.0 ms | 139.0 ms | 253 | 12 | 39 % | 87 / 42 % |
+| | enh2 | 29.5 | 29.1 ms | 98.7 ms | 321.5 ms | 253 | 10 | 41 % | 83 / 41 % |
+| 120 km/h east (`drive-120` path) | opt | 427 | 2.2 ms | 5.4 ms | 12.6 ms | 0 | 184 | 89 % | 63 / 95 % |
+| | enh | 207 | 4.1 ms | 14.7 ms | 20.4 ms | 0 | 68 | 89 % | 71 / 90 % |
+| | enh2 | 201 | 4.3 ms | 15.0 ms | 22.8 ms | 1 | 67 | 89 % | 73 / 90 % |
+| 120 km/h Rosewood south (`drive-120-south` path) | opt | 356 | 2.0 ms | 14.3 ms | 21.0 ms | 1 | 70 | 84 % | 74 / 90 % |
+| | enh | 163 | 3.9 ms | 34.9 ms | 45.1 ms | 78 | 29 | 78 % | 75 / 81 % |
+| | enh2 | 167 | 3.8 ms | 31.2 ms | 39.4 ms | 34 | 32 | 78 % | 76 / 81 % |
+
+- Louisville: every run checked (CLAUDE.md rule): settle-window frame (`devCapture=8,1,1,50`, no `--record` on Windows) clean, no
+  pale patches / speckle / chunk holes; `strongMarks` 7,701 (opt) and 0 (enh / enh2: pixelLight bakes unlit), not a flood. None
+  discarded. Both enhancement runs ran out of the 3 GB heap in the exit save **after** the route (`OutOfMemoryError` after
+  `route done`; the harness forced the exit); enh2 had 4,632 zombies loaded at route start, its 721 ms max frame is likely the full heap.
+- With enhancements nothing is saturated on the spin (GPU 59 %, game thread 82-84 % of a core, render thread 67 %) at 68-77 fps: the
+  objective's "below 240 fps and hardware not saturated" finding. The drives stay GPU-bound (78-89 %). The Windows enhancement
+  cost (spin 5.6 -> 13.0-14.7 ms a frame, east drive 2.3 -> 4.8-5.0 ms) is far above the 2026-10-08 Linux sweep's ~0.5 ms total
+  (`docs/findings-enhancement-costs-2026-10-08.md`): not yet explained (Windows driver, heap, the drives' streaming).
+- Remembered places + zombie outlines off (enh2) is +13 % on the spin and tighter tails on the Rosewood drive, inside one-run noise
+  on the highway and Louisville.
+- For context, Linux uncapped defaults 2026-10-09 (runs `unc-*`, other routes' lengths): highway 569, Rosewood 457, spin 349 fps.

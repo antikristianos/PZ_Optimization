@@ -1,7 +1,7 @@
 # Windows port of the parts of harness/run.sh a bench run needs (no MangoHud, no JFR, no recording).
 #
 #   harness/run-win.ps1 -Label <name> [-Mode bench|drive|verify] [-Flag k=v ...] [-Prop k=v ...]
-#                       [-RouteSeconds N] [-QuitAfter secs] [-Dashboard]
+#                       [-Option k=v ...] [-RouteSeconds N] [-QuitAfter secs] [-Dashboard]
 #
 # What it does (same order as run.sh):
 #   1. installs the pzopt-harness Lua mod into %USERPROFILE%\Zomboid\mods and enables it in mods\default.txt
@@ -18,6 +18,7 @@ param(
   [string]$Mode = "bench",
   [string[]]$Flag = @(),
   [string[]]$Prop = @("instrument=true"),
+  [string[]]$Option = @(),   # game options.ini key=value for the run (run.sh --option), restored after
   [int]$RouteSeconds = 100,
   [string]$QuitAfter = "",
   [switch]$Dashboard,
@@ -25,9 +26,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 # `powershell -File run-win.ps1 -Prop a=1,b=2` hands the script ONE string "a=1,b=2" (no array splitting on the
-# -File command line); split every element on commas so both call styles give one key per line
-$Prop = @($Prop | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
-$Flag = @($Flag | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+# -File command line); split every element on commas so both call styles give one key per line; only a comma before
+# the next key= splits, so values with commas stay whole (start=12450,1280, path=8010,11204.5/9210,11204.5)
+$Prop = @($Prop | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
+$Flag = @($Flag | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
+$Option = @($Option | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
 $Repo = Split-Path -Parent $PSScriptRoot
 $Z = "$env:USERPROFILE\Zomboid"
 $ModSrc = "$Repo\harness\mod\pzopt-harness"
@@ -98,6 +101,16 @@ try {
   $flags += $Flag
   Remove-Item -LiteralPath $FlagFile -Force -ErrorAction SilentlyContinue
   [System.IO.File]::WriteAllText($FlagFile, (($flags -join "`n") + "`n"))
+  if ($Option.Count -gt 0) {
+    Backup "$Z\options.ini"
+    $ini = [System.IO.File]::ReadAllText("$Z\options.ini")
+    foreach ($o in $Option) {
+      $k = $o.Split('=')[0]
+      if ($ini -match "(?m)^$([regex]::Escape($k))=") { $ini = [regex]::Replace($ini, "(?m)^$([regex]::Escape($k))=[^`r`n]*", { param($m) $o }) }
+      else { $ini = $ini.TrimEnd("`r", "`n") + "`r`n$o`r`n" }
+    }
+    [System.IO.File]::WriteAllText("$Z\options.ini", $ini)
+  }
   Backup "$PZ\pzopt.properties"
   [System.IO.File]::WriteAllText("$PZ\pzopt.properties", (($Prop -join "`n") + "`n"))
   Remove-Item "$Z\pzopt-*.out", "$Z\pzopt-schedule.out", "$Z\pzopt-logdone", "$Z\console.txt" -Force -ErrorAction SilentlyContinue
