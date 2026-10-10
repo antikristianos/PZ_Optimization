@@ -160,8 +160,13 @@ public final class HdrWin {
          uP1 = GL20.glGetUniformLocation(encodeProgram, "p1");
       }
       GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
+      // the frame is in GL_BACK: Core.TakeFullScreenshot sets glReadBuffer(GL_FRONT) and leaves it, and without
+      // SwapBuffers the front buffer is never written, so every frame after a screenshot came out black (2026-10-11)
+      int prevReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
+      GL11.glReadBuffer(GL11.GL_BACK);
       GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, backFbo);
       GL30.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
+      GL11.glReadBuffer(prevReadBuffer);
       GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, glFbo);
       GL11.glViewport(0, 0, width, height);
       GL20.glUseProgram(encodeProgram);
