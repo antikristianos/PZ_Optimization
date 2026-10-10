@@ -27,7 +27,7 @@ import java.util.Set;
  * tab's button fetched (natives/pzopt-dlss-installed.txt), then every folder they leave empty. Settings and caches under
  * Zomboid/pzopt/ stay, as with the installers (a reinstall keeps them). The helper appends to Zomboid/pzopt/uninstall.log.
  *
- * Helper as in pzopt.Restart: /bin/sh polling {@code kill -0}, or a hidden PowerShell with Wait-Process; it gives up
+ * Helper as in pzopt.Restart: /bin/sh polling {@code kill -0}, or a hidden PowerShell polling Get-Process; it gives up
  * without deleting anything when the game is still running after {@link #WAIT_S} seconds. On Windows the helper is a
  * script file (Zomboid/pzopt/uninstall-helper.ps1) run with -File, not an -EncodedCommand: an encoded, hidden PowerShell
  * started by a game is what antivirus heuristics stop (2026-10-07, Workshop reports of a press that removed nothing).
@@ -198,9 +198,14 @@ public final class Uninstall {
             "$ErrorActionPreference = 'SilentlyContinue'",
             "$log = " + quote(log),
             "Add-Content -LiteralPath $log -Encoding UTF8 \"$(Get-Date -Format s) helper started, waiting for pid " + pid + "\"",
-            "Wait-Process -Id " + pid + " -Timeout " + WAIT_S,
-            "if (Get-Process -Id " + pid + ") { Add-Content -LiteralPath $log -Encoding UTF8 \"$(Get-Date -Format s) the game (pid " + pid
+            // polled like the sh helper: Wait-Process started by the game returned at once while the game still ran
+            // (Windows test 2026-10-11: "still running after 600 s" one second after the helper started, nothing removed)
+            "$n = 0",
+            "while (Get-Process -Id " + pid + ") {",
+            "  if ($n -ge " + WAIT_S * 20 + ") { Add-Content -LiteralPath $log -Encoding UTF8 \"$(Get-Date -Format s) the game (pid " + pid
                   + ") was still running after " + WAIT_S + " s: nothing removed\"; exit 1 }",
+            "  Start-Sleep -Milliseconds 50; $n++",
+            "}",
             "$left = 0",
             "foreach ($f in Get-Content -LiteralPath " + quote(files) + " -Encoding UTF8) {",
             "  if (-not $f) { continue }",

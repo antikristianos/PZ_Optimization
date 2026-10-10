@@ -34,8 +34,8 @@ import org.json.JSONObject;
  *   record               -> the cache is written at exit; JSON "use": -XX:AOTCache
  *   use                  -> nothing, unless the JVM's AOT log shows the cache was not used (game update, reinstall,
  *                           missing file) or the installed files changed: then back to record with a rebuilt jar.
- * The JSON is backed up once (ProjectZomboid64.json.pzopt-backup), written atomically and read back before it replaces
- * the original. Off (aotCache=false, the master switch, a build mismatch) or in a harness run, a JSON in the cache mode
+ * The JSON is backed up once (ProjectZomboid64.json.pzopt-backup), written to a tmp file and read back before it replaces
+ * the original (renamed over it; in place on Windows, where the running launcher holds the file: {@link #replaceJson}). Off (aotCache=false, the master switch, a build mismatch) or in a harness run, a JSON in the cache mode
  * is put back to the loose form. The installers (scripts/pzopt.sh, install.sh, install.ps1) and pzopt.Updater do the
  * same before they touch the loose files, so a stale jar can never shadow a newer install.
  *
@@ -131,6 +131,7 @@ public final class AotCache {
       if (!Files.isRegularFile(json)) {
          return; // macOS (Info.plist launcher) or an unknown layout: leave it alone
       }
+      Files.deleteIfExists(game.resolve("ProjectZomboid64.json.pzopt-tmp")); // left by a refused rename before replaceJson
       if (!wanted()) {
          if (resetLauncher(game)) {
             Log.info("aot: cache mode off; launcher back to the loose classes for the next launch");
@@ -377,7 +378,34 @@ public final class AotCache {
          Files.deleteIfExists(tmp);
          throw new IOException("launcher JSON check failed; left unchanged");
       }
-      Files.move(tmp, json, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      replaceJson(tmp, json);
+   }
+
+   /**
+    * Puts the checked {@code tmp} in place of the launcher JSON (AotCache and GcChoice). On Windows ProjectZomboid64.exe
+    * keeps the JSON open for the whole session, sharing read and write but not delete (2026-10-11, docs/windows-test.md
+    * "Open on Windows" item 1), so the rename is refused there: the text is then written into the file in place (written
+    * before the truncate, so the file is never empty) and the tmp removed.
+    */
+   static void replaceJson(Path tmp, Path json) throws IOException {
+      try {
+         Files.move(tmp, json, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+         return;
+      } catch (java.nio.file.FileSystemException e) {
+         if (!Files.isRegularFile(tmp)) {
+            throw e;
+         }
+      }
+      byte[] text = Files.readAllBytes(tmp);
+      try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(json, java.nio.file.StandardOpenOption.WRITE)) {
+         java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(text);
+         while (b.hasRemaining()) {
+            ch.write(b, b.position());
+         }
+         ch.truncate(text.length);
+         ch.force(true);
+      }
+      Files.deleteIfExists(tmp);
    }
 
    private static Properties readState(Path game) {

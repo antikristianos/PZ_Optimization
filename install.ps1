@@ -181,6 +181,9 @@ function Reset-Aot {
   }
   $aotDir = Join-Path $Dir 'pzopt\aot'
   if (Test-Path -LiteralPath $aotDir) { Remove-Item -LiteralPath $aotDir -Recurse -Force }
+  # left by the in-game JSON writers of releases before 2026-10-11 (Windows refused their rename)
+  $tmp = "$Json.pzopt-tmp"
+  if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
 }
 # Undo pzopt.GcChoice's launcher switch (marker -Dpzopt.gc=g1[,pause]): G1 back to ZGC, the pause target it added removed;
 # its JIT flags and its heap size too.
@@ -231,6 +234,12 @@ function Reset-Gc {
   if ($j.vmArgs) { $j.vmArgs = & $fixHeap (& $fixJit (& $fix $j.vmArgs)) }
   foreach ($p in $j.PSObject.Properties) {
     if ($p.Value -is [psobject] -and $p.Value.PSObject.Properties['vmArgs']) { $p.Value.vmArgs = & $fixHeap (& $fixJit (& $fix $p.Value.vmArgs)) }
+    # the Windows JSON's per-version sections ("windows": {"10.0.17134": {"vmArgs": [...]}}) hold the collector (GcChoice.forEachVmArgsDeep)
+    if ($p.Value -is [psobject]) {
+      foreach ($q in $p.Value.PSObject.Properties) {
+        if ($q.Value -is [psobject] -and $q.Value.PSObject.Properties['vmArgs']) { $q.Value.vmArgs = & $fix $q.Value.vmArgs }
+      }
+    }
   }
   if ($script:gcChanged) {
     [IO.File]::WriteAllText($Json, ($j | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))

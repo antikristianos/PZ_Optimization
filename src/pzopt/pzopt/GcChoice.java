@@ -109,7 +109,7 @@ public final class GcChoice {
    /** ZGC -> G1 (+ pause target) + marker, in every vmArgs array that selects ZGC. */
    static boolean toG1(JSONObject j, int pauseMs) {
       boolean[] changed = {false};
-      forEachVmArgs(j, args -> {
+      forEachVmArgsDeep(j, args -> {
          int z = indexOf(args, ZGC);
          if (z < 0) {
             return;
@@ -166,7 +166,7 @@ public final class GcChoice {
    /** Undo toG1 where one of our markers is. */
    static boolean toStock(JSONObject j) {
       boolean[] changed = {false};
-      forEachVmArgs(j, args -> {
+      forEachVmArgsDeep(j, args -> {
          int m = indexOf(args, MARKER);
          int mp = indexOf(args, MARKER_PAUSE);
          if (m < 0 && mp < 0) {
@@ -392,6 +392,24 @@ public final class GcChoice {
       }
    }
 
+   /**
+    * Every vmArgs array at any depth: the collector. The Windows JSON picks it per OS version one level further down
+    * ("windows": {"10.0.17134": {"vmArgs": ["-XX:+UseZGC"]}}), which {@link #forEachVmArgs} never reached, so G1 was
+    * never switched on there (Windows test 2026-10-11). The heap and JIT flags stay in the arrays forEachVmArgs walks.
+    */
+   static void forEachVmArgsDeep(JSONObject j, java.util.function.Consumer<JSONArray> f) {
+      JSONArray a = j.optJSONArray("vmArgs");
+      if (a != null) {
+         f.accept(a);
+      }
+      for (String k : j.keySet()) {
+         JSONObject sec = j.optJSONObject(k);
+         if (sec != null) {
+            forEachVmArgsDeep(sec, f);
+         }
+      }
+   }
+
    private static void save(Path game, JSONObject j) throws java.io.IOException {
       Path json = game.resolve("ProjectZomboid64.json");
       Path backup = game.resolve("ProjectZomboid64.json.pzopt-backup");
@@ -405,6 +423,6 @@ public final class GcChoice {
          Files.deleteIfExists(tmp);
          throw new java.io.IOException("launcher JSON check failed; left unchanged");
       }
-      Files.move(tmp, json, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      AotCache.replaceJson(tmp, json); // in place when the running launcher holds the file (Windows)
    }
 }

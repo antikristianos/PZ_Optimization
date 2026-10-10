@@ -499,8 +499,8 @@ included; player console.txt files are the only Windows evidence so far.
 
 ### Bugs found in player logs
 
-1. **The game cannot rewrite `ProjectZomboid64.json`, so the GC switch, the heap size and the AOT cache never apply on
-   Windows.** Two console.txt files from 2026-10-10 (Discord, builds 9309b09 and 6cc90a0; one game in
+1. ~~**The game cannot rewrite `ProjectZomboid64.json`, so the GC switch, the heap size and the AOT cache never apply on
+   Windows.**~~ **Fixed 2026-10-11** (see below). Two console.txt files from 2026-10-10 (Discord, builds 9309b09 and 6cc90a0; one game in
    `C:\Program Files (x86)\Steam\...`, one in `T:\SteamLibrary\...`) end their boot with
    `[pzopt] gc: java.nio.file.AccessDeniedException: ...\ProjectZomboid64.json.pzopt-tmp -> ...\ProjectZomboid64.json`
    (and the same for `[pzopt] aot:`). Both writers (`AotCache.save`, `GcChoice.save`) write `ProjectZomboid64.json.pzopt-tmp`
@@ -518,6 +518,21 @@ included; player console.txt files are the only Windows evidence so far.
    - Fix options, once the holder is known: write the JSON in place (truncate + write, works if the holder shares
      write), or hand the swap to the exit path / the restart helper (`pzopt.Restart`'s PowerShell already waits for the
      game to end), and log the outcome either way. Also delete a stale `.pzopt-tmp` on the next boot.
+   - **Found and fixed on the desktop's Windows side (2026-10-11, release fd0b693 + the fix compiled with Zulu 25 at
+     `C:\pz\jdk-25`).** Reproduced on the first boot (both `AccessDeniedException` lines; a `.pzopt-tmp` from 2026-09-24
+     was still in the folder). The holder is `ProjectZomboid64.exe` itself: while it runs, the JSON opens for reading
+     with share Read and with share ReadWrite, not with share None or Delete, a rename fails, and a truncate + write of
+     the same bytes works; once it exits the rename works. `attrib`: not read-only. Fix: `AotCache.replaceJson` (both
+     writers) keeps the rename and, when Windows refuses it, writes the checked text into the file in place (written
+     before the truncate) and removes the tmp; `AotCache.step` deletes a stale tmp; `install.ps1` removes it too.
+     **Second bug behind it:** the Windows JSON nests the collector one level deeper
+     (`"windows": {"10.0.17134": {"vmArgs": ["-XX:+UseZGC"]}}`), which `GcChoice.forEachVmArgs` never reached, so even a
+     working write never switched to G1 (the test fixture had `"windows": {"vmArgs": ...}`). `toG1` / `toStock` now walk
+     every depth (`forEachVmArgsDeep`), heap / JIT flags stay where they were; `install.ps1`'s `Reset-Gc` undoes the nested
+     section too; `GcChoiceTest` has the real Windows shape. Verified in game: launch 1 writes (no exception, no tmp),
+     launch 2 `gc: running G1 Young Generation ...`, heap 4096 MB, AOT recording 87 MB at exit, launch 3 `aot: running
+     from the AOT cache` (`Using AOT-linked classes: true`), no JSON rewrite; the in-game uninstall and `install.ps1`
+     put the JSON back to the stock content (nested ZGC included). `GcChoiceTest` and `AotCacheTest` pass. Not released yet.
 2. Not ours, for the record (same day): `bad allocation` from the native model importer then a crash to desktop was a
    full C: drive (6 GB free, the page file could not grow); the player freed space and it works. A
    `PZOptimizationRussia` translation mod replaces six of our Lua files (options tab, layout, frame cap, main menu);
@@ -527,13 +542,13 @@ included; player console.txt files are the only Windows evidence so far.
 
 | # | What | Status | Steps / source |
 |---|---|---|---|
-| 1 | Uninstall paths: in-game button (hidden `-EncodedCommand` PowerShell helper), `Uninstall-PZ-Optimization.cmd`, `uninstall.ps1` one-liner, boot repair on a revision mismatch, foreign class refusal / `-Force`, cut-short install | not run; two Workshop reports say the in-game button removed nothing (antivirus blocking the helper?) | 7 steps in `docs/findings-uninstall-2026-10-07.md` "Windows test (to do)" |
-| 2 | Restart game (`pzopt.Restart`: PowerShell reads the command line from WMI, waits for the game to end, starts it again) | **works**: a player's console (2026-10-10, 6cc90a0) logs `restart: started by Restart game in pid 4872; this process began 4812 ms after the press`. Still open: a launch through Steam | `docs/findings-updater-2026-09-26.md` |
-| 3 | In-game updater install on Windows (replace the files of `pzopt-installed.txt` from the Workshop copy / GitHub zip while the game runs, then restart) | seen offering and prefetching (`update prefetch ... 30 of 1090 files differ`), never seen finishing an install in a Windows log | `docs/findings-updater-2026-09-26.md` |
-| 4 | Item 1 above: launcher JSON rewrite (GC / heap / AOT) | broken in two logs; holder unknown | above |
-| 5 | HDR output (`pzopt.HdrWin`: D3D11 FP16 flip-model swap chain on the game's HWND, shared with GL through `WGL_NV_DX_interop2`) | written, never run; gated behind `hdrUntestedPlatforms=true` | `docs/findings-hdr-2026-09-24.md` option 4 |
-| 6 | DLSS on Windows (`pzopt_ngx64.dll`) | the DLL has never been built; releases ship no natives (`upscaler=dlss` runs as FSR 1) | `docs/dlss-windows-build.md`, `docs/plan-upscalers.md` |
-| 7 | Reflections (SSR: image load/store patches into the game's shaders) on Windows drivers | untested on Windows (and on AMD / Intel) | `docs/findings-reflections-2026-09-25.md` |
+| ~~1~~ | ~~Uninstall paths: in-game button (hidden `-EncodedCommand` PowerShell helper), `Uninstall-PZ-Optimization.cmd`, `uninstall.ps1` one-liner, boot repair on a revision mismatch, foreign class refusal / `-Force`, cut-short install~~ **done 2026-10-11** | **run 2026-10-11 (fd0b693, NVIDIA, Defender on): two bugs found and fixed, everything else passes.** Step 1 one-liner: Workshop copy used, 1100 files, `.cmd` + `pzopt\uninstall\install.ps1` listed. Step 2 (`devUninstallDrive` rig): the helper started (no antivirus block) and logged "still running after 600 s: nothing removed" in the same second, while the game was quitting: `Wait-Process` returned at once only when the game started the helper (from any other parent it waits; the cause is still unknown). This matches the Workshop reports. The fallback works: the next start's `BootRepair` removed all 1103 files and restarted stock. Fix: the helper polls `Get-Process` every 50 ms like the sh helper's `kill -0`; re-run: `uninstall finished; 0 files could not be removed` 2 s after the exit, helper and lists gone. Step 3: removes everything but prints `The batch file cannot be found.` (the `.cmd` is deleted while cmd still reads it; `exit /b` re-reads it). Fix: `(goto) 2>nul`, clean on both branches (local installer and GitHub fallback). Steps 4, 6, 7 pass. Step 5 (via Steam): `updated` from the Workshop copy, restarted with 54 overrides. Uninstallers leave `ProjectZomboid64.json.pzopt-backup` (stock content, harmless) | `docs/findings-uninstall-2026-10-07.md` "Windows test (to do)" |
+| ~~2~~ | ~~Restart game (`pzopt.Restart`: PowerShell reads the command line from WMI, waits for the game to end, starts it again)~~ **done 2026-10-11** | **works**, also through Steam (2026-10-11: boot repair of a Steam launch, new process 905 ms after the press, `SteamUtils initialised successfully`) | `docs/findings-updater-2026-09-26.md` |
+| ~~3~~ | ~~In-game updater install on Windows (replace the files of `pzopt-installed.txt` from the Workshop copy / GitHub zip while the game runs, then restart)~~ **done 2026-10-11** | **works** (2026-10-11, `devUpdateDrive`): f7b8838f -> fd0b6930 from the Workshop copy, restarted menu 16.6 s after Restart game, `install.ps1 -Status` all 1100 files present and unchanged. The GitHub-zip source (`updateFromWorkshop=false`) is not run on Windows | `docs/findings-updater-2026-09-26.md` |
+| ~~4~~ | ~~Item 1 above: launcher JSON rewrite (GC / heap / AOT)~~ **done 2026-10-11** | **fixed, not released** (2026-10-11): holder = ProjectZomboid64.exe, plus the nested Windows GC section | above |
+| 5 | HDR output (`pzopt.HdrWin`: D3D11 FP16 flip-model swap chain on the game's HWND, shared with GL through `WGL_NV_DX_interop2`) | **broken: black screen** (2026-10-11, RTX 4090, Windows HDR on). It starts without a fallback (`hdr win: output colour space 12 (12 = HDR10 on), max luminance 1316`, `scRGB flip-model swap chain ... 5120x2160, tearing true`), the game runs on, but the screen stays black (seen by the maintainer; the game's own screenshot is black too) and the run never finishes: the game window is in front, and the simulation stops ~40 s in (frame counter frozen while logging goes on). Keep it gated | `docs/findings-hdr-2026-09-24.md` option 4; runs `win-hdr-20261011-000835`, `win-hdr2-20261011-001254` |
+| 6 | DLSS on Windows (`pzopt_ngx64.dll`) | releases ship no natives (`upscaler=dlss` runs as FSR 1). The desktop's game folder has a hand-placed `natives\pzopt_ngx64.dll` + `nvngx_dlss.dll` (not in any manifest, untouched by the installers); not tested this session | `docs/dlss-windows-build.md`, `docs/plan-upscalers.md` |
+| 7 | Reflections (SSR: image load/store patches into the game's shaders) on Windows drivers (**NVIDIA done 2026-10-11**; AMD / Intel open) | **NVIDIA works** (2026-10-11, run `win-ssr-storm-20261011-000440`, storm): all three patches compiled (`chunkShader.frag` scatter, puddles, `water_hq.frag`), two 5120x2160 R32UI hashes, moving scatter ready, the route finished, the screenshot is a normal wet scene. AMD / Intel on Windows still untested | `docs/findings-reflections-2026-09-25.md` |
 | 8 | AMD/Windows black world (2026-09-27): fixed by gating the patches on `godRays`, but which cause it was is still open | needs a console.txt from an AMD Windows player with god rays **on**: the line "the game's samplers back on their stock units" or a black world | memory note `amd-windows-black-world-sampler-order`; release 3f8f7dc |
 
 The general first-test checklist (sections 1-6 above) was last run on 2026-09-19; a fresh pass of it on the current

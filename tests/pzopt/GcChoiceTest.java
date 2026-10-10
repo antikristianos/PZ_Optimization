@@ -35,6 +35,15 @@ public class GcChoiceTest {
       JSONObject g1 = new JSONObject(STOCK.replace("-XX:+UseZGC", "-XX:+UseG1GC"));
       String before = g1.toString();
       check(!GcChoice.toG1(g1, 0) && !GcChoice.toStock(g1) && g1.toString().equals(before), "a JSON already on G1 without our marker is left alone");
+      // the real Windows JSON: the collector per OS version, one level under "windows" (2026-10-11)
+      String win = "{\"mainClass\":\"m\",\"classpath\":[\".\",\"projectzomboid.jar\"],\"vmArgs\":[\"-Xmx3072m\"],"
+            + "\"windows\":{\"6.1\":{\"vmArgs\":[\"-XX:+UseG1GC\"]},\"10.0.17134\":{\"vmArgs\":[\"-XX:+UseZGC\"]}}}";
+      JSONObject w = new JSONObject(win);
+      check(GcChoice.toG1(w, 0), "windows: switches");
+      JSONObject w10 = w.getJSONObject("windows").getJSONObject("10.0.17134");
+      check(w10.getJSONArray("vmArgs").toList().contains("-XX:+UseG1GC") && w10.getJSONArray("vmArgs").toList().contains(GcChoice.MARKER), "windows 10 section G1 + marker");
+      check(w.getJSONObject("windows").getJSONObject("6.1").getJSONArray("vmArgs").toList().equals(java.util.List.of("-XX:+UseG1GC")), "windows 6.1 section untouched");
+      check(GcChoice.toStock(w) && w.similar(new JSONObject(win)), "windows: undo gives the stock JSON back: " + w);
       // jitSteady: the marker and the trap-limit flags in every section, idempotent, undone exactly, a player's own flag kept
       JSONObject js = new JSONObject(STOCK);
       GcChoice.jitToSteady(js);
