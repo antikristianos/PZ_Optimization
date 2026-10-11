@@ -6603,3 +6603,15 @@ DEPTH16 step of the baked copy) fought a black baked copy of itself. `pplUnseenA
   wake slope with its end-of-shader lighting; the common vertex unit (stock and puddleEarlyZ's copy) gets the wake gate
   (a varying: is the vertex's square near a car's recent path). The fragment unit declares the varying only when the
   vertex units take the gate.
+
+### Player blink with entity shadows (2026-10-11, the maintainer: "in your runs the character is flickering"): FBORenderCell
+
+- `FBORenderCell.pzoptRenderInternal`: `EntityShadow.beforeMoving` (the gather worker joined, the frame's probe compute
+  queued) is called right before `renderPlayers` as well. Stock draws the players there, before `renderMovingObjects`,
+  where the compute used to be queued: a player's model read its probe brick before the compute had written it. A brick is
+  new on every square the player enters (and is recomputed whenever the occupancy grid is rebuilt), so the first frame
+  in a new square sampled a slot holding another brick's or no values: the body ~6 % darker (the torso up to 65 %) for
+  one frame per square crossed. The second call, before the moving objects, finds nothing pending (no-op). The async
+  gather is also joined before `renderPlayer`'s `CapsuleShadow.add` touches the tiles the gather reads. Runs `cfl-*`
+  (bench route at 18 tiles/s, dip every 3.3 frames; `entityShadowComputeEarly=true` and `entityShadowMethod=cpu|pixel`
+  had none).

@@ -1886,6 +1886,7 @@ public final class FBORenderCell {
       FBORenderShadows.getInstance().clear();
       boolean pzoptFloorOnly = pzopt.ResumeShot.noMoving; // pzopt: resumeShot's exit capture (below "full"): no players, shadows, corpses
       if (!pzoptFloorOnly) {
+      pzopt.EntityShadow.beforeMoving(playerIndex); // pzopt: entity shadows, the gather joined and the probe compute queued before the players draw (they read their brick here; a new square's brick was sampled before its compute: a dark frame per square crossed); the call before the moving objects is then a no-op
       pzopt.GpuSections.begin("players"); // pzopt: GPU section (players, corpse / mannequin shadows)
       this.renderPlayers(playerIndex);
       this.renderCorpseShadows(playerIndex);
