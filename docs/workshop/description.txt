@@ -31,8 +31,8 @@ Linux, macOS: [code]curl -fsSL https://github.com/xD3I/PZ_Optimization/releases/
 Steam: right-click the game, Manage > Browse local files. Go up to [b]steamapps[/b], then workshop\content\108600\3805285544\mods\PZ_Optimization\42\pzopt-classes. Copy everything in it into the game folder (where projectzomboid.jar is), skipping files that already exist.
 
 [h1]New! Puddle ripples[/h1]
-[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/83-new-puddle-ripples.avif[/img]
-[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/84-new-puddle-ripples-changes.png[/img]
+[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/85-new-puddle-ripples-2.avif[/img]
+[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/86-new-puddle-ripples-2-changes.png[/img]
 
 [h1]Features[/h1]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/65-feature-fast-boot-load-split.avif[/img]

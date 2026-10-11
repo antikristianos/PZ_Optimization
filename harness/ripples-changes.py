@@ -19,21 +19,23 @@ spec = importlib.util.spec_from_file_location('ent', os.path.join(here, 'entity-
 ent = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ent)
 
-INTRO = ('Whoever walks or drives through a puddle ripples it: real water, each step a train of rings that spreads, '
+INTRO = ('Footsteps, raindrops and cars ripple the puddles: real water, each ring a train of waves that spreads, '
          'crosses the others and bends what the puddle mirrors')
 # what, stock, now
 ROWS = [
     ('You, zombies, animals', 'no rings', 'a ring each step'),
-    ('Cars', 'no rings', 'a wake'),
-    ('Rain', 'raindrops only', 'steps stir more'),
+    ('Raindrops', 'grid of half rings', 'real drop rings'),
+    ('Cars', 'no wake', 'a continuous wake'),
     ('Sky and reflections', 'still', 'bent by the rings'),
     ('A horde in a flood', '', 'max 160 rings/s'),
 ]
-COST = [('Desktop, 190 rings, max zoom', '+0.009 ms'), ('Handheld, the same rings', '+0.019 ms'),
-        ('Game thread, 450-zombie horde', '~0.006 ms')]
-FOOT = ('Options > PZ Optimization > Visuals > Water and puddles: "Puddle ripples" (next launch). GPU time per frame, '
-        'desktop (RTX 4090, 5120x2160) and Ayaneo Flip (Radeon 890M, 1920x1080); the rings are an iWave water '
-        'simulation\'s own impulse response, binned per screen tile off the game thread.')
+# docs/findings-rain-wakes-2026-10-11.md (raindrops: interleaved still runs; wake: the flooded 30 km/h drive) and
+# docs/findings-puddle-ripples-2026-10-10.md (footsteps)
+COST = [('Raindrops vs stock, desktop', '-0.020 ms'), ('Raindrops vs stock, handheld', '-0.036 ms'),
+        ('Car wake while driving, desktop', '+0.013 ms'), ('Footsteps, 190 rings, desktop', '+0.009 ms')]
+FOOT = ('Options > PZ Optimization > Visuals > Water and puddles: "Puddle ripples" (next launch), raindrops and car wakes '
+        'beside it. GPU time per frame, desktop (RTX 4090, 5120x2160) and Ayaneo Flip (Radeon 890M, 1920x1080), puddles '
+        'everywhere; the raindrops are a precomputed loop, cheaper than the game\'s own rings.')
 
 
 def main():

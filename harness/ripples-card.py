@@ -7,8 +7,11 @@ Two segments, one divider cycle each, each from its own pair of in-game devCaptu
 screen round the player, 30 fps), KY-60 by the bench save, noon, rain with clear puddles (`puddle_mud=0`: the first
 minutes of a shower, before the rain makes them muddy; both sides the same):
 
-    walk   the player walks east and back along the road     ripcard-walk-{stock,enh} (zoom 0.5, devCapture crop=2010:450:1100:1260)
-    drive  a car at 30 km/h east through the puddles          ripcard-drive3-{stock,enh} (zoom 0.75, devCapture crop=1300:278:1400:1604)
+    walk   the player walks east and back along the road     ripcard2-walk-{stock,enh} (zoom 0.5, devCapture crop=2010:450:1100:1260)
+    drive  a car at 30 km/h east through the puddles          ripcard2-drive-{stock,enh} (zoom 0.75, devCapture crop=1300:278:1400:1604)
+
+2026-10-11 (second card): the same runs again with the raindrop rings (ripplesRain=flipbook) and the car wake
+(ripplesWake=trail), both on with ripples (docs/findings-rain-wakes-2026-10-11.md).
 
     stock     --prop enabled=false
     enhanced  --prop ripples=true (the defaults otherwise; -Dpzopt.userOptionsFile=<empty file>)
@@ -38,8 +41,8 @@ spec.loader.exec_module(props)
 LABEL = 'Puddle Ripples'
 # (stock run, enhanced run, route second the segment starts, crop x, y, w, h in the capture (rows top-down))
 SEGMENTS = [
-    ('ripcard-walk-stock', 'ripcard-walk-enh', 3.0, (275, 315, 550, 630)),
-    ('ripcard-drive3-stock', 'ripcard-drive3-enh', 0.1, (0, 0, 1400, 1604)),  # zoom 0.75, the whole capture: the camera leads the car, its wake trails behind
+    ('ripcard2-walk-stock', 'ripcard2-walk-enh', 3.0, (275, 315, 550, 630)),
+    ('ripcard2-drive-stock', 'ripcard2-drive-enh', 0.1, (0, 0, 1400, 1604)),  # zoom 0.75, the whole capture: the camera leads the car, its wake trails behind
 ]
 
 
