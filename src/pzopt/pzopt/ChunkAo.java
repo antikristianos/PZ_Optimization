@@ -1667,7 +1667,7 @@ public final class ChunkAo {
    }
 
    /** A tree sprite's height above its foot in levels (IsoTree.renderInner's JUMBO sizes: 15, 11, 7 floor heights of 32 px, else 3). */
-   private static float treeLevels(IsoTree t) {
+   static float treeLevels(IsoTree t) {
       zombie.core.textures.Texture tex = t.getSprite() != null ? t.getSprite().getTextureForCurrentFrame(t.getDir(), t) : null;
       String tn = tex != null && tex.getName() != null ? tex.getName() : t.getSprite() != null ? t.getSprite().name : null;
       float floors = tn == null ? 3F : tn.contains("JUMBOXXL") ? 15F : tn.contains("JUMBOXL") ? 11F : tn.contains("JUMBO") ? 7F : 3F;

@@ -2109,12 +2109,24 @@ public final class Harness {
          String name = part.substring(0, at).trim();
          String[] xyz = part.substring(at + 1).trim().split(",");
          int x = Integer.parseInt(xyz[0].trim()), y = Integer.parseInt(xyz[1].trim()), z = xyz.length > 2 ? Integer.parseInt(xyz[2].trim()) : 0;
-         zombie.iso.IsoGridSquare sq = cell.getGridSquare(x, y, z);
+         // floor:<sprite> (2026-10-11, the tree sky-AO repro): a floor through the game's own addFloor (RecalcProperties +
+         // checkHaveRoof: the squares under it lose the exterior flag), on a square created when the level has none (open
+         // air over the ground), e.g. a gas-station canopy roof (roofs_04_55) two levels up
+         boolean floor = name.startsWith("floor:");
+         if (floor) {
+            name = name.substring(6);
+         }
+         zombie.iso.IsoGridSquare sq = floor ? cell.getOrCreateGridSquare(x, y, z) : cell.getGridSquare(x, y, z);
          if (sq == null) {
             Log.info("harness: place_tile: no square at " + x + "," + y + "," + z);
             continue;
          }
-         zombie.iso.IsoObject o = sq.addTileObject(name);
+         zombie.iso.IsoObject o = floor ? sq.addFloor(name) : sq.addTileObject(name);
+         if (floor) {
+            zombie.iso.IsoGridSquare below = cell.getGridSquare(x, y, 0);
+            Log.info("harness: place_tile: floor " + name + " at " + x + "," + y + "," + z + "; ground below outside="
+               + (below == null ? "?" : below.isOutside()) + " haveRoof=" + (below != null && below.haveRoof));
+         }
          zombie.iso.sprite.IsoSprite s = o == null ? null : o.getSprite();
          Log.info("harness: place_tile: " + name + " at " + x + "," + y + "," + z + (s == null ? " (no sprite)" : " depthFlags " + s.depthFlags + (GlassTiles.isGlass(s) ? " glass" : "")));
       }

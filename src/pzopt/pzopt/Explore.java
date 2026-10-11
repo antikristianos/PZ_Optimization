@@ -316,7 +316,7 @@ public final class Explore {
       zombie.iso.IsoCell cell = zombie.iso.IsoWorld.instance.currentCell;
       int px = (int)p.getX(), py = (int)p.getY(), pz = (int)p.getZ();
       java.util.TreeMap<String, Integer> floors = new java.util.TreeMap<>();
-      Log.info("harness: explore: probe map round " + px + "," + py + " (rows y, columns x from " + (px - 24) + "; @ player, B inside a building, | W wall, - N wall, + both, f fence edge, = road / street / dirt floor, t tree, s solid, . other floor, space none)");
+      Log.info("harness: explore: probe map round " + px + "," + py + " (rows y, columns x from " + (px - 24) + "; @ player, B inside a building, | W wall, - N wall, + both, f fence edge, = road / street / dirt floor, 0-9 tree (height in levels), s solid, . other floor, space none)");
       for (int y = py - 24; y <= py + 24; y++) {
          StringBuilder row = new StringBuilder();
          for (int x = px - 24; x <= px + 24; x++) {
@@ -333,7 +333,7 @@ public final class Explore {
                else if (ww) c = '|';
                else if (wn) c = '-';
                else if (cn || cw) c = 'f';
-               else if (sq.getTree() != null) c = 't';
+               else if (sq.getTree() != null) c = (char)('0' + Math.min(9, Math.round(ChunkAo.treeLevels(sq.getTree())))); // its height in levels (the crown proxy's size)
                else if (sq.getRoom() != null) c = 'B';
                else if (name.contains("street") || name.contains("road") || name.contains("dirt") || name.contains("gravel")) c = '=';
                else if (sq.has(zombie.iso.SpriteDetails.IsoFlagType.solid) || sq.has(zombie.iso.SpriteDetails.IsoFlagType.solidtrans)) c = 's';
