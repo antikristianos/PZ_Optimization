@@ -38,11 +38,20 @@ public class RipplesTest {
       String unit = Files.readString(shaders.resolve("puddles_common.frag.glsl"));
       String patched = Ripples.patchText(unit);
       Check.check(patched != null && patched.startsWith("#version 120"), "the puddle unit patches and stays GLSL 1.20 (Hdr / Ssr check the version line)");
+      Check.check(patched.contains("rainWaves = pzRain(fragCoord)") && patched.contains("pzWakeG = pzWake(fragCoord"), "the rain and wake hooks are in");
       Check.check(patched.contains("vec3 reflection = fragColor.rgb;") && patched.contains("fragColor.a = mix(fragColor.a, 0.5+muddyPuddles*0.3, alphaPuddlesReflection);"),
             "Ssr's and Hdr's anchors are still there");
       if (onPath("glslangValidator")) {
          Path tmp = Files.createTempDirectory("pzrip");
-         String[][] units = {{"puddle.frag", patched}, {"field.comp", RipplesGpu.FIELD_CS}, {"step.comp", RipplesGpu.STEP_CS}, {"clear.comp", RipplesGpu.CLEAR_CS}};
+         String vert = Wakes.patchVert(Files.readString(shaders.resolve("puddles_common.vert.glsl")));
+         Check.check(vert != null, "the puddle vertex unit takes the wake gate");
+         Path early = jar.toPath().getParent().resolve("media/shaders/pzopt_puddles_common.vert.glsl");
+         if (Files.exists(early)) {
+            Check.check(Wakes.patchVert(Files.readString(early)) != null, "puddleEarlyZ's vertex unit takes the wake gate too");
+         }
+         String[][] units = {{"puddle.frag", patched}, {"puddle.vert", vert + "\nvoid main(void) { puddlesMain(); }\n"}, {"field.comp", RipplesGpu.FIELD_CS}, {"step.comp", RipplesGpu.STEP_CS}, {"clear.comp", RipplesGpu.CLEAR_CS},
+               {"rainfield.comp", RainRipples.FIELD_CS}, {"rainstep.comp", RainRipples.STEP_CS},
+               {"wakestamp.comp", Wakes.STAMP_CS}, {"wakeclear.comp", Wakes.CLEAR_CS}, {"wakebin.comp", Wakes.BIN_CS}, {"wakegather.comp", Wakes.GATHER_CS}};
          for (String[] u : units) {
             Path f = tmp.resolve(u[0]);
             Files.writeString(f, u[1]);
@@ -51,6 +60,30 @@ public class RipplesTest {
             Check.check(pr.waitFor() == 0, u[0] + " compiles:\n" + out);
          }
       }
+
+      // the raindrop bakes (pzopt.RainRipples): Lagarde's drop texture and the flipbook hold rings, in reasonable time
+      long tb = System.nanoTime();
+      java.nio.ShortBuffer tex = RainRipples.buildTexture(1);
+      long tv = System.nanoTime();
+      java.nio.ByteBuffer vol = RainRipples.buildFlipbook(2);
+      long te = System.nanoTime();
+      int inDrop = 0;
+      for (int i = 0; i < RainRipples.N * RainRipples.N; i++) {
+         int ox = (tex.get(i * 4) & 65535) - 32768, oy = (tex.get(i * 4 + 1) & 65535) - 32768;
+         if ((long)ox * ox + (long)oy * oy < 32767L * 32767L) {
+            inDrop++;
+         }
+      }
+      Check.check(inDrop > RainRipples.N * RainRipples.N / 5, "the drop texture covers " + inDrop + " texels");
+      int moving = 0;
+      for (int i = 0; i < vol.capacity(); i++) {
+         if (Math.abs((vol.get(i) & 255) - 128) > 3) {
+            moving++;
+         }
+      }
+      Check.check(moving > vol.capacity() / 20, "the flipbook has slopes in " + moving + " of " + vol.capacity() + " bytes");
+      System.out.printf("rain bakes: texture %.0f ms (%d drop texels), flipbook %.0f ms (%d sloped bytes) %s, sim g %.4f, reach %.3f, life %.3f%n",
+            (tv - tb) / 1e6, inDrop, (te - tv) / 1e6, moving, RainRipples.status, RainRipples.SIM_G, RainRipples.REACH, RainRipples.LIFE);
 
       // world bins: rings born round two spots (one across the toroidal seam), all listed where they reach, gone after life
       Ripples.Frame fr = new Ripples.Frame();

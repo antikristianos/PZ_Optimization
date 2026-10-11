@@ -220,6 +220,7 @@ public final class FBORenderCell {
       }
       int playerIndex = IsoCamera.frameState.playerIndex;
       pzopt.EntityShadow.frameStart(playerIndex); // pzopt: entity shadows, the frame's light and probe bricks (its compute first in the frame: the pipeline has drained at the swap)
+      pzopt.Ripples.frameStart(playerIndex); // pzopt: rain rings / car wakes, last frame's compute passes first in this frame
       if (pzopt.CharDraw.enabled()) {
          pzopt.CharDraw.walk(IsoWorld.instance.getCell().getObjectList(), this); // pzopt: charDrawPrep, the object walk on a worker from here
       }

@@ -41,7 +41,7 @@ final class Enhancements {
    static void apply(String key) {
       switch (key) {
          case "fsrSharpnessPct", "upscalerObjectMv", "dlssWaterCurrent", "dlssWaterHistoryPct", "reflections", "reflectionStrengthPct", "reflectionPuddles",
-               "ripples", "ripplesMode", "ripplesStrengthPct", "ripplesVehicles", "ripplesPerSec", "bloodWet", "bloodWetMinutes", "bloodReflectPct", "bloodSheenPct", "bloodGlintPct", "occludedZombieOutlines", "occludedOutlineIgnorePlants",
+               "ripples", "ripplesMode", "ripplesStrengthPct", "ripplesVehicles", "ripplesPerSec", "ripplesRain", "ripplesWake", "ripplesRainPct", "bloodWet", "bloodWetMinutes", "bloodReflectPct", "bloodSheenPct", "bloodGlintPct", "occludedZombieOutlines", "occludedOutlineIgnorePlants",
                "occludedOutlineWidth", "occludedOutlineColour", "occludedOutlineOpacityPct" -> {
             // read every frame
          }

@@ -97,7 +97,9 @@ public final class Ripples {
    }
    static final float BIG = 1.8F; // a vehicle wheel's ring: this much bigger in space and time
    static final float RAIN_BOOST = 0.75F; // the rings' strength x (1 + this x the puddles' rain intensity, 0..2): they would drown in the raindrop rings
-   static final float SHADE_X = 0.2F, SHADE_Z = 0.5F; // crest shading: how much a ring's slope towards the top of the screen brightens the puddle
+   static final float SHADE_X = 0.2F, SHADE_Z = 0.5F;
+   // rain rings and wakes: their slope against a light from the top of the screen, added to the puddle's final colour
+   static final float LIT_X = 0.35F, LIT_Z = 0.9F, LIT_GAIN = Config.DEV_RAIN_LIT_PCT / 100F, LIT_ALPHA = 0.35F; // crest shading: how much a ring's slope towards the top of the screen brightens the puddle
 
    static final String[] MODES = {"loop", "tiled", "alu", "field", "sim", "world"};
    static final int LOOP = 1, TILED = 2, ALU = 3, FIELD = 4, SIM = 5, WORLD = 6;
@@ -128,7 +130,7 @@ public final class Ripples {
          b.append(String.format(" hook_us/frame=%.2f", hookNs / 1000.0 / frames));
       }
       b.append(String.format(" bin_us=%.2f inserts/frame=%d tile_kb/frame=%.1f", binFrames > 0 ? binNs / 1000.0 / binFrames : 0.0, binFrames > 0 ? binInserts / binFrames : 0, frames > 0 ? tileBytes / 1024.0 / frames : 0.0));
-      return b.append(' ').append(RipplesGpu.stats()).toString();
+      return b.append(' ').append(RipplesGpu.stats()).append(' ').append(RainRipples.stats()).append(' ').append(Wakes.stats()).toString();
    }
 
    // ------------------------------------------------------------------------------------------------ sources (game thread)
@@ -142,6 +144,7 @@ public final class Ripples {
    private static long lastNs;
    private static int lastFrame = Integer.MIN_VALUE;
    static int phase; // this frame's mode: 0 = off (dev A/B), else the mode index + 1
+   static int rainPhase = RainRipples.CELLS, wakePhase = Wakes.RINGS; // this frame's raindrop and wake modes (RainRipples.MODES / Wakes.MODES indices)
    private static int phaseFrame = Integer.MIN_VALUE;
 
    static void emit(float x, float y, int z, float amp, boolean big) {
@@ -193,6 +196,12 @@ public final class Ripples {
       if (Config.DEV_RIPPLES_ALTERNATE <= 0 || !on()) {
          return "puddles";
       }
+      if (!Config.DEV_RAIN_MODES.isEmpty()) {
+         return "puddles.rain_" + RainRipples.MODES[rainPhase];
+      }
+      if (!Config.DEV_WAKE_MODES.isEmpty()) {
+         return "puddles.wake_" + Wakes.MODES[wakePhase];
+      }
       return phase == 0 ? "puddles.off" : "puddles." + MODES[phase - 1];
    }
 
@@ -204,8 +213,39 @@ public final class Ripples {
       if ((mode == SIM || mode == FIELD) && !RipplesGpu.supported()) {
          mode = TILED;
       }
+      rainPhase = RainRipples.effective(RainRipples.modeIndex(Config.RIPPLES_RAIN));
+      wakePhase = Wakes.effective(Wakes.modeIndex(Config.RIPPLES_WAKE));
       int ms = Config.DEV_RIPPLES_ALTERNATE;
       if (ms <= 0) {
+         return wakePhase == Wakes.SIM ? SIM : mode; // the wakes in the sim: the footsteps run there too
+      }
+      if (!Config.DEV_RAIN_MODES.isEmpty() || !Config.DEV_WAKE_MODES.isEmpty()) {
+         // the raindrop or wake A/B: the footsteps keep their mode, the listed modes take turns (no implicit off)
+         boolean rain = !Config.DEV_RAIN_MODES.isEmpty();
+         String[] list = (rain ? Config.DEV_RAIN_MODES : Config.DEV_WAKE_MODES).split("\\|");
+         int k = (int)((System.currentTimeMillis() / ms) % list.length);
+         String name = list[k].trim();
+         int p;
+         if (rain) {
+            rainPhase = RainRipples.effective(RainRipples.modeIndex(name));
+            p = 100 + rainPhase;
+            name = "rain_" + RainRipples.MODES[rainPhase];
+         } else {
+            wakePhase = Wakes.effective(Wakes.modeIndex(name));
+            p = 200 + wakePhase;
+            name = "wake_" + Wakes.MODES[wakePhase];
+            if (wakePhase == Wakes.SIM) {
+               mode = SIM;
+            }
+         }
+         if (p != lastLoggedPhase) {
+            lastLoggedPhase = p;
+            phaseLog.append(' ').append(name).append('@').append(System.currentTimeMillis());
+            if (phaseLog.length() > 1500) {
+               Log.info("ripples: phases" + phaseLog);
+               phaseLog.setLength(0);
+            }
+         }
          return mode;
       }
       String[] list = Config.DEV_RIPPLES_MODES.isEmpty() ? new String[] {MODES[mode - 1]} : Config.DEV_RIPPLES_MODES.split("\\|");
@@ -271,6 +311,7 @@ public final class Ripples {
          }
          RipplesGpu.advance(dt);
          RipplesWorld.tick();
+         RainRipples.advance(dt, rainPhase);
       }
       Frame fr;
       if (!first && lastBuiltPlayer == playerIndex) {
@@ -469,6 +510,10 @@ public final class Ripples {
    private static final Vector3f WHEEL = new Vector3f();
 
    private static void vehicle(zombie.vehicles.BaseVehicle v) {
+      if (wakePhase != Wakes.RINGS && wakePhase != Wakes.SIM) {
+         Wakes.vehicle(v, wakePhase); // a continuous wake (pzopt.Wakes)
+         return;
+      }
       float x = v.getX(), y = v.getY();
       float lx = v.pzoptRipX, ly = v.pzoptRipY;
       float dx = x - lx, dy = y - ly;
@@ -482,7 +527,7 @@ public final class Ripples {
       float elapsed = Math.max(0.016F, (float)clock - v.pzoptRipT);
       float speed = (float)Math.sqrt(d2) / elapsed; // squares a second
       // a wake, not a ring a quarter square: the spacing grows with the speed (0.06 s of travel, 0.3 .. 1.5 squares)
-      float spacing = Math.max(0.3F, Math.min(1.5F, speed * 0.06F));
+      float spacing = wakePhase == Wakes.SIM ? Wakes.SIM_SPACING : Math.max(0.3F, Math.min(1.5F, speed * 0.06F)); // sim: a moving source, its wake the water's own
       if (d2 < spacing * spacing) {
          return;
       }
@@ -580,6 +625,10 @@ public final class Ripples {
       // the gate: no pixel outside this box does any ripple work (world / sim: true world squares; else view px)
       float bx0, by0, bx1, by1;
       final Begin begin = new Begin(this);
+      final RainRipples.RainFrame rain = new RainRipples.RainFrame();
+      final Wakes.WakeFrame wake = new Wakes.WakeFrame();
+      final Compute compute = new Compute(this);
+      boolean computeQueued;
    }
 
    static final class WorldFrame {
@@ -613,6 +662,37 @@ public final class Ripples {
       }
    }
 
+   /**
+    * The raindrops' and wakes' compute passes of a frame (field / sim steps, slab stamps, particle bin / gather), run at the
+    * start of the next frame's world render (2026-10-11, rw-cost-wake13-nodraw: queued right before the puddle draws, a
+    * dispatch waited for the graphics before it to drain and its barrier emptied the texture caches the puddles then
+    * refilled: ~12 us with no wake pixel drawn at all; EntityShadow found the same ~21 us a dispatch). The puddles read
+    * the result one frame (~16 ms) late.
+    */
+   static final class Compute extends TextureDraw.GenericDrawer {
+      final Frame f;
+
+      Compute(Frame f) {
+         this.f = f;
+      }
+
+      @Override
+      public void render() {
+         RainRipples.render(this.f.rain);
+         Wakes.render(this.f);
+      }
+   }
+
+   /** Game thread, FBORenderCell at the start of the world render: the last built frame's compute, first in this frame. */
+   public static void frameStart(int playerIndex) {
+      Frame f = lastBuilt;
+      if (f == null || f.computeQueued || !on()) {
+         return;
+      }
+      f.computeQueued = true;
+      SpriteRenderer.instance.drawGeneric(f.compute);
+   }
+
    private static final Frame[] FRAMES = new Frame[8];
    private static int frameIndex;
    static volatile Frame renderFrame;
@@ -638,10 +718,13 @@ public final class Ripples {
       fr.oy = oy;
       fr.mode = phase;
       fr.nSlots = 0;
+      fr.computeQueued = false;
+      // raindrops and wakes: a frame every frame while either draws (the clock moves); they ride on the footsteps' frame
+      boolean extra = RainRipples.build(fr.rain, rainPhase, playerIndex) | Wakes.build(fr, wakePhase, playerIndex);
       if (phase == WORLD) {
          fr.n = 0;
          boolean any = RipplesWorld.build(fr);
-         if (!any && !lastSent) {
+         if (!any && !lastSent && !extra) {
             return null;
          }
          lastSent = fr.world.any;
@@ -697,7 +780,7 @@ public final class Ripples {
       if (phase == SIM) {
          // the simulation runs while its tiles are active, rings on screen or not; the shader samples it everywhere
          boolean any = RipplesGpu.buildSim(fr, playerIndex);
-         if (!any && !lastSent) {
+         if (!any && !lastSent && !extra) {
             return null;
          }
          lastSent = any;
@@ -707,7 +790,7 @@ public final class Ripples {
          // nothing to draw: one empty frame tells the render thread, then nothing at all is queued
          boolean send = lastSent;
          lastSent = false;
-         return send ? fr : null;
+         return send || extra ? fr : null;
       }
       if (phase >= TILED) {
          fr.binW = w;
@@ -897,6 +980,7 @@ public final class Ripples {
       if (prog <= 0 || failed) {
          return;
       }
+      RipplesGpu.noteCaps();
       int[] l = LOCATIONS.get(prog);
       if (l == null) {
          l = new int[UNIFORMS.length];
@@ -921,6 +1005,8 @@ public final class Ripples {
          return; // not a patched program
       }
       Frame f = renderFrame;
+      RainRipples.uniforms(prog, f);
+      Wakes.uniforms(prog, f);
       boolean sim = f != null && f.mode == SIM && f.sim.any;
       boolean world = f != null && f.mode == WORLD && f.world.any;
       if (f == null || f.n == 0 && !sim && !world || !on()) {
@@ -1060,20 +1146,40 @@ public final class Ripples {
          return code;
       }
       String f = fileName.replace('\\', '/');
+      if (f.endsWith("puddles_common.vert.glsl")) {
+         String v = Wakes.patchVert(code);
+         if (v == null) {
+            Log.warn("ripples: " + fileName + " has changed, no wake gate: wakes off");
+            Wakes.failed = true;
+            return code;
+         }
+         Log.info("ripples: wake gate patched into " + fileName);
+         return v;
+      }
       if (!f.endsWith("puddles_common.frag.glsl")) {
          return code;
       }
-      String c = patchText(code);
+      org.lwjgl.opengl.GLCapabilities caps = org.lwjgl.opengl.GL.getCapabilities(); // (ShaderUnit compiles with the context current)
+      // the raindrop flipbook's sampler3D: Mesa wants its unit in the source (the game validates with every sampler on unit 0
+      // and Mesa refuses two sampler types on one unit), NVIDIA's GLSL 1.20 refuses layout() even with 420pack (and does
+      // not need it): the bound variant first, the plain one when the driver's compiler refuses it
+      boolean binding = caps.OpenGL42 || caps.GL_ARB_shading_language_420pack || CoreGl.active;
+      String c = patchText(code, binding);
       if (c == null) {
          Log.warn("ripples: " + fileName + " has changed, no ripples");
          return code;
       }
-      int test = GL20.glCreateShader(GL20.GL_FRAGMENT_SHADER);
-      GL20.glShaderSource(test, c);
-      GL20.glCompileShader(test);
-      boolean ok = GL20.glGetShaderi(test, GL20.GL_COMPILE_STATUS) != 0;
-      String log = ok ? "" : GL20.glGetShaderInfoLog(test, 4096);
-      GL20.glDeleteShader(test);
+      String log = compileLog(c);
+      if (log != null && binding) {
+         c = patchText(code, false);
+         String plain = compileLog(c);
+         Log.info("ripples: the driver refuses layout(binding) in the puddle unit, the raindrop flipbook's sampler3D declared plain" + (plain == null ? "" : " (that fails too)"));
+         if (plain == null) {
+            RainRipples.noVolume = false; // declared, unit set by glUniform1i (validation never sees two types on unit 0 there)
+         }
+         log = plain;
+      }
+      boolean ok = log == null;
       if (!ok) {
          Log.warn("ripples: " + fileName + " patch does not compile, no ripples: " + log);
          return code;
@@ -1083,22 +1189,48 @@ public final class Ripples {
       return c;
    }
 
+   /** null when the fragment unit compiles here, else the driver's log. */
+   private static String compileLog(String src) {
+      int test = GL20.glCreateShader(GL20.GL_FRAGMENT_SHADER);
+      GL20.glShaderSource(test, src);
+      GL20.glCompileShader(test);
+      boolean ok = GL20.glGetShaderi(test, GL20.GL_COMPILE_STATUS) != 0;
+      String log = ok ? null : GL20.glGetShaderInfoLog(test, 4096);
+      GL20.glDeleteShader(test);
+      return log;
+   }
+
    /** The puddle unit's text with the ripples in (no GL: the tests compile it with glslangValidator), or null when its anchors moved. */
    static String patchText(String code) {
+      return patchText(code, true);
+   }
+
+   /** {@code binding}: the context takes layout(binding) in GLSL 1.20 (420pack): the raindrop flipbook's sampler3D needs it. */
+   static String patchText(String code, boolean binding) {
       String anchor = "gm += rainWaves.xxy*0.3;";
       int sm = code.indexOf("vec2 SphereMap(");
       if (sm < 0 || !code.contains(anchor) || !code.contains("float levelf =") || !code.contains("uniform vec4 WOffset;") || !code.contains("float puddlesZCoordinate")) {
          return null;
       }
-      String c = code.substring(0, sm) + RING_GLSL + "\n" + code.substring(sm);
-      c = c.replace(anchor, anchor + "\n    if (pzRipP.z > 0.5 && (levelf*puddlesSize > 0.28 || pzRipT.w > 0.5)) { pzRipG = pzRipGrad(fragCoord) * pzRipP.y * (1.0 + " + RAIN_BOOST + " * rainIntensity); gm.xz -= pzRipG; } // pzopt: puddle ripples (a footstep stirs more than the raindrops' rings: stronger in rain)");
+      String c = code.substring(0, sm) + RING_GLSL + "\n" + RainRipples.glsl(binding) + "\n" + Wakes.glsl() + "\n" + code.substring(sm);
+      if (binding) {
+         // right after the version line (Mesa refuses a declaration before an #extension; Ssr keeps what follows its own header)
+         int eol = c.indexOf('\n');
+         c = c.substring(0, eol + 1) + "#extension GL_ARB_shading_language_420pack : enable\n" + c.substring(eol + 1);
+      }
+      c = RainRipples.patch(c);
+      if (c == null) {
+         return null;
+      }
+      c = c.replace(anchor, anchor + "\n    if (pzRipP.z > 0.5 && (levelf*puddlesSize > 0.28 || pzRipT.w > 0.5)) { pzRipG = pzRipGrad(fragCoord) * pzRipP.y * (1.0 + " + RAIN_BOOST + " * rainIntensity); gm.xz -= pzRipG; } // pzopt: puddle ripples (a footstep stirs more than the raindrops' rings: stronger in rain)\n    pzWakeG = pzWake(fragCoord, levelf*puddlesSize); pzRipG += pzRainG + pzWakeG; gm.xz -= pzRainG + pzWakeG; // pzopt: rain rings (pzopt.RainRipples), car wakes (pzopt.Wakes)");
       // the crests catch the light (the overcast sky the puddle mirrors in rain is flat: the tilt alone hardly shows)
       String refl = "vec3 reflection = fragColor.rgb;";
       if (c.contains(refl)) {
          c = c.replace(refl, refl + "\n    reflection += vec3(dot(pzRipG, vec2(" + SHADE_X + ", " + SHADE_Z + "))); // pzopt: puddle ripples, crest shading");
       }
       String end = "fragColor.a = mix(fragColor.a, 0.5+muddyPuddles*0.3, alphaPuddlesReflection);";
-      return c.replace(end, end + "\n    if (pzRipT.w > 0.5) fragColor = vec4(clamp(vec3(pzRipG.x, pzRipG.y, -pzRipG.y) * 4.0, 0.0, 1.0) + vec3(0.0, 0.0, 0.15), 1.0); // pzopt: puddle ripples, dev view");
+      return c.replace(end, end + "\n    { float pzL = dot(pzRainG + 0.35 * pzWakeG, vec2(" + LIT_X + ", " + LIT_Z + ")); fragColor.rgb += vec3(pzL * " + LIT_GAIN + "); fragColor.a = min(1.0, fragColor.a + abs(pzL) * " + LIT_ALPHA + "); } // pzopt: rain rings / wakes catch the light (signed: one flank of a crest bright, the other dark; after the stock mixes, which keep ~9 % of a normal's effect)"
+            + "\n    if (pzRipT.w > 0.5) fragColor = vec4(clamp(vec3(pzRipG.x, pzRipG.y, -pzRipG.y) * 4.0, 0.0, 1.0) + vec3(0.0, 0.0, 0.15), 1.0); // pzopt: puddle ripples, dev view");
    }
 
    /** The ring packet's radial slope (GLSL 1.20, shared by the puddle unit and the field's compute pass). */

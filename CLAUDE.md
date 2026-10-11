@@ -634,6 +634,15 @@ update) re-run `scripts/decompile.sh` and `scripts/regen-overrides.sh`.
   tails unchanged. Lessons for every pass: on Mesa a client-memory `glTexSubImage2D` waits for the driver thread (use a PBO);
   sampling the depth buffer as a texture makes AMD decompress it (use `gl_FragDepth` / the hardware test); Mesa refuses a
   declaration before an `#extension` line (MirrorsShaderTest links with Mesa llvmpipe too).
+- Raindrop rings + car wakes (2026-10-11, `docs/findings-rain-wakes-2026-10-11.md`, worktree `~/pzopt-wt/rain-wake`, with
+  `ripples`): `ripplesRain` (pzopt.RainRipples: stock | none | cells | texture | flipbook | field | sim; default `flipbook`,
+  a precomputed periodic mipmapped 3D loop, 20-33 us *cheaper* than the stock rings at 5K) replaces the game's grid of
+  clipped half rings; `ripplesWake` (pzopt.Wakes: rings | trail | kelvin | particles | sim; default `trail`, a world trail map
+  stamped by compute, ~13 us while driving through water) gives cars a continuous wake. Their compute runs at the frame's
+  start (`Ripples.frameStart`: queued before the puddle draws it stalled the graphics and flushed the puddles' texture
+  caches), the wake gate per vertex (a per-pixel gate over 11 M pixels cost more than it saved). Mesa needs the flipbook's
+  sampler3D bound in the source, NVIDIA's 1.20 refuses layout(): `RipplesLinkTest`. Rigs `devRainModes` / `devWakeModes`
+  + `devRipplesAlternate`, `harness/ripples/cost.py --base`, `phaseframes.py`.
 - Open plans: `docs/plan-drive-game-thread.md` (2026-09-26: late frames while driving through town), `docs/plan-graphics-enhancements.md` (2026-09-25: visual features; items 1, 2, 4 and candidate B shipped by 2026-09-26), `docs/plan-game-load.md`, `docs/plan-vulkan-renderer.md`, `docs/plan-resource-use.md`,
   `docs/plan-zombie-multithread.md` (2026-09-22: the rest of the zombie simulation on all cores, phased).
   The game-thread optimization plans were dropped on 2026-09-21 at the maintainer's request.

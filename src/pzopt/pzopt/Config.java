@@ -1443,6 +1443,16 @@ public final class Config {
    public static volatile int RIPPLES_STRENGTH_PCT; // puddle ripples: how far the rings tilt the puddle's surface (live)
    public static volatile boolean RIPPLES_VEHICLES;
    public static volatile int RIPPLES_PER_SEC; // puddle ripples: footstep rings a second at most (a horde: each step passes with budget / rate; your own always) (live) // puddle ripples: the wheels of moving vehicles ring the puddles too (live)
+   public static volatile String RIPPLES_RAIN; // puddle ripples: the raindrops' rings on puddles and wet ground: stock (the game's) | none | cells | texture | flipbook | field | sim (live; docs/findings-rain-wakes-2026-10-11.md)
+   public static volatile String RIPPLES_WAKE; // puddle ripples: what a car leaves in the puddles: rings (a wheel ring every few squares) | trail | kelvin | particles | sim (live; docs/findings-rain-wakes-2026-10-11.md)
+   public static volatile int RIPPLES_RAIN_PCT; // puddle ripples: the raindrops' rings, how strongly they tilt the surface (live)
+   public static final int DEV_RAIN_SCALE_PCT = integer("devRainScalePct", 40); // dev: a raindrop's ring against a footstep's (% in space; time sqrt of it); read at launch
+   public static final int DEV_RAIN_AMP_PCT = integer("devRainAmpPct", 150); // dev: a raindrop's slope against a footstep's (%); read at launch
+   public static final int DEV_RAIN_LIT_PCT = integer("devRainLitPct", 120); // dev: how much a rain ring's / wake's slope brightens / darkens the puddle's final colour (%); read at launch
+   public static final String DEV_RAIN_MODES = string("devRainModes", ""); // dev: with devRipplesAlternate, the raindrop modes cycled (GPU section puddles.rain_<mode>), "stock|none|cells"
+   public static final String DEV_WAKE_MODES = string("devWakeModes", "");
+   public static final boolean DEV_WAKE_NO_DRAW = bool("devWakeNoDraw", false); // dev: the wake passes run (stamps, uploads, gates) but the puddles draw no wake: what the pixels cost
+   public static volatile boolean DEV_WAKE_STAMP_CPU = bool("devWakeStampCpu", false); // dev: trail / kelvin: the slabs rasterised on the game thread into a mirror of the trail map and uploaded (no compute pass), instead of a compute dispatch a slab // dev: with devRipplesAlternate, the wake modes cycled (GPU section puddles.wake_<mode>), "rings|trail"
    public static final int DEV_RIPPLES_ALTERNATE = integer("devRipplesAlternate", 0); // dev: ms per phase, cycling off and each devRipplesModes mode (GPU section puddles.off / puddles.<mode>)
    public static final String DEV_RIPPLES_MODES = string("devRipplesModes", ""); // dev: the modes devRipplesAlternate cycles, "loop|tiled" (empty: ripplesMode)
    public static final boolean DEV_RIPPLES_VIEW = bool("devRipplesView", false); // dev: the puddles paint the ring slope (red / green right / down, blue up), every puddle square
@@ -1783,6 +1793,9 @@ public final class Config {
       RIPPLES_STRENGTH_PCT = Math.max(0, Math.min(400, integer("ripplesStrengthPct", 100)));
       RIPPLES_VEHICLES = bool("ripplesVehicles", true);
       RIPPLES_PER_SEC = Math.max(0, integer("ripplesPerSec", 160));
+      RIPPLES_RAIN = string("ripplesRain", "flipbook").trim().toLowerCase(java.util.Locale.ROOT);
+      RIPPLES_WAKE = string("ripplesWake", "trail").trim().toLowerCase(java.util.Locale.ROOT);
+      RIPPLES_RAIN_PCT = Math.max(0, Math.min(400, integer("ripplesRainPct", 100)));
       BLOOD_WET = bool("bloodWet", false);
       BLOOD_WET_MINUTES = Math.max(1, integer("bloodWetMinutes", 120));
       BLOOD_REFLECT_PCT = Math.max(0, Math.min(200, integer("bloodReflectPct", 100)));

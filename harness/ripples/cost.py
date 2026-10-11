@@ -7,7 +7,11 @@ Prints per phase: frames, the puddle pass + compute GPU time per frame (mean / m
 off phase, the whole frame (overlay log: frame time, GPU busy ms) per phase, the game thread's ripple CPU time per frame
 (pzopt-bench.out ripples= line).
 
-usage: cost.py <run> [<run> ...] [--skip S] [--json out.json]
+usage: cost.py <run> [<run> ...] [--skip S] [--base PHASE] [--json out.json]
+
+--base: the phase the deltas are taken against (default off; the raindrop A/B: rain_stock, the wake A/B: wake_rings,
+devRainModes / devWakeModes name the sections puddles.rain_<mode> / puddles.wake_<mode>; their compute passes
+ripples.rain / ripples.wake count into the next puddle section like ripples.field / ripples.sim).
 """
 import json
 import re
@@ -46,11 +50,12 @@ def phase_at(changes, ms):
     return ph
 
 
-def analyse(run, skip_s):
+def analyse(run, skip_s, base="off"):
     run = Path(run)
     gs = run / "pzopt-gpusections.out"
     per = {}  # phase -> list of per-frame us
     rcpu = {}  # phase -> list of per-frame render-thread us (puddle pass + compute pass issue)
+    comp = {}  # phase -> list of per-frame compute-pass GPU us (ripples.* sections folded into the puddle pass)
     if gs.exists():
         recs = []
         for line in gs.read_text(errors="replace").splitlines():
@@ -66,21 +71,28 @@ def analyse(run, skip_s):
             if (ns - t0) / 1e9 < skip_s:
                 continue
             if name.startswith("ripples."):
-                pending += gpu
-                pending_cpu += cpu
+                # (since 2026-10-11 the rain / wake compute runs at the frame's start, outside the puddle section: added;
+                # the footsteps' field / sim compute is inside it (Begin): counted once, not added)
+                if name in ("ripples.rain", "ripples.wake"):
+                    pending += gpu
+                    pending_cpu += cpu
+                else:
+                    pend_inside = gpu
             elif name.startswith("puddles."):
                 ph = name.split(".", 1)[1]
                 per.setdefault(ph, []).append((gpu + pending) / 1000.0)
+                comp.setdefault(ph, []).append(pending / 1000.0)
                 rcpu.setdefault(ph, []).append((cpu + pending_cpu) / 1000.0)
                 pending = 0.0
                 pending_cpu = 0.0
     res = {"run": run.name, "gpu": {}, "frame": {}, "cpu": {}}
-    off = statistics.mean(per["off"]) if per.get("off") else None
+    off = statistics.mean(per[base]) if per.get(base) else None
     for ph, v in sorted(per.items()):
         mean = statistics.mean(v)
         res["gpu"][ph] = {"frames": len(v), "mean_us": round(mean, 2), "median_us": round(statistics.median(v), 2),
                           "p90_us": round(pct(v, 90), 2), "delta_us": round(mean - off, 2) if off is not None else None,
-                          "render_cpu_us": round(statistics.mean(rcpu.get(ph, [0.0])), 2)}
+                          "render_cpu_us": round(statistics.mean(rcpu.get(ph, [0.0])), 2),
+                          "compute_us": round(statistics.mean(comp.get(ph, [0.0])), 2)}
     # whole frame per phase from the overlay log
     changes = phases_from_console(run)
     ov = run / "pzopt-overlay.out"
@@ -121,11 +133,14 @@ def main():
     args = sys.argv[1:]
     skip = 5.0
     out = None
+    base = "off"
     runs = []
     i = 0
     while i < len(args):
         if args[i] == "--skip":
             skip = float(args[i + 1]); i += 2
+        elif args[i] == "--base":
+            base = args[i + 1]; i += 2
         elif args[i] == "--json":
             out = args[i + 1]; i += 2
         else:
@@ -135,16 +150,16 @@ def main():
         sys.exit(2)
     all_res = []
     for r in runs:
-        res = analyse(r, skip)
+        res = analyse(r, skip, base)
         all_res.append(res)
         print(f"== {res['run']}")
-        print(f"   {'phase':8} {'frames':>7} {'mean us':>9} {'median':>8} {'p90':>8} {'delta':>8} {'rt cpu':>7}   {'frame ms':>8} {'p99':>7} {'gpu ms':>7}   {'gt cpu':>7}")
+        print(f"   {'phase':16} {'frames':>7} {'mean us':>9} {'median':>8} {'p90':>8} {'delta':>8} {'comp':>6} {'rt cpu':>7}   {'frame ms':>8} {'p99':>7} {'gpu ms':>7}   {'gt cpu':>7}")
         for ph in sorted(set(res["gpu"]) | set(res["frame"])):
             g = res["gpu"].get(ph, {})
             f = res["frame"].get(ph, {})
             d = g.get("delta_us")
-            print(f"   {ph:8} {g.get('frames', 0):7d} {g.get('mean_us', float('nan')):9.2f} {g.get('median_us', float('nan')):8.2f} {g.get('p90_us', float('nan')):8.2f} "
-                  f"{(d if d is not None else float('nan')):8.2f} {g.get('render_cpu_us', float('nan')):7.2f}   {f.get('frametime_ms', float('nan')):8.3f} {f.get('p99_ms', float('nan')):7.3f} {f.get('gpu_ms', float('nan')):7.3f}   "
+            print(f"   {ph:16} {g.get('frames', 0):7d} {g.get('mean_us', float('nan')):9.2f} {g.get('median_us', float('nan')):8.2f} {g.get('p90_us', float('nan')):8.2f} "
+                  f"{(d if d is not None else float('nan')):8.2f} {g.get('compute_us', float('nan')):6.2f} {g.get('render_cpu_us', float('nan')):7.2f}   {f.get('frametime_ms', float('nan')):8.3f} {f.get('p99_ms', float('nan')):7.3f} {f.get('gpu_ms', float('nan')):7.3f}   "
                   f"{res['cpu'].get(ph, float('nan')):7.2f}")
         if "counters" in res:
             print("   " + res["counters"])

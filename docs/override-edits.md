@@ -6591,3 +6591,15 @@ DEPTH16 step of the baked copy) fought a black baked copy of itself. `pplUnseenA
 - `FBORenderCell.renderPuddles`: `pzopt.Ripples.gather(playerIndex)` at the top (once a frame: clock, players / animals /
   moving vehicles, the frame's rings to the render thread ahead of the puddle draws); the puddles' GPU section is named by
   `Ripples.puddleSection()` (`puddles`, or `puddles.<mode>` / `puddles.off` in the dev A/B).
+
+## Raindrop rings and car wakes (2026-10-11, `ripplesRain` / `ripplesWake`, docs/findings-rain-wakes-2026-10-11.md)
+
+- `FBORenderCell.renderInternal`: `pzopt.Ripples.frameStart(playerIndex)` right after `EntityShadow.frameStart`: the last
+  built frame's raindrop / wake compute (field or sim steps, the trail slabs, the wave particles' bin and gather) queued
+  first in this frame's world render (queued before the puddle draws it stalled the graphics and emptied the texture
+  caches the puddles then refilled); the puddles read it one frame late. Nothing is queued with `ripples` off.
+- `ShaderUnit.compile` (no new line: through `pzopt.Ripples.patchShader`): the puddles' common fragment unit also gets
+  the raindrop modes (the stock `getRain(uv)` call becomes a uniform branch: `pzRainP.x == 0` keeps the game's) and the
+  wake slope with its end-of-shader lighting; the common vertex unit (stock and puddleEarlyZ's copy) gets the wake gate
+  (a varying: is the vertex's square near a car's recent path). The fragment unit declares the varying only when the
+  vertex units take the gate.

@@ -47,6 +47,16 @@ final class RipplesGpu {
       return supported;
    }
 
+   /** OpenGL 4.3 (compute) on the render thread's context: -1 until the first puddle draw has looked (game-thread safe). */
+   static volatile int gl43 = -1;
+
+   /** Render thread: remember whether the context has compute shaders (GL.getCapabilities throws on the game thread). */
+   static void noteCaps() {
+      if (gl43 < 0) {
+         gl43 = GL.getCapabilities().OpenGL43 ? 1 : 0;
+      }
+   }
+
    static String stats() {
       return "gpu: field_dispatches=" + fieldDispatches + " sim_steps=" + simSteps + " sim_tile_steps=" + simTileSteps + " sim_clears=" + simClears
             + " sim_max_active=" + maxActive + (supported ? "" : " (no compute)");
@@ -61,7 +71,7 @@ final class RipplesGpu {
          wantedFor = m;
          wanted = "sim".equals(m) || Config.DEV_RIPPLES_ALTERNATE > 0 && Config.DEV_RIPPLES_MODES.contains("sim");
       }
-      return wanted;
+      return wanted || "sim".equals(Config.RIPPLES_WAKE) || Config.DEV_RIPPLES_ALTERNATE > 0 && Config.DEV_WAKE_MODES.contains("sim"); // the wakes in the sim
    }
 
    static float simHeightScale() {
@@ -261,6 +271,15 @@ final class RipplesGpu {
       return true;
    }
 
+   static int program(String src, String name) {
+      return computeProgram(src, name);
+   }
+
+   /** A 2D texture of one level (two-channel float formats: RG). */
+   static int texture(int w, int h, int internal, int filter, int wrap) {
+      return tex(w, h, internal, GL30.GL_RG, GL11.GL_FLOAT, filter, wrap);
+   }
+
    private static int computeProgram(String src, String name) {
       int sh = GL20.glCreateShader(GL43.GL_COMPUTE_SHADER);
       GL20.glShaderSource(sh, src);
@@ -433,13 +452,18 @@ final class RipplesGpu {
    /** Zero a whole texture once (GL 4.4 clear when there is one, else a buffer upload). */
    static final class GL44Clear {
       static void zero(int tex) {
+         zero(tex, SIM_N);
+      }
+
+      static void zero(int tex, int n) {
          if (GL.getCapabilities().OpenGL44) {
             org.lwjgl.opengl.GL44.glClearTexImage(tex, 0, GL30.GL_RG, GL11.GL_FLOAT, (FloatBuffer)null);
          } else {
-            FloatBuffer z = BufferUtils.createFloatBuffer(SIM_N * 2 * 64);
+            int rows = Math.min(64, n);
+            FloatBuffer z = BufferUtils.createFloatBuffer(n * 2 * rows);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, tex);
-            for (int y = 0; y < SIM_N; y += 64) {
-               GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, y, SIM_N, 64, GL30.GL_RG, GL11.GL_FLOAT, z);
+            for (int y = 0; y < n; y += rows) {
+               GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, y, n, rows, GL30.GL_RG, GL11.GL_FLOAT, z);
             }
          }
       }
