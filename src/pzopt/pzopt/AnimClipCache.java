@@ -31,7 +31,9 @@ import zombie.core.skinnedmodel.model.jassimp.JAssImpImporter;
  * AnimationClip constructor, so the per-bone tables come out identical.
  *
  * The key covers the source file (path, size, mtime), the skinning mesh the
- * bone indices refer to, a format version and the pzopt build (game revision
+ * bone indices refer to (its asset path and its skeleton: bone names in index
+ * order and parents, so a mod's replacement mesh gets entries of its own,
+ * pzopt.CachedAnimationTask.meshIdentity), a format version and the pzopt build (game revision
  * + commit, + build time for a dirty or git-less build); anything else
  * compiles as stock and refreshes its cache entry. Files live under
  * <cache dir>/pzopt/anims/, emptied by pzopt.CacheDir when another build

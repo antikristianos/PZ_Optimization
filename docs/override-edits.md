@@ -759,6 +759,14 @@ branch does after `onLoadedX`), and the `ProcessedAiScene` branch ends with
 thread-seconds) per boot for data that is a map of keyframes; the cache
 (one file per source, keyed by path, size, mtime and skinning mesh) replaces
 them with 2.9 thread-seconds of reading.
+2026-10-11: the key's mesh part was the skinning mesh's asset path only (`Skinned/MaleBody`), which stays the same
+when a mod replaces the mesh. Tomb's Player Body (Workshop 3429790870) ships a MaleBody with another bone order and
+ten extra `...Nub` bones, so the cache served clips with the vanilla bone indices and every character came out
+mangled (runs `tomb-cache-on` vs `tomb-cache-off`). `CachedAnimationTask.meshIdentity` adds what the import takes
+from that mesh (`ImportedSkeleton` copies its `boneIndices` and `skeletonHierarchy`): bone names in index order and
+their parents. Not the mesh file's mtime: `run.sh --mod` (and a re-download) re-copies the file with the same skeleton.
+Every install re-imports once after this change (runs `tomb-fix2-a/b`, `vanilla-fix2-a/b`: first boot misses, second
+2,161 hits, all four characters correct).
 
 ## zombie.fileSystem.FileSystemImpl (third edit, 2026-09-19, evening)
 

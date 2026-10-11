@@ -3,11 +3,14 @@ package pzopt;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.Map;
 import zombie.core.skinnedmodel.animation.AnimationClip;
 import zombie.core.skinnedmodel.model.AnimationAsset;
 import zombie.core.skinnedmodel.model.FileTask_AbstractLoadModel;
 import zombie.core.skinnedmodel.model.FileTask_LoadAnimation;
 import zombie.core.skinnedmodel.model.ModelFileExtensionType;
+import zombie.core.skinnedmodel.model.ModelMesh;
+import zombie.core.skinnedmodel.model.SkinningData;
 import zombie.fileSystem.FileSystem;
 import zombie.fileSystem.IFileTaskCallback;
 
@@ -52,11 +55,37 @@ public final class CachedAnimationTask extends FileTask_LoadAnimation {
       String mesh = "none";
       try {
          if (anim.assetParams != null && anim.assetParams.animationsMesh != null && anim.assetParams.animationsMesh.getPath() != null) {
-            mesh = String.valueOf(anim.assetParams.animationsMesh.getPath().getPath());
+            mesh = String.valueOf(anim.assetParams.animationsMesh.getPath().getPath()) + meshIdentity(anim.assetParams.animationsMesh);
          }
       } catch (Throwable ignored) {
       }
       this.meshKey = mesh;
+   }
+
+   /**
+    * What an import takes from the skinning mesh (ImportedSkeleton copies its boneIndices and skeletonHierarchy), for the
+    * cache key: bone names in index order and their parents. The mesh's asset path alone is the same when a mod replaces
+    * the mesh (Tomb's Player Body ships its own Skinned/MaleBody with another bone order and ten more bones): the cache
+    * then served clips with the vanilla bone indices and the characters came out mangled (2026-10-11). Not the mesh
+    * file's path or mtime: a re-downloaded or copied mod with the same skeleton keeps its entries.
+    */
+   static String meshIdentity(ModelMesh mesh) {
+      StringBuilder sb = new StringBuilder();
+      SkinningData sd = mesh.skinningData;
+      if (sd != null && sd.boneIndices != null) {
+         String[] names = new String[sd.boneIndices.size()];
+         for (Map.Entry<String, Integer> e : sd.boneIndices.entrySet()) {
+            int i = e.getValue();
+            if (i >= 0 && i < names.length) {
+               names[i] = e.getKey();
+            }
+         }
+         sb.append("|bones=").append(String.join(",", java.util.Arrays.asList(names)));
+         if (sd.skeletonHierarchy != null) {
+            sb.append("|parents=").append(sd.skeletonHierarchy);
+         }
+      }
+      return sb.toString();
    }
 
    @Override
