@@ -165,3 +165,35 @@ occludedZombieOutlines` on, `spriteFilter=sharp darknessFloorPct=20`); **enh2** 
 - Remembered places + zombie outlines off (enh2) is +13 % on the spin and tighter tails on the Rosewood drive, inside one-run noise
   on the highway and Louisville.
 - For context, Linux uncapped defaults 2026-10-09 (runs `unc-*`, other routes' lengths): highway 569, Rosewood 457, spin 349 fps.
+
+## 2026-10-11 01:41-02:05 — the same Windows set on G1 + 4 GB heap (launcher JSON set by hand)
+
+Same build, routes and configs as the section above; the launcher JSON edited by hand to what the fixed GcChoice writes
+(`-Xmx4096m` + `-Dpzopt.heap=3072m,none,0`, G1 + `-Dpzopt.gc=g1` in the `windows` / `10.0.17134` section; each run dir's
+`ProjectZomboid64.json` copy checked), original kept at `C:\pz\ProjectZomboid64.json.before-4g`. Runs `win-g1-<scene>-<config>-20261011-*`,
+one each. Every route complete (drives 1198.9 / 1200 and 851.6 / 852.7 tiles), zoom 2.5, **no OutOfMemoryError** (the 3 GB runs had two),
+Louisville settle frames clean and `strongMarks` 7,886 / 0 / 0: none discarded.
+
+| scene | config | fps (3 GB ZGC run) | p50 | p99 | p99.9 | > 33 ms | 1%-low | GPU | game / render thread |
+|---|---|---|---|---|---|---|---|---|---|
+| spin south | opt | **190** (179) | 4.4 ms | 17.2 ms | 34.8 ms | 7 | 58 | 84 % | 77 / 88 % |
+| | enh | **91** (68) | 9.6 ms | 28.6 ms | 35.4 ms | 8 | 35 | 71 % | 83 / 77 % |
+| | enh2 | **93** (77) | 9.3 ms | 29.7 ms | 36.0 ms | 9 | 34 | 72 % | 80 / 80 % |
+| Louisville horde | opt | **44.1** (36.6) | 19.9 ms | 72.3 ms | 132.6 ms | 98 | 14 | 40 % | 88 / 43 % |
+| | enh | **35.2** (30.7) | 25.0 ms | 85.3 ms | 134.4 ms | 160 | 12 | 45 % | 83 / 49 % |
+| | enh2 | **35.0** (29.5) | 25.3 ms | 88.5 ms | 132.5 ms | 146 | 11 | 44 % | 83 / 48 % |
+| 120 km/h east | opt | **450** (427) | 2.0 ms | 4.8 ms | 11.0 ms | 0 | 209 | 90 % | 62 / 94 % |
+| | enh | **212** (207) | 4.1 ms | 14.1 ms | 21.6 ms | 2 | 71 | 91 % | 67 / 92 % |
+| | enh2 | **216** (201) | 4.1 ms | 13.1 ms | 23.7 ms | 0 | 76 | 91 % | 69 / 92 % |
+| 120 km/h Rosewood south | opt | **341** (356) | 2.1 ms | 13.4 ms | 21.2 ms | 1 | 75 | 87 % | 71 / 93 % |
+| | enh | **177** (163) | 3.8 ms | 29.0 ms | 39.2 ms | 21 | 35 | 83 % | 73 / 86 % |
+| | enh2 | **176** (167) | 3.9 ms | 27.8 ms | 35.8 ms | 14 | 36 | 84 % | 73 / 87 % |
+
+- G1 + 4 GB is faster or equal in 11 of 12 cells: Louisville +17-20 %, the spin +6 % (opt) / +20-34 % (enh), the east drive
+  +1-8 %; the Rosewood drive opt -4 % is inside one-run noise. Tails tighter almost everywhere (Louisville p99.9 139-322 -> 133-134 ms,
+  spin enh p99 38 -> 29 ms), and no out-of-memory exits. Windows players get this once the JSON fix (fef2c5b) ships.
+- Remembered places + zombie outlines off (enh2) is within one-run noise of enh on every scene with the bigger heap; the +13 %
+  spin gain in the 3 GB set was heap pressure.
+- Still: with every enhancement on, the spin runs at 91-93 fps with nothing saturated (GPU 71-72 %, game thread 80-83 %, render
+  thread 77-80 %); the drives stay GPU-bound (83-91 %). The Windows enhancement cost (spin 5.3 -> 10.7 ms a frame) remains well
+  above the Linux sweep's.
