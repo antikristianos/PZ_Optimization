@@ -187,6 +187,76 @@
     "God rays: soft shafts with dust glints, glass doors let light in",
     "Fixed: god rays onto the street, mirror flicker while zooming"
    ]
+  },
+  {
+   "day": "2026-10-05",
+   "build": "11916bf",
+   "notes": [
+    "Louisville horde: exact game-thread trims on by default",
+    "Java heap sized automatically by mod count",
+    "Fixed: white flat roofs and manhole covers flickering in the rain",
+    "Fixed: black furniture faces on cut-open upper floors",
+    "Light and shadow fixes from the Discord report"
+   ]
+  },
+  {
+   "day": "2026-10-06",
+   "build": "2ec5ca2",
+   "notes": [
+    "Louisville 120 fps work: tile recording and zombie movement on the frame workers (off by default)",
+    "Fixed: the options screen wiping the key bindings file",
+    "Mirrors: no blink by a room corner",
+    "pzopt files follow -cachedir="
+   ]
+  },
+  {
+   "day": "2026-10-07",
+   "build": "dbee0c2",
+   "notes": [
+    "Low-end mode: a locked 60 fps on 4-core laptops",
+    "Sunrise / sunset shadows reach their tips, no flicker",
+    "Uninstall that always works: boot repair, uninstallers in the game folder",
+    "Fixed: egg-crate tent roofs, walls swaying with plants"
+   ]
+  },
+  {
+   "day": "2026-10-08",
+   "build": "aec3f93",
+   "notes": [
+    "Entity shadows: the player, zombies, animals and cars take the shadows around them",
+    "Mirrors: own room only, nothing in undiscovered rooms",
+    "Fixed: sun shadow black screen and invisible characters on AMD / Windows",
+    "Fixed: cloud-shadow grid, see-through trees flashing"
+   ]
+  },
+  {
+   "day": "2026-10-09",
+   "build": "9d74887",
+   "notes": [
+    "Reflective props: glass doors, store fronts, counters, screens, steel",
+    "Frame spikes: render-thread and GPU savings for the Enhancements",
+    "Wall mirrors and windows as separate settings",
+    "Tile vertex depth on macOS"
+   ]
+  },
+  {
+   "day": "2026-10-10",
+   "build": "f3ddfdb",
+   "notes": [
+    "Options tab opens in 17 ms instead of 308",
+    "Undiscovered roofs: no eave flicker, unexplored buildings' roofs shown",
+    "Mirrors: people layered right by walls and sinks"
+   ]
+  },
+  {
+   "day": "2026-10-11",
+   "build": "a4cd303",
+   "notes": [
+    "Puddle ripples: footsteps and wheels ring the puddles (off by default)",
+    "Sliding glass doors reflect",
+    "Windows: G1 + heap settings apply, uninstall removes every file, HDR screenshot fix",
+    "Windows: per-frame worker waits no longer sleep 1 ms"
+   ]
   }
  ],
  "excluded": {
