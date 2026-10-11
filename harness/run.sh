@@ -739,7 +739,13 @@ while :; do
       mkdir -p "$(dirname "$probe_bin")"
       cc -O2 -o "$probe_bin" "$REPO/harness/presentprobe.c" -lxcb -lxcb-present 2>>"$out/schedule.log" || true
     fi
-    [[ -x "$probe_bin" ]] && { "$probe_bin" --out "$out/present.txt" 2>>"$out/schedule.log" & present_pid=$!; }
+    # the general probe above writes the same present.txt: stop it first, or it outlives the run (only the last present_pid is
+    # killed) and appends later runs' game windows to this run's present.txt for hours (2026-10-10: 107 of 143 pzctl runs,
+    # each re-imported into Grafana every time its present.txt went quiet)
+    if [[ -x "$probe_bin" ]]; then
+      [[ -n "$present_pid" ]] && { kill "$present_pid" 2>/dev/null || true; wait "$present_pid" 2>/dev/null || true; }
+      "$probe_bin" --out "$out/present.txt" 2>>"$out/schedule.log" & present_pid=$!
+    fi
   fi
   if [[ -n "$pad_script" ]]; then
     ( ready="$ZOMBOID/Lua/$pad_ready"; slog="$out/schedule.log"
