@@ -29,7 +29,7 @@ $ErrorActionPreference = "Stop"
 # -File command line); split every element on commas so both call styles give one key per line; only a comma before
 # the next key= splits, so values with commas stay whole (start=12450,1280, path=8010,11204.5/9210,11204.5)
 $Prop = @($Prop | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
-$Flag = @($Flag | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
+$Flag = @($Flag | ForEach-Object { if ($_ -like 'live_set=*') { $_ } else { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } } | Where-Object { $_ })   # live_set's value is itself a key=value list: pass it as its own -Flag element
 $Option = @($Option | ForEach-Object { $_ -split ',(?=[A-Za-z_][A-Za-z0-9_.]*=)' } | Where-Object { $_ })
 $Repo = Split-Path -Parent $PSScriptRoot
 $Z = "$env:USERPROFILE\Zomboid"

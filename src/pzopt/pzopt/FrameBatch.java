@@ -1,7 +1,6 @@
 package pzopt;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * The per-frame worker pool of the zombie passes (2026-09-22, docs/plan-zombie-multithread.md §4.1).
@@ -9,7 +8,7 @@ import java.util.concurrent.locks.LockSupport;
  * <p>One batch at a time: the game thread hands over {@code count} indexed tasks and a {@link Runner}, the daemon
  * workers ({@code pzopt-frame-N}, {@code frameThreads} of them, clamped to cores - 1) and the game thread itself pull
  * indices from a shared cursor until none are left, and {@link #run} returns when every task has finished. The wake is
- * a generation counter under one monitor (~50 µs), the join spins briefly then parks in 20 µs slices; a batch of a
+ * a generation counter under one monitor (~50 µs), the join spins briefly then waits in short slices (pzopt.ShortWait: 20 µs parks, yields on Windows); a batch of a
  * few milliseconds hides both. {@code AnimBatch} (the bone math) and {@code ActionEval} (the action-context transitions)
  * are the two users; the game thread never blocks inside a batch on anything but the join.
  *
@@ -226,7 +225,7 @@ public final class FrameBatch {
          if (++spins < 200) {
             Thread.onSpinWait();
          } else {
-            LockSupport.parkNanos(20_000L);
+            ShortWait.pause(20_000L);
          }
       }
       asyncJoinNanos += System.nanoTime() - t0;
@@ -267,7 +266,7 @@ public final class FrameBatch {
          if (++spins < 200) {
             Thread.onSpinWait();
          } else {
-            LockSupport.parkNanos(20_000L);
+            ShortWait.pause(20_000L);
          }
       }
       long t2 = System.nanoTime();

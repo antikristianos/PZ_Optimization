@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import zombie.ai.states.FakeDeadZombieState;
 import zombie.characters.IsoPlayer;
 import zombie.characters.IsoZombie;
@@ -190,7 +189,7 @@ public final class CharDraw {
             if (++spins < 200) {
                Thread.onSpinWait();
             } else {
-               LockSupport.parkNanos(20_000L);
+               ShortWait.pause(20_000L);
             }
          }
          walkWaitNanos += System.nanoTime() - t0;
@@ -354,7 +353,7 @@ public final class CharDraw {
             if (++spins < 200) {
                Thread.onSpinWait();
             } else {
-               LockSupport.parkNanos(20_000L);
+               ShortWait.pause(20_000L);
             }
          }
          joinNanos += System.nanoTime() - t0;

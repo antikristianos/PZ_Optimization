@@ -197,3 +197,48 @@ Louisville settle frames clean and `strongMarks` 7,886 / 0 / 0: none discarded.
 - Still: with every enhancement on, the spin runs at 91-93 fps with nothing saturated (GPU 71-72 %, game thread 80-83 %, render
   thread 77-80 %); the drives stay GPU-bound (83-91 %). The Windows enhancement cost (spin 5.3 -> 10.7 ms a frame) remains well
   above the Linux sweep's.
+
+## 2026-10-11 02:19-05:23 — Windows after a restart: stock baselines, the Linux comparison, and the short-wait fix
+
+Same desktop Windows boot, G1 + 4 GB launcher (by hand) unless noted, uncapped, zoom 2.5, `run-win.ps1` (Steam launch).
+
+**Rerun after the restart** (`win-g1r-*`, 02:19-02:46): within 1-5 % of the 01:41 set in every cell (spin 195 / 93 / 96 fps,
+Louisville 44.1 / 35.9 / 37.2, east drive 445 / 216 / 219, Rosewood south 351 / 185 / 186 for opt / enh / enh2); no OOM;
+Louisville settle frames clean, `strongMarks` 7,729 / 0 / 0.
+
+**Stock** (`win-stock3-*`, 03:16-03:24; `enabled=false`, the game's own launcher JSON: ZGC + `-Xmx3072m`, cap 244 because
+stock `Core.loadOptions` turns a saved `uncappedFPS=true` into a 60 lock: `win-stock-*` / `win-stock2-*` ran at 60 and are void;
+`framecap.ini`'s `restore=60,false,0` line taken out for the runs and put back):
+
+| scene | stock fps | p99 | opt (G1 4 GB) | x |
+|---|---|---|---|---|
+| spin south | 71.6 | 38.3 ms | 195 | 2.7 |
+| Louisville | 33.2 | 82.8 ms | 44.1 | 1.33 |
+| 120 km/h east | 126.7 | 16.9 ms | 445 | 3.5 |
+| 120 km/h Rosewood south | 115.9 | 53.6 ms | 351 | 3.0 |
+
+**Against Linux.** Still camera of `docs/findings-enhancement-costs-2026-10-08.md` (bench square, turning 180°/s, `win-still-*`):
+all off 1.80 ms (544 / 550 fps; Linux 1.14, 754), all on 2.65 ms (372 / 379; Linux 1.68, 543): the set costs +0.85 ms here vs
++0.54; the live invert sweep (`win-still-invert`) has no single key over 0.12 ms (noise 0.08 median), launch-only keys from
+all-on: pixelLight + relief 0.13 ms, mirrors 0.12, car glass 0.08, reflections 0. Per Enhancement on the full Rosewood drive (the
+method of `docs/findings-frame-spikes-2026-10-09.md` §10, `win-feat-<f>-a1/a2`, 2 runs each, +ms on the defaults' 2.89 ms;
+Linux 1.67): **pixelLight +0.96 (Linux +0.28)**, sun shadows +0.68 (0.59), HDR +0.48 (0.57), sway +0.28 (0.14), AO +0.17 (0.09),
+car glass +0.15 (0.23), god rays +0.14 (<= 0.04), mirrors +0.12 (0.07), reflections +0.08 (0.06), the rest <= 0.03.
+
+**Cause of the Windows excess: the joins' 20 µs parks.** With pixelLight the GPU fell 87 -> 77 % and the render thread 93 -> 83 %
+(nothing saturated); the game thread had `PixelLight.beforeComposite` at 20 %, half of it waiting in `FrameBatch.run` (JFR /
+the overlay profiler, `win-jfr-*`). FrameBatch's join (and CharDraw's, LuaGate's, VisPolyAsync's, AnimParallel's) waits with
+`LockSupport.parkNanos(5..20 us)` after its spin, and HotSpot's Windows park rounds any timeout under 1 ms up to 1 ms. New
+`pzopt.ShortWait` (`shortWait` auto = yield on Windows, park elsewhere). A/B on the same build (`win-sw-*`, 2 runs each):
+
+| Rosewood drive | shortWait=park (released) | yield | |
+|---|---|---|---|
+| defaults | 342.6 fps (2.92 ms), p99 13.8 | 352.9 (2.83 ms), p99 12.3 | -0.09 ms |
+| pixelLight | 258.5 (3.87 ms), p99 18.3, GPU 78 % | 289.9 (3.45 ms), p99 15.5, GPU 87 % | -0.42 ms |
+
+With the fix (`win-feat-<f>-b1/b2`, 2 runs each, defaults 2.86 ms): god rays -0.01, mirrors +0.06, AO +0.08 (Linux 0.09),
+sway +0.26 (0.14), pixelLight +0.51 (0.28), sun shadows +0.66 (0.59), **every Enhancement +2.22 ms (Linux +2.09)**. Spin and
+Louisville with the fix (`win-g1sw-*`, one each): spin 201.5 (195) / with Enhancements **112.9 (93, +21 %)**, Louisville 42.9
+(44.1) / 39.0 (35.9). What is left above Linux: pixelLight +0.23 ms (its doubled bakes on a render thread already at 93-95 %)
+and sway +0.12 (program switches); the bigger gap is the base itself, 2.86 vs 1.67 ms with the render thread at 93-95 % in the
+defaults (Linux ~1.3 ms of render thread a frame): the Windows GL driver's per-call cost, not an Enhancement.

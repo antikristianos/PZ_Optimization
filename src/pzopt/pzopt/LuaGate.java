@@ -92,7 +92,7 @@ public final class LuaGate {
             }
             return callHere(body);
          }
-         LockSupport.parkNanos(20_000L);
+         ShortWait.pause(20_000L);
       }
       if (c.error != null) {
          throw sneaky(c.error);

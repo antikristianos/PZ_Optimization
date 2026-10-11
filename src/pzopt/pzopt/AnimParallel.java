@@ -307,7 +307,7 @@ public final class AnimParallel {
          if (++spins < 500) {
             Thread.onSpinWait();
          } else {
-            java.util.concurrent.locks.LockSupport.parkNanos(5_000L);
+            ShortWait.pause(5_000L);
          }
       }
       evalWaitNanos += System.nanoTime() - t0;
@@ -324,7 +324,7 @@ public final class AnimParallel {
          if (++spins < 500) {
             Thread.onSpinWait();
          } else {
-            java.util.concurrent.locks.LockSupport.parkNanos(5_000L);
+            ShortWait.pause(5_000L);
          }
       }
       pipelineWaitNanos += System.nanoTime() - t0;

@@ -38,7 +38,7 @@ public final class VisPolyAsync {
       if (started != null) { // last frame's polygon was never taken (renderMain skipped): let it finish before reusing the thread
          Object prev = started;
          while (done != prev && job != null) {
-            LockSupport.parkNanos(20_000L);
+            ShortWait.pause(20_000L);
          }
       }
       started = null;
@@ -95,7 +95,7 @@ public final class VisPolyAsync {
             if (++spins < 200) {
                Thread.onSpinWait();
             } else {
-               LockSupport.parkNanos(20_000L);
+               ShortWait.pause(20_000L);
             }
          }
       }
