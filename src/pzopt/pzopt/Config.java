@@ -1121,6 +1121,7 @@ public final class Config {
    public static volatile int AO_STRENGTH_VEGETATION_PCT;
    public static volatile int AO_STRENGTH_PLANT_PCT; // bushes, grass, flowers (issue #40, 2026-09-29); unset: the vegetation strength (one key for all plants before)
    public static final boolean AO_PLANT_LEAF_OCCLUSION = bool("aoPlantLeafOcclusion", false); // chunk AO: a plant's leaves shade the leaves around them (every leaf texel's horizon saw its neighbours: dark speckled bushes, issue #40); false = plants take AO from the ground, walls and objects only
+   public static final boolean AO_BORDER_REFRESH = bool("aoBorderRefresh", true); // chunk AO: a bake that changes the objects on a chunk's border squares (a double gate opened, a wall built) also recomputes the neighbour whose AO took them as context; before, a neighbour refreshed only when it had been computed without this chunk, so an opened gate's shading stayed on the next chunk until a zoom out and in (Workshop, 2026-10-11). With sun shadows any caster in the chunk counts
    public static final boolean AO_ROOF_SKIP = bool("aoRoofSkip", true); // chunk AO: no ambient occlusion on roof tiles: a roof sprite's depth is a staircase snapped to the floor / wall planes; the horizon kernel shaded every riser and aoEdgeShade spread it onto the row above, dark horizontal bands across a roof (the sun term skips roofs for the same reason; flip house report 2026-10-05)
    public static final boolean DEV_AO_ROOF_VIEW = bool("devAoRoofView", false); // dev (with devAoView=1): the texels aoRoofSkip takes for roof tiles dark
    public static final int AO_THICKNESS_PCT = integer("aoThicknessPct", 60); // how deep a surface is assumed to be behind what the depth shows, % of a square
@@ -1425,6 +1426,7 @@ public final class Config {
    public static final int DEV_AO_DUMP_TREE = integer("devAoDumpTree", 0); // dev: the first N chunk AO computes with a tree in reach (sunShadowTrees) or in the chunk are dumped like devAoDumpFrame's into ~/Zomboid/pzopt-chunkao/<k>/ (plus raw4: AO, depth, sun, and the source depths + uniforms for harness/trees/tree_rig.py)
    public static final int DEV_AO_DUMP_FRAME = integer("devAoDumpFrame", 0); // dev: on this AO frame the scene depth + colour go to ~/Zomboid/pzopt-ao-*.bin
    public static final boolean DEV_AO_NO_MIPS = bool("devAoNoMips", false); // dev: a deferred chunk AO does not rebuild the texture's mipmaps (cost probe)
+   public static final String DEV_AO_TRACE = string("devAoTrace", ""); // dev: chunks wx,wy;wx,wy (or all) whose every bake (dirty flags, the AO decision) and deferred compute is logged (the gate AO report, 2026-10-11)
    public static final boolean DEV_AO_TIMING = bool("devAoTiming", false); // dev: GPU time of each AO stage in the log every 1000 frames
    public static final int DEV_AO_VARIANT = integer("devAoVariant", 0); // dev: cost probes, 1 = the AO stage reads one depth texel, 2 = none
    public static final int DEV_AO_VIEW = integer("devAoView", 0); // dev: 1 = the scene shows the AO term alone, 2 = the reconstructed normals

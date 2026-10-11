@@ -148,7 +148,7 @@ public final class ChunkAo {
    }
 
    public static String stats() {
-      String s = "chunk ao: computed=" + computed + " (in bakes " + computedInBake + ") multiplied=" + multiplied + " skipped (no occlusion)=" + skippedEmpty + " neighbour refreshes=" + refreshes + " (skipped, bare border " + refreshesSkipped + ") bare textures=" + bareSkipped + " slow frames without computes=" + heavyFrames + " zoom-out re-bakes=" + mipRebakes + " pending=" + PENDING.size()
+      String s = "chunk ao: computed=" + computed + " (in bakes " + computedInBake + ") multiplied=" + multiplied + " skipped (no occlusion)=" + skippedEmpty + " neighbour refreshes=" + refreshes + " (skipped, bare border " + refreshesSkipped + ") border changes=" + borderRefreshes + " bare textures=" + bareSkipped + " slow frames without computes=" + heavyFrames + " zoom-out re-bakes=" + mipRebakes + " pending=" + PENDING.size()
          + " pending peak=" + deferredPeak + " first AO: " + firstAos + " (in bakes " + FIRST_AO_MS[0] + ", over budget " + arrivalsOverBudget + ", >100 ms "
          + (FIRST_AO_MS[4] + FIRST_AO_MS[5] + FIRST_AO_MS[6] + FIRST_AO_MS[7]) + String.format(java.util.Locale.ROOT, ", max %.0f ms)", firstAoMsMax)
          + " shown without AO=" + shownWithoutAo + (SunShadow.enabled() ? " sun requeued=" + sunRequeued + " downwind=" + downwindQueued + " step applies=" + stepApplies + " (textures " + stepAppliedTextures + ", staged " + stagedTerms + ", applied " + appliedTerms + ", fades " + fades + ", stage allocs " + stageAllocs + ", fade allocs " + fadeAllocs + ", forced " + stepApplyForced + ", staged now " + STAGED.size() + ") far computes=" + farComputes + " column builds=" + columnBuilds + " roof columns=" + roofColumnsFound + " tree card computes=" + treeCardComputes + " tree requeues=" + treeRequeued + " | " + TreeSilhouette.stats() + " | " + SunShadow.stats() : "") + (CloudShadow.wanted() ? " | " + CloudShadow.stats() : "") + (failed ? " FAILED" : "");
@@ -168,6 +168,14 @@ public final class ChunkAo {
    /** Does this bake change the texture's depth (or create it)? Called before FBORenderChunkManager.endRenderChunkLevel. */
    public static boolean geometryDirty(FBORenderLevels levels, int level, float zoom) {
       boolean dirty = levels.isDirty(level, GEOMETRY_FLAGS, zoom);
+      if (!Config.DEV_AO_TRACE.isEmpty()) {
+         traceFlags = 0L;
+         for (int b = 0; b < 15; b++) {
+            if (levels.isDirty(level, 1L << b, zoom)) {
+               traceFlags |= 1L << b;
+            }
+         }
+      }
       if (dirty && Config.DEV_AO_TIMING) {
          for (int b = 0; b < 15; b++) {
             if ((GEOMETRY_FLAGS & (1L << b)) != 0 && levels.isDirty(level, 1L << b, zoom)) {
@@ -176,6 +184,43 @@ public final class ChunkAo {
          }
       }
       return dirty;
+   }
+
+   private static long traceFlags; // devAoTrace: the dirty flags of the bake geometryDirty just looked at
+   private static java.util.HashSet<Long> traceChunks;
+
+   /** devAoTrace: is this chunk traced? */
+   private static boolean traced(IsoChunk c) {
+      if (Config.DEV_AO_TRACE.isEmpty() || c == null) {
+         return false;
+      }
+      if ("all".equals(Config.DEV_AO_TRACE)) {
+         return true;
+      }
+      if (traceChunks == null) {
+         traceChunks = new java.util.HashSet<>();
+         for (String part : Config.DEV_AO_TRACE.split(";")) {
+            String[] xy = part.trim().split(",");
+            if (xy.length == 2) {
+               traceChunks.add(((long)Integer.parseInt(xy[0].trim()) << 32) | (Integer.parseInt(xy[1].trim()) & 0xFFFFFFFFL));
+            }
+         }
+      }
+      return traceChunks.contains(((long)c.wx << 32) | (c.wy & 0xFFFFFFFFL));
+   }
+
+   private static String flagNames(long flags) {
+      StringBuilder sb = new StringBuilder();
+      for (int b = 0; b < 15; b++) {
+         if ((flags & (1L << b)) != 0) {
+            sb.append(sb.length() == 0 ? "" : "+").append(FLAG_NAMES[b]);
+         }
+      }
+      return sb.length() == 0 ? "none" : sb.toString();
+   }
+
+   private static void trace(IsoChunk c, FBORenderChunk rc, String what) {
+      Log.info("chunk ao trace: frame " + frames + " chunk " + c.wx + "," + c.wy + " tex " + rc.index + " level " + rc.getMinLevel() + " " + what + " epoch_ms=" + System.currentTimeMillis());
    }
 
    private static final long[] FLAG_TALLY = new long[15]; // dev: which dirty flags made bakes recompute
@@ -202,6 +247,9 @@ public final class ChunkAo {
       int minLevel;
       float zoom;
       int playerIndex;
+      final long[] sig = new long[9]; // aoBorderRefresh: the objects on each border facing a neighbour (3x3 slots; the centre: the whole chunk, for sun shadows)
+      boolean sigValid;
+      long bakeComputeFrame = -1L; // aoBorderRefresh: the frame (flush count) of its last compute inside a bake
    }
 
    private static final HashMap<Integer, Info> INFOS = new HashMap<>();
@@ -253,12 +301,16 @@ public final class ChunkAo {
          info.bare = false;
          info.bornNs = System.nanoTime();
          info.landed = false;
+         info.sigValid = false;
       }
       info.chunk = c;
       info.rc = rc;
       info.minLevel = minLevel;
       info.zoom = zoom;
       info.playerIndex = playerIndex;
+      if (geometry && Config.AO_BORDER_REFRESH) {
+         borderRefresh(info, c, minLevel, rc.getTopLevel(), playerIndex, zoom);
+      }
       if ((geometry || !info.has) && bare(c, minLevel, rc.getTopLevel(), playerIndex, zoom)) {
          // nothing but floor here and nothing standing on the neighbours' borders facing us: the AO is 1 everywhere.
          // No compute and no multiply; a neighbour that later brings occluders to our border refreshes us (from no AO).
@@ -272,6 +324,9 @@ public final class ChunkAo {
          }
          info.landed = true;
          bareSkipped++;
+         if (traced(c)) {
+            trace(c, rc, "bake " + flagNames(traceFlags) + " geometry=" + geometry + ": bare, no AO");
+         }
          if (CloudShadow.wanted()) {
             Job job = obtain();
             job.kind = Job.MARK_BARE;
@@ -306,6 +361,7 @@ public final class ChunkAo {
          job.mipmaps = false;
          info.mask = context(job, rc, c, playerIndex, zoom, true);
          info.has = true;
+         info.bakeComputeFrame = frames;
          landed(info, true);
          info.mipLevels = 3;
          info.sunStale = false;
@@ -315,6 +371,9 @@ public final class ChunkAo {
          }
          computed++;
          computedInBake++;
+         if (traced(c)) {
+            trace(c, rc, "bake " + flagNames(traceFlags) + " geometry=" + geometry + ": AO computed in the bake");
+         }
          SpriteRenderer.instance.drawGeneric(job);
          return;
       }
@@ -332,6 +391,10 @@ public final class ChunkAo {
       }
       if (geometry || !info.has) {
          info.sunStale = false; // it needs a compute of its own now, at the normal budget
+      }
+      if (traced(c)) {
+         trace(c, rc, "bake " + flagNames(traceFlags) + " geometry=" + geometry + ": " + (info.has && !info.bare ? "old AO multiplied" : "no AO")
+            + ((geometry || !info.has) ? (info.pending ? ", compute already queued" : ", compute queued") : ""));
       }
       if ((geometry || !info.has) && !info.pending) {
          info.pending = true;
@@ -480,6 +543,9 @@ public final class ChunkAo {
             PENDING.remove(i--);
             budget--;
             computed++;
+            if (traced(info.chunk)) {
+               trace(info.chunk, rc, "deferred compute (fresh=" + job.fresh + ")");
+            }
             SpriteRenderer.instance.drawGeneric(job);
          }
       }
@@ -793,6 +859,94 @@ public final class ChunkAo {
          }
       }
       return false;
+   }
+
+   private static final long[] SIG = new long[9];
+   static long borderRefreshes;
+
+   /**
+    * aoBorderRefresh (game thread, a bake that changes the texture's depth): the neighbours' AO took this chunk's border
+    * squares as context, and the existing refresh only covers a neighbour computed without this chunk at all. So the objects
+    * on each border facing a neighbour (with sun shadows: in the whole chunk) are fingerprinted; where that changed since the
+    * texture's last geometry bake (a double gate opened or closed, a wall built or removed, a gate's leaves ending their swing into the bake), the neighbour's AO computes
+    * again, after this bake; so does one whose AO was computed in an earlier bake of the same frame with something on our
+    * border (it read our depth before this bake redrew it: two chunks re-baked together, a gate across their seam). The
+    * first bake of a texture only records them (streaming arrivals cost nothing here).
+    */
+   private static void borderRefresh(Info info, IsoChunk c, int minLevel, int topLevel, int playerIndex, float zoom) {
+      boolean sun = SunShadow.enabled();
+      for (int dy = -1; dy <= 1; dy++) {
+         for (int dx = -1; dx <= 1; dx++) {
+            SIG[(dy + 1) * 3 + dx + 1] = dx == 0 && dy == 0 ? (sun ? signature(c, minLevel, topLevel, 0, 0, playerIndex) : 0L) : signature(c, minLevel, topLevel, dx, dy, playerIndex);
+         }
+      }
+      if (!info.sigValid) {
+         System.arraycopy(SIG, 0, info.sig, 0, 9);
+         info.sigValid = true;
+         return;
+      }
+      boolean whole = sun && SIG[4] != info.sig[4];
+      zombie.iso.IsoCell cell = IsoWorld.instance.currentCell;
+      for (int dy = -1; dy <= 1 && cell != null; dy++) {
+         for (int dx = -1; dx <= 1; dx++) {
+            int k = (dy + 1) * 3 + dx + 1;
+            if (k == 4) {
+               continue;
+            }
+            IsoChunk nc = cell.getChunk(c.wx + dx, c.wy + dy);
+            FBORenderChunk nrc = nc == null ? null : nc.getRenderLevels(playerIndex).getFBOForLevel(minLevel, zoom);
+            Info ni = nrc == null ? null : INFOS.get(nrc.index);
+            if (ni == null || !ni.has || ni.pending || ni.chunk != nc || ni.key != keyOf(nc, minLevel, nrc)) {
+               continue; // not computed yet (its first compute takes us as we are now) or already queued
+            }
+            // a neighbour whose AO was computed in an earlier bake of this frame read our depth before this bake redrew it
+            boolean sameFrame = ni.bakeComputeFrame == frames && !ni.bare && SIG[k] != 1L;
+            if (!whole && SIG[k] == info.sig[k] && !sameFrame) {
+               continue;
+            }
+            ni.pending = true;
+            ni.readyFrame = 0L; // this frame's flush, after this bake
+            PENDING.add(ni);
+            borderRefreshes++;
+            if (traced(nc)) {
+               trace(nc, nrc, "queued: neighbour " + c.wx + "," + c.wy + (sameFrame && SIG[k] == info.sig[k] ? " re-baked after it this frame" : " changed its border"));
+            }
+         }
+      }
+      System.arraycopy(SIG, 0, info.sig, 0, 9);
+   }
+
+   /**
+    * The objects standing on the chunk's border squares facing (dx, dy) on the texture's levels (dx = dy = 0: on every
+    * square of the chunk), as a hash of their identities, sprites (a toggled door keeps its object, swaps its sprite) and
+    * whether they draw per frame instead of baking (animating, faded).
+    */
+   private static long signature(IsoChunk c, int minLevel, int topLevel, int dx, int dy, int playerIndex) {
+      boolean whole = dx == 0 && dy == 0;
+      int n = whole ? 64 : dx != 0 && dy != 0 ? 1 : 8; // the chunk, the corner square, or a border line
+      long h = 1L;
+      for (int z = minLevel; z <= topLevel; z++) {
+         for (int i = 0; i < n; i++) {
+            int x = whole ? i & 7 : dx < 0 ? 0 : dx > 0 ? 7 : i;
+            int y = whole ? i >> 3 : dy < 0 ? 0 : dy > 0 ? 7 : i;
+            zombie.iso.IsoGridSquare sq = c.getGridSquare(x, y, z);
+            if (sq == null) {
+               continue;
+            }
+            zombie.util.list.PZArrayList<zombie.iso.IsoObject> objects = sq.getObjects();
+            for (int k = 0; k < objects.size(); k++) {
+               zombie.iso.IsoObject o = objects.get(k);
+               if (o != null && (!o.isFloor() || o.hasAttachedAnimSprites())) {
+                  // animating or faded: drawn per frame, out of the bake's depth (a gate's leaves swing for ~0.3 s after a
+                  // toggle; the bake at the swing's end puts them in with the same objects and sprites)
+                  int perFrame = (o.isAnimating() ? 1 : 0) | (o.getAlpha(playerIndex) < 1.0F ? 2 : 0);
+                  h = h * 1_000_003L + ((long)(z * 64 + y * 8 + x) << 40) + System.identityHashCode(o) * 31L
+                     + (o.getSprite() == null ? 0 : o.getSprite().getID()) * 4L + perFrame;
+               }
+            }
+         }
+      }
+      return h;
    }
 
    /**

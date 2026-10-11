@@ -673,6 +673,14 @@ public final class Harness {
                if (!HarnessFlags.get("place_tile", "").isBlank()) {
                   placeTiles(HarnessFlags.get("place_tile", "")); // dev: tiles added to the bench save copy (glassTilesPerFrame rig)
                }
+               if (!HarnessFlags.get("gate", "").isBlank()) {
+                  float[] spot = GateRig.setup(p, HarnessFlags.get("gate", "")); // dev: a double gate across a chunk border, toggled (the stale gate AO report)
+                  if (spot != null) {
+                     x = spot[0];
+                     y = spot[1];
+                     routeZ = 0;
+                  }
+               }
                if (!HarnessFlags.get("mirror_corners", "").isBlank()) {
                   float[] spot = mirrorCorners(HarnessFlags.get("mirror_corners", "")); // dev: a wall mirror in each corner of one room, the player in its middle
                   if (spot != null) {

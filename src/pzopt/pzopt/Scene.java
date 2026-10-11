@@ -524,6 +524,7 @@ public final class Scene {
       RoomLightRig.tick(p, nowNs); // room_light=auto: the room light off / on timeline
       ThumpRig.tick(p, nowNs); // thump=N: zombies thumping a door off-screen (the thump-burst repro)
       CarGlassRig.tick(p, nowNs); // car_rig=N: a ring of parked cars around the player (the car glass rig)
+      GateRig.tick(p, nowNs); // gate=auto|place: the double gate toggled / everything re-baked in turn
       CarSiege.tick(p, nowNs); // siege=N: zombies around the player's parked car (the "crowd the car, never attack" repro)
       crowdTick(p, nowNs); // crowd=N: a crowd around the player (the capsule shadow rig)
       animalsTick(p, nowNs); // animals=N[:type]: animals around the player (the animal line-of-sight rig; mixed kinds: the detailed shadow rig)
@@ -688,6 +689,7 @@ public final class Scene {
 
    /** Reset the per-run counters (route start), so the strike cadence is counted from the route. */
    static void routeStart(long nowNs) {
+      GateRig.routeStart(nowNs);
       lastThunderNs = nowNs;
       thunderCount = 0;
       if (helicopter) {

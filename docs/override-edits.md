@@ -6615,3 +6615,29 @@ DEPTH16 step of the baked copy) fought a black baked copy of itself. `pplUnseenA
   gather is also joined before `renderPlayer`'s `CapsuleShadow.add` touches the tiles the gather reads. Runs `cfl-*`
   (bench route at 18 tiles/s, dip every 3.3 frames; `entityShadowComputeEarly=true` and `entityShadowMethod=cpu|pixel`
   had none).
+
+### An opened gate keeps its AO (2026-10-11, Workshop report, `aoBorderRefresh`): pzopt.ChunkAo, no override
+
+Report (UnCheat, Workshop comments, screenshots `?id=3818078266` / `3818077602`): a wired double gate's ambient occlusion
+stayed on the road where the closed gate had stood; a zoom out and in cleared it; another gate looked right. The chain-link
+gates (`fixtures_doors_fences_01_66`, `doorTrans`) only bake, and so only cast AO, with `windowsInChunkTexture=true`.
+
+- Cause: a chunk texture's AO takes its eight neighbours' depth as context, and a neighbour was recomputed only when its
+  AO had been computed without this chunk at all. A gate on a chunk's first row shades the floor of the chunk north of it
+  (seen through the mesh, and the strip in front of a leaf); toggling it re-baked the gate's chunk (AO recomputed) but never
+  the neighbour. Two more holes: a gate's outer leaves swing for ~0.3 s after a toggle (animating: drawn per frame, out of
+  the bake's depth) and the bake at the swing's end puts them in with the same objects and sprites; and two chunks
+  re-baked in one frame (a gate across their seam), the first computes against the second's previous depth.
+- `bakeEnd` (geometry bakes, `aoBorderRefresh`, default on): `borderRefresh` fingerprints the objects on each border
+  facing a neighbour (identity, sprite, animating / faded; with sun shadows the whole chunk) and queues the neighbour's AO
+  (`readyFrame` 0: this frame's flush, after the bakes) when that border changed since the texture's last geometry bake,
+  or when the neighbour's AO was computed in an earlier bake of the same frame and something stands on the shared border.
+  A texture's first bake only records the fingerprints (streaming arrivals queue nothing). Counter `border changes=` on
+  the `chunk ao:` line; dev `devAoTrace=wx,wy;...|all` logs every bake of those chunks with its dirty flags and the AO
+  decision (in the bake / multiplied / queued / deferred).
+- Rig: `--flag gate=auto|place` (`pzopt.GateRig`: a closed double door across a chunk border, else a chain-link gate built
+  at x % 8 = 6 on a chunk's first row; toggled, then every chunk re-baked, in turn every `gate_toggle` s) with a 1:1
+  `devCapture`, `harness/gate-ao.py <run>` (last frame before each re-bake vs before the next toggle). Runs `gate-ao-*`
+  (`windowsInChunkTexture=true`, bench save, gate at 8006,11200): fix off 10,032 / 12,153 / 10,026 px stale after close /
+  open / close (AO view 7,960 / 10,800), fix on 0 / 0 / 0. A first full re-bake also changes a patch of grass AO north-east
+  of the spot in both builds (11,640 px in the AO view, pre-existing, a load-time state; not chased).
