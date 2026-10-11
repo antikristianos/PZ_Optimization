@@ -44,7 +44,9 @@ import org.json.JSONObject;
  * pzctl/installed.txt, its zombie/input/AimingReticle override and pzctl/*), a file pzopt also ships staying pzopt's,
  * and the fingerprint covers those files, so a companion reinstall rebuilds the jar and records again (2026-10-10:
  * under the cache mode PZ_Controller's reticle bridge never loaded). PZ_Controller's installer resets the launcher
- * the same way before it changes its files.
+ * the same way before it changes its files. Every other loose class file in the game folder goes into the jar too
+ * ({@link #foreignClasses}, also fingerprinted): mods installed by copying classes there (Better Car Physics) loaded
+ * through "." and silently ran stock under the cache mode (2026-10-11).
  */
 public final class AotCache {
    static final String JAR = "pzopt/aot/pzopt.jar";
@@ -139,6 +141,11 @@ public final class AotCache {
          return;
       }
       String fp = fingerprint(game);
+      List<String> foreign = foreignClasses(game);
+      if (!foreign.isEmpty()) {
+         Log.info("aot: the jar also carries " + foreign.size() + " loose class file(s) of other installs, e.g. "
+               + String.join(", ", foreign.subList(0, Math.min(4, foreign.size()))));
+      }
       Properties state = readState(game);
       boolean sameInstall = fp.equals(state.getProperty("fingerprint"));
       switch (MODE) {
@@ -185,7 +192,9 @@ public final class AotCache {
       if (Files.isRegularFile(manifest)) {
          md.update(Files.readAllBytes(manifest));
       }
-      for (String rel : companionClasses(game)) {
+      List<String> others = new ArrayList<>(companionClasses(game));
+      others.addAll(foreignClasses(game));
+      for (String rel : others) {
          Path f = game.resolve(rel);
          md.update((rel + "|" + Files.size(f) + "|" + Files.getLastModifiedTime(f).toMillis() + "\n").getBytes(StandardCharsets.UTF_8));
       }
@@ -203,8 +212,26 @@ public final class AotCache {
 
    /** The installed class files (and pzopt's resources) from pzopt-installed.txt, not media or natives. */
    static List<String> jarEntries(Path game) throws IOException {
+      if (!Files.isRegularFile(game.resolve("pzopt-installed.txt"))) {
+         throw new java.nio.file.NoSuchFileException("pzopt-installed.txt"); // no manifest: stay loose
+      }
+      List<String> out = manifestEntries(game);
+      for (String rel : companionClasses(game)) {
+         if (!out.contains(rel)) {
+            out.add(rel);
+         }
+      }
+      out.addAll(foreignClasses(game));
+      return out;
+   }
+
+   /** pzopt-installed.txt's class-path files (not media or natives); empty without a manifest. */
+   static List<String> manifestEntries(Path game) throws IOException {
       List<String> out = new ArrayList<>();
       Path manifest = game.resolve("pzopt-installed.txt");
+      if (!Files.isRegularFile(manifest)) {
+         return out;
+      }
       for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
          if (line.isBlank() || line.startsWith("#")) {
             continue;
@@ -215,11 +242,44 @@ public final class AotCache {
          }
          out.add(rel);
       }
-      for (String rel : companionClasses(game)) {
-         if (!out.contains(rel)) {
-            out.add(rel);
+      return out;
+   }
+
+   /** Top-level folders of the game folder that never hold the loose classes "." serves. */
+   private static final java.util.Set<String> NOT_CLASS_ROOTS = java.util.Set.of("jre", "jre64", "media", "natives");
+
+   /**
+    * Every other loose class file the loose launcher's "." serves: the ones neither pzopt's manifest nor a companion
+    * manifest lists, i.e. another mod copied into the game folder (Better Car Physics: zombie/vehicles/BaseVehicle.class
+    * and zombie/core/physics/CarController*.class). Without them in the jar the cache mode runs the stock classes and the
+    * mod reports itself not installed (2026-10-11, Workshop reports after the first Windows release whose launcher JSON
+    * writes worked). Sorted, so the jar and the fingerprint do not depend on the directory order.
+    */
+   static List<String> foreignClasses(Path game) throws IOException {
+      java.util.Set<String> known = new java.util.HashSet<>(manifestEntries(game));
+      known.addAll(companionClasses(game));
+      List<String> out = new ArrayList<>();
+      try (var top = Files.list(game)) {
+         for (Path p : (Iterable<Path>) top::iterator) {
+            String name = p.getFileName().toString();
+            if (Files.isDirectory(p)) {
+               if (NOT_CLASS_ROOTS.contains(name) || name.startsWith(".")) {
+                  continue;
+               }
+               try (var walk = Files.walk(p)) {
+                  for (Path f : (Iterable<Path>) walk::iterator) {
+                     String rel = game.relativize(f).toString().replace('\\', '/');
+                     if (rel.endsWith(".class") && Files.isRegularFile(f) && !known.contains(rel)) {
+                        out.add(rel);
+                     }
+                  }
+               }
+            } else if (name.endsWith(".class") && Files.isRegularFile(p) && !known.contains(name)) {
+               out.add(name);
+            }
          }
       }
+      java.util.Collections.sort(out);
       return out;
    }
 

@@ -37,6 +37,23 @@ public class AotCacheTest {
          Check.check(jf.size() == 3, "jar has exactly the three class-path files, has " + jf.size());
       }
 
+      // another mod's loose classes (Better Car Physics copies zombie/ into the game folder): in the jar and the fingerprint
+      String fp = AotCache.fingerprint(game);
+      Files.createDirectories(game.resolve("zombie/vehicles"));
+      Files.createDirectories(game.resolve("jre64/lib"));
+      Files.writeString(game.resolve("zombie/vehicles/BaseVehicle.class"), "e");
+      Files.writeString(game.resolve("zombie/iso/IsoWorld$1.class"), "f");
+      Files.writeString(game.resolve("jre64/lib/Skip.class"), "g");
+      Files.writeString(game.resolve("media/lua/client/pzopt/Skip.class"), "h");
+      Check.check(AotCache.foreignClasses(game).equals(java.util.List.of("zombie/iso/IsoWorld$1.class", "zombie/vehicles/BaseVehicle.class")),
+            "foreign classes: " + AotCache.foreignClasses(game));
+      Check.check(!AotCache.fingerprint(game).equals(fp), "a copied mod class changes the fingerprint");
+      AotCache.buildJar(game);
+      try (JarFile jf = new JarFile(game.resolve(AotCache.JAR).toFile())) {
+         Check.check(jf.getEntry("zombie/vehicles/BaseVehicle.class") != null, "jar holds the other mod's class");
+         Check.check(jf.size() == 5, "jar has the three installed files and the two foreign classes, has " + jf.size());
+      }
+
       Check.check(!AotCache.resetLauncher(game), "a loose launcher is left alone");
       AotCache.writeLauncher(game, "-XX:AOTCacheOutput=" + AotCache.CACHE);
       JSONObject j = read(game);
