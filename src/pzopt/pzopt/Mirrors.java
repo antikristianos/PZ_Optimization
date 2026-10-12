@@ -1362,6 +1362,17 @@ public final class Mirrors {
       }
       if (Config.DEV_MIRRORS_LOG && frames % 300 == 4) {
          Log.info(String.format(java.util.Locale.ROOT, "mirrors: dev model %s at %.2f,%.2f,%.2f planes mask %s", o.getClass().getSimpleName(), x, y, z, Integer.toBinaryString(mask)));
+         if (devPlanesFrame != frames) {
+            devPlanesFrame = frames;
+            StringBuilder sb = new StringBuilder("mirrors: dev planes:");
+            for (int i = 0; i < f.nP; i++) {
+               int p = i * 10;
+               float cA = f.planes[p] == 2F ? f.planes[p + 1] : f.planes[p + 1] + (f.planes[p] == 0F ? f.view.oy : f.view.ox);
+               sb.append(String.format(java.util.Locale.ROOT, " [%d axis %d c %.3f lat %.2f..%.2f z %.2f..%.2f %s room %s]", i, (int)f.planes[p], cA, f.planes[p + 2], f.planes[p + 3], f.planes[p + 4], f.planes[p + 5],
+                  f.planeMirror[i] ? "mirror" : "glass", roomName(f.planeRoom[i])));
+            }
+            Log.info(sb.toString());
+         }
       }
       if (mask != 0) {
          texd.pzoptMirrorPlanes = mask;
@@ -1376,6 +1387,7 @@ public final class Mirrors {
    private static float lastCamX = Float.NaN, lastCamY = Float.NaN;
    private static int camStill;
    private static int crossRoomLogs, devPaneLogs;
+   private static long devPlanesFrame = -1;
    private static final IdentityHashMap<Object, Integer> DEV_PANE = new IdentityHashMap<>();
 
    static String roomName(Object room) {
@@ -2364,6 +2376,22 @@ public final class Mirrors {
       PENDING.clear();
    }
 
+   private static final int[] QR = new int[4];
+
+   /** Render thread: plane k's panes on screen (layer px, 2 px margin) inside the scissor sx, sy, sw, sh into QR; false when empty. */
+   private static boolean planeRect(Frame f, int k, float ls, int sx, int sy, int sw, int sh) {
+      int o = k * 10;
+      float pa = (f.planes[o + 6] - MAP[1]) / MAP[0], pb = (f.planes[o + 8] - MAP[1]) / MAP[0];
+      float qa = (f.planes[o + 7] - MAP[3]) / MAP[2], qb = (f.planes[o + 9] - MAP[3]) / MAP[2];
+      int x0 = Math.max(sx, (int)Math.floor(Math.min(pa, pb) * ls) - 2), y0 = Math.max(sy, (int)Math.floor(Math.min(qa, qb) * ls) - 2);
+      int x1 = Math.min(sx + sw, (int)Math.ceil(Math.max(pa, pb) * ls) + 2), y1 = Math.min(sy + sh, (int)Math.ceil(Math.max(qa, qb) * ls) + 2);
+      QR[0] = x0;
+      QR[1] = y0;
+      QR[2] = x1 - x0;
+      QR[3] = y1 - y0;
+      return x1 > x0 && y1 > y0;
+   }
+
    static final class ModelFlush extends TextureDraw.GenericDrawer {
       Frame f;
       boolean reuse;
@@ -2459,13 +2487,33 @@ public final class Mirrors {
             }
             int[] done = Config.MIRRORS_MODEL_SHARE && (Config.DEV_MIRRORS_PROP_SKIP & 32) == 0 ? Share.draw(this.f, sx, sy, sw, sh, ls, pass == 0 ? 0 : 2, pass == 0 ? 1 : 2, fbo) : null;
             calibrated |= done != null && Share.calibrated;
+            // stage 0 the glass and prop planes, stage 1 the silvered mirrors' own, each mirror's panes cleared first: a
+            // glass or prop plane whose panes' box covers a mirror (the bathroom's sink, toilet and tub merged into one plane
+            // along the mirror's wall, 7 squares long) put its copy of the person, placed by the true reflection, on the
+            // mirror's glass beside the mirror's own copy: two people in the mirror (maintainer, 2026-10-12; dev skip bit
+            // 536870912: one stage, the pass's union scissor, before)
+            boolean ownPanes = (this.f.skip & 536870912) == 0;
+            for (int stage = 0; stage < 2; stage++) {
+            if (stage == 1 && ownPanes) {
+               for (int k = 0; k < this.f.nP; k++) {
+                  if (this.f.planeMirror[k] && (wanted & passBits & (1 << k)) != 0 && planeRect(this.f, k, ls, sx, sy, sw, sh)) {
+                     GLStateRenderThread.ScissorTest.set(true);
+                     GLStateRenderThread.ColorMask.set(true, true, true, true);
+                     GLStateRenderThread.DepthMask.set(true);
+                     GL11.glScissor(QR[0], QR[1], QR[2], QR[3]);
+                     GL11.glClearColor(0F, 0F, 0F, 0F);
+                     GL11.glClearDepth(1.0);
+                     GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+                  }
+               }
+            }
             for (int i = 0; i < PENDING.size(); i++) {
                Pending p = PENDING.get(i);
                if (ShadowAtlas.texturesPending(p.slot)) {
                   continue;
                }
                for (int k = 0; k < this.f.nP; k++) {
-                  if ((p.planes & passBits & (1 << k)) == 0 || done != null && (done[i] & (1 << k)) != 0) {
+                  if ((p.planes & passBits & (1 << k)) == 0 || done != null && (done[i] & (1 << k)) != 0 || this.f.planeMirror[k] != (stage == 1)) {
                      continue;
                   }
                   int o = k * 10;
@@ -2474,11 +2522,23 @@ public final class Mirrors {
                   if (!calibrated) {
                      calibrated = CAMERA.calibrate(this.f);
                   }
+                  // the copy clipped to this plane's own panes, as Share's copies are (under the pass's union scissor a mirror's
+                  // copy also reached the window beside it)
+                  int qx = sx, qy = sy, qw = sw, qh = sh;
+                  if (ownPanes) {
+                     if (!planeRect(this.f, k, ls, sx, sy, sw, sh)) {
+                        continue;
+                     }
+                     qx = QR[0];
+                     qy = QR[1];
+                     qw = QR[2];
+                     qh = QR[3];
+                  }
                   float squareDepth = p.slot.squareDepth;
                   boolean outline = ShadowAtlas.outline(p.slot, false); // the aim outline is a screen overlay: once, not per plane
                   ModelCamera.instance = CAMERA;
                   GLStateRenderThread.ScissorTest.set(true);
-                  GL11.glScissor(sx, sy, sw, sh);
+                  GL11.glScissor(qx, qy, qw, qh);
                   try {
                      synchronized (p.slot) {
                         p.slot.render();
@@ -2489,6 +2549,7 @@ public final class Mirrors {
                   }
                   modelDraws++;
                }
+            }
             }
             if (pass == 1) {
                layerTopDrawn = true;
