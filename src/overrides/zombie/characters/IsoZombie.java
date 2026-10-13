@@ -5445,6 +5445,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
 
    public void setSkeleton(boolean isSkeleton) {
       this.isSkeleton = isSkeleton;
+      this.pzoptBmEpoch = 0; // pzopt: bodyModelCache, a body-model input changed
       if (isSkeleton) {
          this.getHumanVisual().setHairModel("");
          this.getHumanVisual().setBeardModel("");
@@ -6106,7 +6107,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
     * the game thread before the batch; everything else updates inline as stock.
     */
    public boolean pzoptBatchSafe() { // pzopt
-      if (this.getBallisticsTarget() != null || this.isRagdoll() || this.isFalling() || this.isOnFire() || this.isBeingGrappled() || this.isGrappling() // pzopt
+      if (this.getBallisticsTarget() != null || this.pzoptRenewStalePlayer() || this.isRagdoll() || this.isFalling() || this.isOnFire() || this.isBeingGrappled() || this.isGrappling() // pzopt
          || this.getReanimatedPlayer() != null || this.pzoptAnimPlayerStale() || !this.pzoptRagdollFree()) { // pzopt
          return false; // pzopt
       } // pzopt

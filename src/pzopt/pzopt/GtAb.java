@@ -35,9 +35,11 @@ public final class GtAb {
    public static final int BAKE_GUARD = 2097152; // bakeTimeGuardPct
    public static final int POSTUPDATE = 4194304; // postupdateParallel (Louisville 120 plan B)
    public static final int TILE_RECORD = 8388608; // tileRecordParallel (Louisville 120 plan A)
+   public static final int RAGDOLL_GATE = 16777216; // ragdollGate
+   public static final int BODY_MODEL_CACHE = 33554432; // bodyModelCache
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
-      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel"};
+      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "ragdollGate", "bodyModelCache"};
 
    private static final int MASK = parse(Config.DEV_GT_ALTERNATE_KEYS);
    private static long t0;

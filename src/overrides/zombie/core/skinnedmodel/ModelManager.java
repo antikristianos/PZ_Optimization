@@ -187,6 +187,7 @@ public final class ModelManager {
          this.femaleModel = femaleModel;
          this.skeletonMaleModel = skeletonMaleModel;
          this.skeletonFemaleModel = skeletonFemaleModel;
+         pzopt.BodyModelCache.bump(); // pzopt: bodyModelCache, the body models changed
          this.created = true;
          AdvancedAnimator.systemInit();
          PopTemplateManager.instance.init();
@@ -561,6 +562,16 @@ public final class ModelManager {
    }
 
    public Model getBodyModel(IsoGameCharacter chr) {
+      Model pzoptCached = pzopt.BodyModelCache.cached(chr); // pzopt: bodyModelCache, the character's own copy (no descriptor read)
+      if (pzoptCached != null) { // pzopt: bodyModelCache
+         return pzoptCached; // pzopt: bodyModelCache
+      } // pzopt: bodyModelCache
+      int pzoptEpoch = pzopt.BodyModelCache.begin(chr); // pzopt: bodyModelCache, epoch read before the inputs
+      return pzopt.BodyModelCache.store(chr, pzoptEpoch, this.pzoptStockBodyModel(chr)); // pzopt: bodyModelCache
+   } // pzopt: bodyModelCache
+
+   /** pzopt: bodyModelCache, stock getBodyModel's body. */
+   public Model pzoptStockBodyModel(IsoGameCharacter chr) { // pzopt: bodyModelCache
       if (chr.isAnimal()) {
          return chr.getVisual().getModel();
       } else if (chr.isZombie() && ((IsoZombie)chr).isSkeleton()) {

@@ -56,7 +56,7 @@ PzoptSettingsLayout = {
                     "animatorParallel", "headOnWorker", "animatorPipeline", "animBatchAsync", "guardedCallbacks", "lightingReadParallel",
                     "charDrawThreads", "separateParallel", "skinTransformsPrecompute", "skinPalettePrecompute", "shadowPrep", "aoContextParallel" } },
                 { title = "Cheaper checks", keys = { "playerLosFast", "ecsLookupFast", "actionConditionFast", "zombieCullSortFast", "vehicleCull",
-                    "zombieSpotFast", "zombieAtlasFast", "separateFast", "edgeTestFast", "sleepCheckMemo", "stateParamMemo",
+                    "zombieSpotFast", "zombieAtlasFast", "separateFast", "edgeTestFast", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",
                     "emitterParamSkip", "profilerThreadMemo" } },
                 { title = "Detail by distance", keys = { "zombieLodDynamic", "zombieSimLodTiles", "zombieSimLodSteps", "zombieCheckSpread",

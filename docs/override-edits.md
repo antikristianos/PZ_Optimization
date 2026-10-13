@@ -6641,3 +6641,42 @@ gates (`fixtures_doors_fences_01_66`, `doorTrans`) only bake, and so only cast A
   (`windowsInChunkTexture=true`, bench save, gate at 8006,11200): fix off 10,032 / 12,153 / 10,026 px stale after close /
   open / close (AO view 7,960 / 10,800), fix on 0 / 0 / 0. A first full re-bake also changes a patch of grass AO north-east
   of the spot in both builds (11,640 px in the AO view, pre-existing, a load-time state; not chased).
+
+### The ragdoll question and the body model (2026-10-12, `ragdollGate`, `bodyModelCache`): IsoGameCharacter, IsoZombie, AnimationPlayer, ModelManager, SurvivorDesc (new)
+
+The in-game profiler put `IsoGameCharacter.isRagdoll` at 3-4 % of the Louisville game thread (hottest method of "objects update"
+and of the entity-update filter). The async profiler (no safepoint bias, runs `rag-2-off-prof` / `rag-3-on-prof`) measured
+1.56 % for `isRagdoll` + `isRagdollSimulationActive` together, nearly all of it inside `ModelManager.getBodyModel` and
+`getAnimationPlayer`: stock asks for the animation player, and that first works out the character's body model (animal flag,
+skeleton flag, the gender in its `SurvivorDesc`: a cache miss on the descriptor) and compares it with the player's model (a miss
+on the player), about 60,000 times a frame (the dual-evaluation run counted 131 M calls in ~2,200 frames: every zombie's
+push-apart asks it of every neighbour, postupdate's collision, the entity-update filter, the animation variables).
+
+- `ragdollGate` (pzopt.RagdollGate): `isRagdoll`, `isRagdollSimulationActive` and `isFullyRagdolling` return stock's `false`
+  without asking for the player while no animation player holds a ragdoll controller (a count kept at the two writes of
+  `AnimationPlayer.ragdollController`, `initRagdollController` / `releaseRagdollController`), or when the character's own player
+  (the field, never `getAnimationPlayer()`) has no controller; a character with a controller takes the stock path. The value is
+  always stock's; what is skipped is stock's side effect of replacing a player whose body model changed, which the next
+  `getAnimationPlayer()` makes as stock would. The entity-update filter (`IsoZombie.pzoptBatchSafe`) relied on that side effect
+  (its own stale-player check came after `isRagdoll`), so `pzoptRenewStalePlayer` makes the replacement at the same place and
+  the batch takes the same zombies as before. The same filter's `pzoptRagdollFree` (no controller, no active simulation in
+  the player) answers `true` from the count alone while it is zero (`RagdollGate.noneFor`), so the filter no longer reads the
+  player at all.
+- `bodyModelCache` (pzopt.BodyModelCache): the body model and "the held player carries it" are kept on the character
+  (`pzoptBm*` fields) and dropped exactly when an input changes: the descriptor reference (compared at every use), the
+  descriptor's gender (new `SurvivorDesc` override: `setCharacterGender` and `load` bump a global epoch when the value changes on
+  a descriptor some character keyed its entry on), `IsoZombie.setSkeleton` (the character's entry), `ModelManager.create` (the
+  four body models: epoch), the player (cleared when `getAnimationPlayer` replaces it, by `releaseAnimationPlayer` and by
+  `AnimationPlayer.onReleased`; a player's model is only written at `alloc` and `onReleased`). Animals (their visual's model) and
+  debug sessions (`forceSkeleton`) never use it. `getBodyModel` keeps stock's body as `pzoptStockBodyModel`.
+- Proof: `devRagdollGateCheck` / `devBodyModelCheck` evaluate stock's answer beside every gated / cached one (side-effect free) and
+  count mismatches and skipped replacements (`ragdoll gate:` / `body model cache:` in `zombie_batches=` of pzopt-bench.out).
+- Within-run A/B: GtAb bits `ragdollGate` / `bodyModelCache` (`devGtAlternateKeys`).
+- Measured (Louisville bench, desktop 5120x2160 uncapped, `vrr=off vsync=false`, Enhancements off: own empty
+  `userOptionsFile` + `enhancementsEnabled=false`, runs `rag-20..28`): no ragdoll controller existed in any run (`max_live=0`),
+  every gated call answered globally; dual evaluation 105 M ragdoll calls and 105 M body-model hits + 24 M settled players,
+  0 mismatches, 0 skipped replacements, 76 epoch bumps (`rag-20-check`). Async profiler, game thread: `isRagdoll*` 1.24 % ->
+  0.06 %, `getAnimationPlayer` 1.59 % -> 0.21 %, `getBodyModel` 0.67 % -> 0 % (`rag-21-off-prof` / `rag-22-on-prof`); in-game
+  25 Hz sampler `isRagdoll` 1.5-2.2 % -> 0.00 % (`rag-25`..`28`). Within-run ABBA at 230 ms (`rag-23-ab`, `rag-24-ab`): on 72.0 /
+  71.6 fps vs off 70.1 / 69.6 (+2.7 / +2.9 %), p99 40.1 / 34.9 vs 49.2 / 48.7 ms, game-thread CPU -0.43 / -0.07 ms a frame.
+  Whole-run pairs (off 74.8 / 79.6, on 77.3 / 75.7 fps) are inside the run-to-run spread.

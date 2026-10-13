@@ -1028,7 +1028,7 @@ public final class Harness {
                 + "\nroute_start_epoch_ms=" + runStartEpochMs + "\nroute_end_epoch_ms=" + runEndEpochMs
                 + "\nroute_seconds=" + secs + "\nchunks_loaded=" + chunks + "\nchunks_per_second=" + (secs > 0f ? chunks / secs : 0f)
                 + "\nsettings=" + Config.describe()
-                + "\nzombie_batches=" + AnimBatch.describe() + " | " + ActionEval.describe() + " | " + AnimParallel.describe() + " | " + LightingBatch.describe() + " | " + FrameBatch.describe() + " | " + UpdateBatch.describe() + " | " + LuaGate.describe() + " | " + PostupdateBatch.describe() + " | " + ReuseSpread.describe() // pzopt: entityUpdateParallel, its batch, Lua-suppression and deferral counters; luaWorkerGate
+                + "\nzombie_batches=" + AnimBatch.describe() + " | " + ActionEval.describe() + " | " + AnimParallel.describe() + " | " + LightingBatch.describe() + " | " + FrameBatch.describe() + " | " + UpdateBatch.describe() + " | " + LuaGate.describe() + " | " + PostupdateBatch.describe() + " | " + ReuseSpread.describe() + " | " + RagdollGate.describe() + " | " + BodyModelCache.describe() // pzopt: entityUpdateParallel, its batch, Lua-suppression and deferral counters; luaWorkerGate
                 + "\ngt_offload=" + GtOffload.describe()
                 + "\nripples=" + Ripples.stats()
                 + "\nbake_counters=" + zombie.iso.fboRenderChunk.FBORenderCell.pzoptBakeCounters()

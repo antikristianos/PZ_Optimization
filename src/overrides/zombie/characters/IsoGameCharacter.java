@@ -499,6 +499,10 @@ public abstract class IsoGameCharacter
    public IsoGameCharacter reanimatedCorpse;
    public int reanimatedCorpseId = -1;
    private AnimationPlayer animPlayer;
+   public Model pzoptBmModel; // pzopt: bodyModelCache, this character's body model (pzopt.BodyModelCache)
+   public SurvivorDesc pzoptBmDesc; // pzopt: bodyModelCache, the descriptor it was computed with
+   public int pzoptBmEpoch; // pzopt: bodyModelCache, the epoch it was computed in (0 = none)
+   public AnimationPlayer pzoptBmPlayer; // pzopt: bodyModelCache, the held player known to carry that model
    private boolean deferredMovementEnabled = true;
    private boolean isCrit;
    private boolean knockedDown;
@@ -1760,6 +1764,9 @@ public abstract class IsoGameCharacter
    /** pzopt: entityUpdateSafeStates, game thread: no ragdoll in this character's animation player (no Bullet on a worker). */
    public boolean pzoptRagdollFree() { // pzopt
       AnimationPlayer ap = this.animPlayer; // pzopt: the field, never getAnimationPlayer() (it can replace the player)
+      if (pzopt.RagdollGate.on() && pzopt.RagdollGate.noneFor(ap)) { // pzopt: ragdollGate, no player holds a controller: both tests below are true
+         return true; // pzopt: ragdollGate
+      } // pzopt: ragdollGate
       return ap == null || !ap.isRagdollSimulationActive() && ap.getRagdollController() == null; // pzopt
    } // pzopt
 
@@ -1769,19 +1776,40 @@ public abstract class IsoGameCharacter
    } // pzopt
 
    /** pzopt: schedulerClassifyParallel, any thread: getAnimationPlayer() would replace the player (the body model changed). */
+   /**
+    * pzopt: ragdollGate. Stock isRagdoll() replaced an animation player whose body model changed as a side effect of the
+    * question; the gated isRagdoll no longer does, so the entity-update filter (IsoZombie.pzoptBatchSafe) makes that
+    * replacement here, where its isRagdoll() call made it before, and the zombie is batched exactly as before. Always false.
+    */
+   public boolean pzoptRenewStalePlayer() { // pzopt: ragdollGate
+      if (pzopt.RagdollGate.on() && this.pzoptAnimPlayerStale()) { // pzopt: ragdollGate
+         this.getAnimationPlayer(); // pzopt: ragdollGate, the replacement stock's isRagdoll() made
+      } // pzopt: ragdollGate
+      return false; // pzopt: ragdollGate
+   } // pzopt: ragdollGate
+
    public boolean pzoptAnimPlayerStale() { // pzopt
+      if (pzopt.BodyModelCache.playerSettled(this, this.animPlayer)) { // pzopt: bodyModelCache, the held player carries the cached body model
+         return false; // pzopt: bodyModelCache
+      } // pzopt: bodyModelCache
       return this.animPlayer != null && this.animPlayer.getModel() != ModelManager.instance.getBodyModel(this); // pzopt
    } // pzopt
 
    public AnimationPlayer getAnimationPlayer() {
+      AnimationPlayer pzoptHeld = this.animPlayer; // pzopt: bodyModelCache
+      if (pzopt.BodyModelCache.playerSettled(this, pzoptHeld)) { // pzopt: bodyModelCache, stock's model comparison is known to be equal
+         return pzoptHeld; // pzopt: bodyModelCache
+      } // pzopt: bodyModelCache
       Model model = ModelManager.instance.getBodyModel(this);
       boolean hasTracks = false;
       if (this.animPlayer != null && this.animPlayer.getModel() != model) {
          hasTracks = this.animPlayer.getMultiTrack().getTrackCount() > 0;
+         this.pzoptBmPlayer = null; // pzopt: bodyModelCache, the player is replaced
          this.animPlayer = (AnimationPlayer)Pool.tryRelease(this.animPlayer);
       }
 
       if (this.animPlayer == null) {
+         this.pzoptBmPlayer = null; // pzopt: bodyModelCache
          this.animPlayer = AnimationPlayer.alloc(model);
          this.onAnimPlayerCreated(this.animPlayer);
          if (hasTracks) {
@@ -1789,10 +1817,12 @@ public abstract class IsoGameCharacter
          }
       }
 
+      pzopt.BodyModelCache.notePlayer(this, this.animPlayer, model); // pzopt: bodyModelCache
       return this.animPlayer;
    }
 
    public void releaseAnimationPlayer() {
+      this.pzoptBmPlayer = null; // pzopt: bodyModelCache
       this.animPlayer = (AnimationPlayer)Pool.tryRelease(this.animPlayer);
    }
 
@@ -4846,10 +4876,16 @@ public abstract class IsoGameCharacter
    }
 
    public boolean isRagdoll() {
+      if (pzopt.RagdollGate.on() && pzopt.RagdollGate.gatedFalse(this, this.animPlayer, 0)) { // pzopt: ragdollGate, stock's false without the player swap check
+         return false; // pzopt: ragdollGate
+      } // pzopt: ragdollGate
       return this.hasAnimationPlayer() && this.getAnimationPlayer().isRagdolling();
    }
 
    public boolean isFullyRagdolling() {
+      if (pzopt.RagdollGate.on() && pzopt.RagdollGate.gatedFalse(this, this.animPlayer, 2)) { // pzopt: ragdollGate
+         return false; // pzopt: ragdollGate
+      } // pzopt: ragdollGate
       return this.hasAnimationPlayer() && this.getAnimationPlayer().isFullyRagdolling();
    }
 
@@ -4894,6 +4930,9 @@ public abstract class IsoGameCharacter
    }
 
    public boolean isRagdollSimulationActive() {
+      if (pzopt.RagdollGate.on() && pzopt.RagdollGate.gatedFalse(this, this.animPlayer, 1)) { // pzopt: ragdollGate
+         return false; // pzopt: ragdollGate
+      } // pzopt: ragdollGate
       return this.hasAnimationPlayer() && this.getAnimationPlayer().isRagdollSimulationActive() && this.canRagdoll();
    }
 

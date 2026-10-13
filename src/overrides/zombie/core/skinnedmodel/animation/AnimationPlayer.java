@@ -276,6 +276,7 @@ public final class AnimationPlayer extends PooledObject {
 
    public void onReleased() {
       if (this.pzoptInFlight) { pzopt.AnimBatch.guard(); } // pzopt: animBatchAsync, join the bone batch before a game-thread touch
+      if (this.character != null && this.character.pzoptBmPlayer == this) { this.character.pzoptBmPlayer = null; } // pzopt: bodyModelCache, a released player is no longer known to carry anything
       this.model = null;
       this.skinningData = null;
       this.propTransforms.setIdentity();
@@ -1729,6 +1730,7 @@ public final class AnimationPlayer extends PooledObject {
             }
 
             this.ragdollController = ragdollController;
+            pzopt.RagdollGate.changed(false, true); // pzopt: ragdollGate, players holding a controller
          }
       }
    }
@@ -1762,6 +1764,7 @@ public final class AnimationPlayer extends PooledObject {
       if (this.ragdollController != null) { pzopt.AnimParallel.noteRagdoll("controller released"); } // pzopt: evidence rig, ragdoll physics off the game thread
       RagdollController pzoptReleased = this.ragdollController; // pzopt: ragdollQuitSweep, ledger
       this.ragdollController = (RagdollController)Pool.tryRelease(this.ragdollController);
+      pzopt.RagdollGate.changed(pzoptReleased != null, this.ragdollController != null); // pzopt: ragdollGate, players holding a controller
       if (pzoptReleased != null) { pzopt.RagdollLedger.released(pzoptReleased); } // pzopt: ragdollQuitSweep, ledger
       if (this.ragdollAnimationClip != null) {
          this.ragdollAnimationClip.setRagdollSimulationActive(false);
