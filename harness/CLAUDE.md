@@ -804,7 +804,7 @@ are not uploaded by the follower: run `runs` (and `--delete` for the main checko
 Compression pass 2026-10-12 (385 -> ~240 GB): the raw `frames.rgba` dumps and the GameProfiler backup copies deleted (71 GB),
 every text file >= 4 KB gzip-encoded in place (20 GB), every PNG through `oxipng -o 3` (lossless, 13.5 GB), the AV1 captures
 above ~75 Mbps and the old SDR H.264 / HEVC recordings re-encoded with the house AV1 PQ encode (`harness/cold-reencode.py
-<manifest.jsonl> [--max-minutes M]`, one video per queue media job (`--max-minutes 0.01`), alternated 1:1 with other
+<manifest.jsonl> [--max-minutes M]`, the manifest from `--scan <dir>...` before the upload, skill `cold-storage`; one video per queue media job (`--max-minutes 0.01`), alternated 1:1 with other
 sessions' runs: download, `encode-av1-hdr.sh` CQ 22, replaced only
 when <= 85 % and the duration matches, upload conditional on the object's generation; done list
 `~/.cache/pzopt-cold-store/reencode-done.jsonl`; 101 videos, 75 replaced 71.3 -> 32.3 GB). Captures of ~60 Mbps gain

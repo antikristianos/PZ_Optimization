@@ -3,7 +3,11 @@
 captures above ~60 Mbps (storms, rain: up to 150 Mbps at 5K) and the old SDR H.264 / HEVC recordings, with the house
 AV1 10-bit PQ encode (harness/encode-av1-hdr.sh, NVENC CQ 22; SDR mapped to PQ). Run it as a queue media job.
 
+    harness/cold-reencode.py <manifest.jsonl> --scan <dir>... [--mbps 60]   # write the manifest from local videos
     harness/cold-reencode.py <manifest.jsonl> [--max-minutes M]
+
+--scan (2026-10-13) lists the local videos under the dirs that are not AV1 PQ or run above --mbps, as the objects
+`cold-store.py videos` uploads them to: scan before `videos --delete`, re-encode after it.
 
 manifest lines: {"name": <object>} (objects under the bucket). Per object: download, encode, check (AV1, PQ, same
 duration), and replace it only when the result is at most 85 % of the original, with the generation it was read at
@@ -11,7 +15,7 @@ duration), and replace it only when the result is at most 85 % of the original, 
 ~/.cache/pzopt-cold-store/reencode-done.jsonl (a rerun skips those); --max-minutes stops starting new files after M minutes
 so a batch stays a short queue job. Afterwards `cold-store.py index <run>...` re-lists the run pages' sizes.
 """
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse, importlib.util, json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 BUCKET = "diegov-videos-coldline"
@@ -72,11 +76,35 @@ def one(name, tmp):
     return {"name": name, "status": "replaced", "old": old, "new": new, "codec": c0, "seconds": round(d0, 1)}
 
 
+def scan(manifest, dirs, mbps):
+    """manifest lines for the local videos under dirs that are not AV1 PQ or above mbps (their bucket object names)"""
+    spec = importlib.util.spec_from_file_location("cold_store", Path(__file__).resolve().parent / "cold-store.py")
+    cs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cs)
+    n = 0
+    with open(manifest, "w") as out:
+        for d in dirs:
+            for f in sorted(Path(d).resolve().rglob("*")):
+                if not f.is_file() or f.suffix.lower() not in cs.VIDEO_EXT:
+                    continue
+                c, t, dur = probe(f)
+                rate = f.stat().st_size * 8 / dur / 1e6 if dur else 0
+                if c != "av1" or t != "smpte2084" or rate > mbps:
+                    out.write(json.dumps({"name": cs.object_of(f)}) + "\n")
+                    n += 1
+                    print(f"{rate:6.1f} Mbps {c}/{t} {f}", flush=True)
+    print(f"{n} videos in {manifest}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("manifest")
     ap.add_argument("--max-minutes", type=float, default=0)
+    ap.add_argument("--scan", nargs="+", metavar="DIR")
+    ap.add_argument("--mbps", type=float, default=60)
     args = ap.parse_args()
+    if args.scan:
+        return scan(args.manifest, args.scan, args.mbps)
     STATE.mkdir(parents=True, exist_ok=True)
     donef = STATE / "reencode-done.jsonl"
     done = {json.loads(l)["name"] for l in open(donef) if l.strip()} if donef.exists() else set()

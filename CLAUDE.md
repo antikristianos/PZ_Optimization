@@ -165,6 +165,7 @@ update) re-run `scripts/decompile.sh` and `scripts/regen-overrides.sh`.
 | `build-install` | compiling the overrides and installing them into the game dir |
 | `release-windows` | building the Windows zip and publishing it as a GitHub release asset |
 | `analyze-run` | reading a finished run: analyze, compare, waits, loadtime, dashboard |
+| `cold-storage` | freeing disk space: runs and videos to the GCP bucket compressed (gzip text, no raw dumps / profiler backups, high-bitrate videos re-encoded), re-indexing, the cloud DB's size, the bucket's cost |
 | `override-game-class` | adding or changing an overridden game class |
 | `game-update` | the jar changed: re-decompile, regen overrides, rebuild, re-baseline |
 | `proton-run` | preparing a Windows/Proton comparison run |
