@@ -6680,3 +6680,148 @@ push-apart asks it of every neighbour, postupdate's collision, the entity-update
   25 Hz sampler `isRagdoll` 1.5-2.2 % -> 0.00 % (`rag-25`..`28`). Within-run ABBA at 230 ms (`rag-23-ab`, `rag-24-ab`): on 72.0 /
   71.6 fps vs off 70.1 / 69.6 (+2.7 / +2.9 %), p99 40.1 / 34.9 vs 49.2 / 48.7 ms, game-thread CPU -0.43 / -0.07 ms a frame.
   Whole-run pairs (off 74.8 / 79.6, on 77.3 / 75.7 fps) are inside the run-to-run spread.
+
+## Zombie game-thread pass (2026-10-13): nearby cars from one grid per frame (`nearVehicleGrid`)
+
+`IsoGameCharacter.getNearVehicle` runs at the top of every zombie's update and, like `isNearSirenVehicle`, looks up the
+sixteen chunks of a four-chunk window round the character through the cell and walks each chunk's vehicle list; downtown
+nearly every one of those lists is empty, so the lookups themselves were 2.4 % of the game thread on the Louisville horde
+(2,678 zombies, Enhancements off). Both methods now first ask `pzopt.VehicleNear` whether any chunk of that same window
+holds a vehicle. It keeps one table per frame of which chunk-map slots hold a chunk with a non-empty vehicle list (a
+summed-area table, so the window is one rectangle query); when the answer is "none", the method returns what its loop would
+have returned with nothing to find (no vehicle, no siren); any other answer runs the stock loop unchanged. Single player
+only (one chunk map, as the cell's chunk lookup reads it with one player); a server, split screen or an ignored chunk map
+always takes the stock loop.
+
+The table is valid for one frame and only while nothing it was built from changed. Two things feed it, and both report
+their changes: `IsoChunk`'s vehicle list is now `pzopt.VehicleList` (an `ArrayList` that bumps a counter before and after
+every size-changing call, iterator and sub-list removals included), and the `IsoChunkMap` override bumps the same counter
+after every write to the chunk grid (setting or clearing a slot, the direct set from the loader, the buffer swap, the four
+scrolls, a teleport, the initial position, the copy, the unload, the dispose). A changed counter makes the next query
+rebuild the table. Rig `devNearVehicleCheck`: one "none" answer in sixteen also runs the stock loop and counts a
+difference (run zomb-3-exact-20261013-004534: 215,765 checked, 0 differences; 3.45 M "none" answers, 1.59 M windows with
+a car went the stock way). Key `nearVehicleGrid` (default on); the getNearVehicle check helper and the counter hooks carry
+the `// pzopt:` markers.
+
+## Zombie game-thread pass (2026-10-13): the zombies' update on the workers by default, players before the flight (`entityUpdateParallel`, `entityUpdatePipeline`, `entityUpdatePlayerFirst`, `postupdateParallel`)
+
+The maintainer accepted the frame-start-reads semantics for the zombie update loop, and the five keys of this pass are now on by
+default: `entityUpdateParallel`, `entityUpdatePipeline`, `entityUpdatePlayerFirst` (new), `postupdateParallel` and
+`nearVehicleGrid`. Before this the first three were opt-in on the tab ("experimental"). What the batched update does
+differently from stock's one-after-another loop is now part of the default game, listed here once:
+
+- Within a simulation bucket, the calm zombies (idle, walking, following a path, no player within 12 squares, nothing physical
+  going on: `entityUpdateSafeStates`) update on the frame workers. The other entities of the frame (players, animals, vehicles,
+  zombies in other states) update on the game thread, in the stock order among themselves.
+- A batched zombie reads another entity's position as it stood when the batch was dispatched (the snapshot of
+  `UpdateBatch`), not as the loop advanced. This is the same Jacobi-style read the separation pass already shipped with.
+- The global random generator hands its numbers out in a different order, so different zombies get different rolls. The
+  generator is seeded randomly every session, so no particular sequence was ever reproducible.
+- Lua `OnZombieUpdate` handlers of the batched zombies run after the batch, in the stock order of the zombies, and see the
+  whole batch's updates. Emitter ticks and Bullet calls are deferred the same way.
+
+`entityUpdatePlayerFirst` (new, in the `MovingObjectUpdateSchedulerUpdateBucket` override and `pzopt.UpdateBatch.playerFirst`).
+With the pipeline, every entity the batch does not take used to be queued for the inline phase that runs under the airborne
+flight, the player included. The player's update writes the zombies it sees: its line-of-sight pass calls their `spotted`,
+which sets the target, the path and the alert state. Those writes ran concurrently with the zombies' own updates on the
+workers, and part of them was lost or overwritten. With the key on, a player updates at its place in the bucket's collection
+loop, before the flight is dispatched: the player now has the order the synchronous batch always gave it, and the animals,
+vehicles and busy zombies still run under the flight.
+
+The behaviour check that found it is the rig `brawl=N` (`pzopt.BrawlRig`, `harness/brawl.py`). 60 hostile zombies spawn 4-30
+tiles round a visible player, who stands still, makes a noise every 4 s and has every hit healed. Each run logs the hits, the
+distances, the targeting and the action states per second, and Jev compares the runs with the key off and on.
+- With the pipeline but without the fix, the horde was clearly less aggressive (Jev 0.95): 20-21 zombies targeting the
+  player instead of 24-25, 11.7 instead of 15 within four tiles, a slower approach, fewer lunges.
+- Without the pipeline, and with the pipeline plus the fix, it matched the key-off runs (Jev 0.98 and 0.92). Runs
+  zomb-br-off1b/off2, on1b/on2, np1/np2, pf1/pf2 of 2026-10-13.
+- Players who had `entityUpdatePipeline` on in an earlier build (it was an opt-in tab entry) had the less aggressive horde.
+
+`postupdateParallel` is unchanged from its 2026-10-06 entry: 0 differences in 692,164 `devPostupdateCheck` comparisons at
+2,775 zombies (run zomb-3-exact). The in-run A/B on the horde gave a postupdate section of 2.44 ms with the key off and 2.08 ms
+with it on (zomb-2-puab).
+
+`IsoZombie.updateInternal` (vehicle hit deferral, part of `physicsDefer`, 2026-10-13). A moving vehicle's update marks the
+zombies it touches for a hit test. The batched zombie then ran that test on its worker: `checkNetworkCollision` ->
+`hitCharacter` -> `onHitByVehicle` -> `slideAwayFromWalls` -> `PolygonalMap2.resolveCollision`, whose
+`CollideWithObstacles` scratch is shared by every caller. In run zomb-9-def (Louisville, defaults with
+`entityUpdateParallel`) it threw on the worker, which turned the batching off. It also left the scratch half-written, so the
+player's own postupdate on the game thread threw in the same code and the game left the world. Players who turned on the
+entity-update tab entry in earlier builds could hit this whenever a car moved through zombies. The branch now asks
+`UpdateBatch.deferVehicleHit` first. On a batch task the zombie and the vehicle are queued (the task still clears the
+field as stock does), and the game thread runs the stock test at the join through the new `IsoZombie.pzoptVehicleHit`, in
+queue order, right after the deferred ragdoll contacts. Off a task the stock branch runs in place. The counters are
+`vehicleHitDeferred=` / `vehicleHitDrained=` on the update-batch line. A vehicle that marks a zombie while that zombie's task
+is running (the vehicles still update under the flight) can lose that frame's test; the vehicle marks it again on the next
+frame while they touch.
+
+## Zombie game-thread pass (2026-10-13): static-state audit of the batched zombie update
+
+After the vehicle-hit crash, `tools/StaticAudit.java` was run over `IsoZombie.update` / `preupdate` / `frameStep` on the
+game jar with the built overrides layered on top. The conservative virtual dispatch reaches 26,818 methods and 4,853
+static fields. Chains through network packets, Lua, asset loading and constructors were set aside, which left 248
+mutable or scratch statics. Every one on a path a calm batched zombie can take was checked against the existing guards
+(the PZMulticore ports: `ZombieGroupManager`, `WorldSoundManager` and `PolygonalMap2.lineClearCollide` under locks, the
+per-thread `PathFindBehavior2`, `WalkTowardState` and `IsoGameCharacter` scratch, `emitterDefer`, `physicsDefer`, the Lua
+replay, `LightingDefer`). These were unguarded and are fixed now:
+
+- `IsoZombie.updateSearchForCorpse`: the static corpse list and `tempo`. Every calm zombie runs this search once its
+  corpse timer expires, and two workers filled and cleared one `ArrayList`. On a frame worker the list and the vector are
+  now the thread's own (`pzopt.WorkerScratch`); on the game thread they are the statics, as in stock.
+- `IsoZombie.updateMovementStatistics`: the static `lastPosition` / `currentPosition` pair, per thread on a worker.
+- `IsoZombie.spottedNew` / `spottedOld` (reached from the update while `bonusSpotTime` runs) and `isTargetInCone`: the
+  static `tempo` / `tempo2`, per thread on a worker.
+- `IsoMovingObject.getFeelerTile`, which every calm zombie's `tryThump` probe calls, and the stock `separate()` body: the
+  static `tempo`, per thread on a worker. The `postupdateParallel` movement tasks already had their own.
+- `PolygonalMap2.resolveCollision`, both forms, with the shared `CollideWithObstacles` scratch. While an entity flight or
+  a postupdate movement batch is out, and on any frame worker, the call runs under the `CollideWithObstacles` lock
+  (`UpdateBatch.collideLockNeeded`); outside those windows the game thread calls it lock-free as before. The known worker
+  path (the vehicle hit test) is deferred to the game thread; the lock covers any other path.
+- `BaseVehicle.getPoly` -> `VehiclePoly.init` on shared static scratch. `getNearVehicle` reaches it through
+  `DistToSquared(vehicle)` whenever a car is near, and the first call after the car moved re-initialises the polygons. With
+  `entityUpdatePlayerFirst` the vehicles now update before the flight, like the players (the vehicle update also marks the
+  zombies it touches for the hit test). `UpdateBatch.dispatchCombined` brings every vehicle's polygon up to date on the
+  game thread before the workers start, so the workers only read them.
+- The vehicle hit test itself: `vehicleHitDefer` (the entry above).
+
+Batch latches (a worker exception turning the batching off for the session) in the runs of this pass: one, in
+zomb-9-def (the vehicle hit). There were none in zomb-4, 5, 6 and 7 (Louisville, 4.8-6.5 M batched updates each), none in
+the eight brawl runs and none in the Rosewood drive. The car-through-horde runs below test the fixes.
+
+## Zombie game-thread pass (2026-10-13): separation memo (`separateMemo`, off), separate batch counters
+
+`IsoZombie.pzoptSeparateCompute` asks each neighbour's `isSolidForSeparate` through `pzopt.SeparateBatch.solid`. Inside the
+separation batch, where the grid and every character are read-only, the answer is memoised per zombie for the frame (the new
+`IsoZombie.pzoptSolidMemo`: frame and answer packed in one int, so a racing worker only recomputes). A frame worker also keeps
+its own `SeparateMask` table of square-to-square blocked answers for the batch; before, only the game thread cached them.
+Rig `devSeparateMemoCheck`: 1,902,610 memoised answers compared with the direct call, 0 differences (zomb-12-sepmemo). The
+in-run ABBA A/B there found no gain (schedUpdate 3.124 -> 3.153 ms, inside the noise). A guess at the reason: the memo's
+writes into the zombies make their cache lines travel between cores. The key stays off and is kept for later A/Bs; with it
+off the compute calls `isSolidForSeparate` directly, as before. `SeparateBatch.describe` is now on the harness
+`zombie_batches=` line.
+
+Measured and dropped in the same pass: `frameSpinUs=300` (the frame workers spinning between the frame's batches). In the
+in-run A/B (new bit `frameSpin`) the process burnt 10.8 ms more CPU a frame and the game thread did not get faster (zomb-11-spin).
+`headOnWorker` showed no gain on the Louisville bench now that `see_all` is gone (zomb-8-howab, `devActionEvalCheck` 1.28 M
+contexts, 0 mismatches); it stays off.
+
+`pzopt.GtAb` has a second, independent alternation group (`devGtAlternate2` + `devGtAlternateKeys2`). One run can flip two
+keys on their own periods. The phase column of pzopt-gtab.out is on1 + 2 * on2, and `harness/gtabsec.py --group 2` splits by
+the second group.
+
+## Zombie game-thread pass (2026-10-13): which zombies stay inline (`entityUpdateMoreStates`, `entityUpdateNearPlayer`)
+
+`IsoZombie.pzoptBatchSafe`, the calm-state filter of the batched update, now reports why it keeps a zombie on the game
+thread (`UpdateBatch.inlineBecause`, with `instrument`: an `inline(...)` census on the update-batch line of
+pzopt-bench.out). On the Louisville bench (zomb-14-census, 2,800 frames) ~315 zombies a frame stayed inline: 158 in
+`GenericDefaultState` (the state machine's default, a state with no body), 156 in `ZombieSittingState` (whose `execute` acts
+only on a multiplayer client), 21 within 12 squares of the player, 5 for a physical reason (ragdoll, falling, fire,
+grapple), and a few in lunge, get-up and thump.
+
+- `entityUpdateMoreStates` (default on): the filter also lets the sitting and default-state zombies go to the workers in
+  single player. Their update is the generic zombie update the idle ones already run on the workers. The in-run ABBA A/B
+  (zomb-15-statesab) gave schedUpdate 2.589 -> 2.540 ms, a small gain: most of that work now waits at the flight's join
+  instead.
+- `entityUpdateNearPlayer` (default off): drops the 12-square rule for calm states, since the players now update before the
+  flight. In the brawl check the horde behaved as with the key off (Jev same 0.92, runs zomb-br-np-near1/2), but there was no
+  gain on the bench (zomb-13-nearab, zomb-15-statesab second group: +0.1 ms, noise). It stays off.

@@ -304,7 +304,7 @@ public final class FrameBatch {
          // frameSpinUs: the frame's batches come back to back (separation, transitions, animators, bones, lighting);
          // a worker that just finished one spins a little for the next instead of parking, so it starts within
          // microseconds instead of queueing on the monitor behind the others
-         if (SPIN_NANOS > 0) {
+         if (SPIN_NANOS > 0 && GtAb.on(GtAb.FRAME_SPIN)) { // devGtAlternate: frameSpin, the within-run A/B of the spin
             long until = System.nanoTime() + SPIN_NANOS;
             while (generation == seen && System.nanoTime() < until) {
                Thread.onSpinWait();

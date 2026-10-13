@@ -14229,6 +14229,10 @@ public abstract class IsoGameCharacter
       int chunkMinY = (PZMath.fastfloor(this.getY()) - 4) / 8 - 1;
       int chunkMaxX = (int)Math.ceil((this.getX() + 4.0F) / 8.0F) + 1;
       int chunkMaxY = (int)Math.ceil((this.getY() + 4.0F) / 8.0F) + 1;
+      boolean pzoptEmpty = pzopt.VehicleNear.none(chunkMinX, chunkMinY, chunkMaxX, chunkMaxY); // pzopt: nearVehicleGrid, no chunk of the window holds a vehicle: the loop below finds none
+      if (pzoptEmpty && !pzopt.VehicleNear.checkThis()) { // pzopt: nearVehicleGrid (devNearVehicleCheck runs the loop for a sample)
+         return null; // pzopt: nearVehicleGrid
+      } // pzopt
 
       for (int cy = chunkMinY; cy < chunkMaxY; cy++) {
          for (int cx = chunkMinX; cx < chunkMaxX; cx++) {
@@ -14240,6 +14244,9 @@ public abstract class IsoGameCharacter
                      && PZMath.fastfloor(this.getZ()) == PZMath.fastfloor(vehicle.getZ())
                      && (!(this instanceof IsoPlayer) || !((IsoPlayer)this).isLocalPlayer() || vehicle.getTargetAlpha(((IsoPlayer)this).playerIndex) != 0.0F)
                      && !(this.DistToSquared(vehicle) >= 16.0F)) {
+                     if (pzoptEmpty) { // pzopt: devNearVehicleCheck, the grid said empty and stock found one
+                        pzopt.VehicleNear.checked(true, chunkMinX, chunkMinY); // pzopt
+                     } // pzopt
                      return vehicle;
                   }
                }
@@ -14247,6 +14254,9 @@ public abstract class IsoGameCharacter
          }
       }
 
+      if (pzoptEmpty) { // pzopt: devNearVehicleCheck, agreed
+         pzopt.VehicleNear.checked(false, chunkMinX, chunkMinY); // pzopt
+      } // pzopt
       return null;
    }
 
@@ -14259,6 +14269,9 @@ public abstract class IsoGameCharacter
       int chunkMinY = (PZMath.fastfloor(this.getY()) - 5) / 8 - 1;
       int chunkMaxX = (int)Math.ceil((this.getX() + 5.0F) / 8.0F) + 1;
       int chunkMaxY = (int)Math.ceil((this.getY() + 5.0F) / 8.0F) + 1;
+      if (pzopt.VehicleNear.none(chunkMinX, chunkMinY, chunkMaxX, chunkMaxY)) { // pzopt: nearVehicleGrid, no vehicle in the window: no siren either
+         return false; // pzopt: nearVehicleGrid
+      } // pzopt
 
       for (int cy = chunkMinY; cy < chunkMaxY; cy++) {
          for (int cx = chunkMinX; cx < chunkMaxX; cx++) {

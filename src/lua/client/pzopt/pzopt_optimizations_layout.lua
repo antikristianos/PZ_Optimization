@@ -54,8 +54,9 @@ PzoptSettingsLayout = {
               subs = {
                 { title = "On other cores", keys = { "animBonesParallel", "actionEvalParallel", "charDrawPrep", "frameThreads",
                     "animatorParallel", "headOnWorker", "animatorPipeline", "animBatchAsync", "guardedCallbacks", "lightingReadParallel",
-                    "charDrawThreads", "separateParallel", "skinTransformsPrecompute", "skinPalettePrecompute", "shadowPrep", "aoContextParallel" } },
-                { title = "Cheaper checks", keys = { "playerLosFast", "ecsLookupFast", "actionConditionFast", "zombieCullSortFast", "vehicleCull",
+                    "charDrawThreads", "separateParallel", "skinTransformsPrecompute", "skinPalettePrecompute", "shadowPrep", "aoContextParallel",
+                    "entityUpdateParallel", "entityUpdatePipeline", "entityUpdatePlayerFirst", "entityUpdateMoreStates", "postupdateParallel" } },
+                { title = "Cheaper checks", keys = { "playerLosFast", "ecsLookupFast", "actionConditionFast", "zombieCullSortFast", "vehicleCull", "nearVehicleGrid",
                     "zombieSpotFast", "zombieAtlasFast", "separateFast", "edgeTestFast", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",
                     "emitterParamSkip", "profilerThreadMemo" } },

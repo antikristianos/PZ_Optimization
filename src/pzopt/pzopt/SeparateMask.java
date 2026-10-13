@@ -38,23 +38,42 @@ public final class SeparateMask {
    }
 
    /** Whether {@code square} is blocked to its {@code i}-th surrounding square, from this frame's cache. */
+   /** A frame worker's own table (separateMemo, 2026-10-13): used only while the separation batch runs, when the grid is read-only. */
+   private static final class Table {
+      final IsoGridSquare[] keys = new IsoGridSquare[SIZE];
+      final int[] values = new int[SIZE];
+      final int[] stamps = new int[SIZE];
+   }
+
+   private static final ThreadLocal<Table> TABLES = ThreadLocal.withInitial(Table::new);
+
    public static boolean blocked(IsoGridSquare square, IsoGridSquare other, int i) {
+      IsoGridSquare[] keysT = KEYS;
+      int[] valuesT = VALUES;
+      int[] stampsT = STAMPS;
       if (Thread.currentThread() != GameWindow.gameThread) {
-         // the table is the game thread's; a mod that updates characters on other threads (PZMulticore) asks directly
-         return blockedNow(square, other);
+         if (!SeparateBatch.memoActive()) {
+            // the table is the game thread's; a mod that updates characters on other threads (PZMulticore) asks directly
+            return blockedNow(square, other);
+         }
+         // separateMemo: inside the separation batch the grid does not change, so a worker keeps its own table for the frame
+         Table t = TABLES.get();
+         keysT = t.keys;
+         valuesT = t.values;
+         stampsT = t.stamps;
       }
       int slot = (System.identityHashCode(square) >>> 4) & MASK;
-      int value = VALUES[slot];
-      if (KEYS[slot] != square || STAMPS[slot] != FrameTick.frame()) {
-         KEYS[slot] = square;
-         STAMPS[slot] = FrameTick.frame();
+      int value = valuesT[slot];
+      if (keysT[slot] != square || stampsT[slot] != FrameTick.frame()) {
+         keysT[slot] = square;
+         stampsT[slot] = FrameTick.frame();
          value = 0;
       }
 
       int bit = 1 << i;
       if ((value & bit << 8) != 0) {
          hits++;
-         VALUES[slot] = value;
+         valuesT[slot] = value;
          return (value & bit) != 0;
       }
 
@@ -65,7 +84,7 @@ public final class SeparateMask {
          value |= bit;
       }
 
-      VALUES[slot] = value;
+      valuesT[slot] = value;
       return blocked;
    }
 

@@ -86,6 +86,11 @@ public final class PostupdateBatch {
    private static long checked, checkDiffs;
    private static String firstDiff;
 
+   /** Any thread: a movement batch is on the workers now (PolygonalMap2.resolveCollision's lock, zombie pass 2026-10-13). */
+   public static boolean activeNow() {
+      return active;
+   }
+
    /** Any thread: inside a movement task (the game thread too, while it helps). */
    public static boolean computing() {
       return active && COMPUTING.get()[0];

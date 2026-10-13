@@ -146,11 +146,13 @@ public final class IsoChunkMap {
       IsoChunk.loadGridSquare.clear();
       this.chunksSwapA = null;
       this.chunksSwapB = null;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    public void setInitialPos(int wx, int wy) {
       this.worldX = wx;
       this.worldY = wy;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
       this.xMinTiles = -1;
       this.xMaxTiles = -1;
       this.yMinTiles = -1;
@@ -684,6 +686,7 @@ public final class IsoChunkMap {
       } else {
          this.chunksSwapB[chunkGridWidth * y + x] = c;
       }
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    public boolean setChunkDirect(IsoChunk c, boolean bRequireLock) {
@@ -709,6 +712,7 @@ public final class IsoChunkMap {
             } else {
                this.chunksSwapB[chunkGridWidth * y + x] = c;
             }
+            pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
 
             c.loaded = true;
             if (c.jobType == IsoChunk.JobType.None) {
@@ -810,6 +814,7 @@ public final class IsoChunkMap {
       this.xMinTiles = this.xMaxTiles = -1;
       this.yMinTiles = this.yMaxTiles = -1;
       this.readBufferA = !this.readBufferA;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    private void setChunk(int n, IsoChunk c) {
@@ -818,6 +823,7 @@ public final class IsoChunkMap {
       } else {
          this.chunksSwapB[n] = c;
       }
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    private IsoChunk getChunk(int n) {
@@ -962,6 +968,7 @@ public final class IsoChunkMap {
       }
 
       this.worldY--;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    private void Down() {
@@ -1000,6 +1007,7 @@ public final class IsoChunkMap {
       }
 
       this.worldY++;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    private void Left() {
@@ -1038,6 +1046,7 @@ public final class IsoChunkMap {
       }
 
       this.worldX--;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    private void Right() {
@@ -1076,6 +1085,7 @@ public final class IsoChunkMap {
       }
 
       this.worldX++;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
    }
 
    public int getWorldXMin() {
@@ -1159,6 +1169,7 @@ public final class IsoChunkMap {
                player.square = null;
                this.worldX = x;
                this.worldY = y;
+               pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
                if (!GameServer.server) {
                   WorldSimulation.instance.activateChunkMap(this.playerId);
                }
@@ -1420,6 +1431,7 @@ public final class IsoChunkMap {
       IsoChunkMap to = this;
       to.worldX = from.worldX;
       to.worldY = from.worldY;
+      pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
       to.xMinTiles = -1;
       to.yMinTiles = -1;
       to.xMaxTiles = -1;
@@ -1431,10 +1443,12 @@ public final class IsoChunkMap {
             if (from.chunksSwapA[n] != null) {
                from.chunksSwapA[n].refs.add(to);
                to.chunksSwapA[n] = from.chunksSwapA[n];
+               pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
             }
          } else if (from.chunksSwapB[n] != null) {
             from.chunksSwapB[n].refs.add(to);
             to.chunksSwapB[n] = from.chunksSwapB[n];
+            pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
          }
       }
    }
@@ -1467,6 +1481,7 @@ public final class IsoChunkMap {
 
                this.chunksSwapA[y * chunkGridWidth + x] = null;
                this.chunksSwapB[y * chunkGridWidth + x] = null;
+               pzopt.VehicleNear.changed(); // pzopt: nearVehicleGrid, the chunk map changed
             }
          }
       }

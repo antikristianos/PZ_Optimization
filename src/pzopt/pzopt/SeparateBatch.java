@@ -28,6 +28,36 @@ public final class SeparateBatch {
 
    public static long frames, batched, maxBatch, workNanos, waitNanos;
 
+   // separateMemo (zombie pass 2026-10-13): while the batch runs nothing writes the grid or a character, so a neighbour's
+   // "solid for separation" (its state, sitting, ragdoll checks: 31 % of the pass, asked once per neighbour visit) is
+   // computed once per frame and a worker caches the square-to-square blocked answers in its own table (SeparateMask).
+   private static final boolean MEMO = Config.SEPARATE_MEMO;
+   private static final boolean MEMO_CHECK = Config.DEV_SEPARATE_MEMO_CHECK;
+   private static volatile boolean memoActive;
+   private static volatile int memoStamp;
+   private static final java.util.concurrent.atomic.AtomicLong memoChecked = new java.util.concurrent.atomic.AtomicLong();
+   private static final java.util.concurrent.atomic.AtomicLong memoDiffs = new java.util.concurrent.atomic.AtomicLong();
+
+   /** Any thread: inside the separation batch with separateMemo on. */
+   public static boolean memoActive() {
+      return memoActive;
+   }
+
+   /** Any thread: obj.isSolidForSeparate(), memoised per zombie for the batch's frame (devSeparateMemoCheck: 1 in 16 also computed directly). */
+   public static boolean solid(zombie.iso.IsoMovingObject obj) {
+      if (memoActive && obj instanceof IsoZombie z) {
+         boolean m = z.pzoptSolidMemo(memoStamp);
+         if (MEMO_CHECK && (System.identityHashCode(obj) + memoStamp & 15) == 0) {
+            memoChecked.incrementAndGet();
+            if (m != obj.isSolidForSeparate()) {
+               memoDiffs.incrementAndGet();
+            }
+         }
+         return m;
+      }
+      return obj.isSolidForSeparate();
+   }
+
    /** True while the scheduler should hand this frame's zombies over. */
    public static boolean enabled() {
       return Config.SEPARATE_PARALLEL && Config.SEPARATE_FAST && !failed && Config.effectiveWorkers() > 1 && Overrides.enabled();
@@ -56,7 +86,14 @@ public final class SeparateBatch {
 
       long w0 = FrameBatch.workNanos;
       long q0 = FrameBatch.waitNanos;
-      Throwable t = FrameBatch.run(count, i -> queue[i].pzoptSeparateCompute());
+      memoStamp = FrameTick.frame();
+      memoActive = MEMO && GtAb.on(GtAb.SEPARATE_MEMO); // separateMemo: the grid and every character are read-only for the batch's length
+      Throwable t;
+      try {
+         t = FrameBatch.run(count, i -> queue[i].pzoptSeparateCompute());
+      } finally {
+         memoActive = false;
+      }
       workNanos += FrameBatch.workNanos - w0;
       waitNanos += FrameBatch.waitNanos - q0;
       if (t != null && !failed) {
@@ -76,6 +113,7 @@ public final class SeparateBatch {
 
    public static String describe() {
       return "separate batch: frames=" + frames + " batched=" + batched + " max=" + maxBatch
-            + " work ms=" + (workNanos / 1_000_000L) + " wait ms=" + (waitNanos / 1_000_000L) + (failed ? " FAILED" : "");
+            + " work ms=" + (workNanos / 1_000_000L) + " wait ms=" + (waitNanos / 1_000_000L) + (failed ? " FAILED" : "")
+            + (MEMO_CHECK ? " memoChecked=" + memoChecked.get() + " memoDiffs=" + memoDiffs.get() : "");
    }
 }

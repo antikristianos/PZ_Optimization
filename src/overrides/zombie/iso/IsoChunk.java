@@ -257,7 +257,7 @@ public final class IsoChunk {
    public final boolean[] lightCheck = new boolean[4];
    public final boolean[] lightingNeverDone = new boolean[4];
    public final ArrayList<IsoRoomLight> roomLights = new ArrayList<>();
-   public final ArrayList<BaseVehicle> vehicles = new ArrayList<>();
+   public final ArrayList<BaseVehicle> vehicles = new pzopt.VehicleList(); // pzopt: nearVehicleGrid, a list that reports its size changes (pzopt.VehicleNear)
    public int lootRespawnHour = -1;
    public static final short LB_PATHFIND = 2;
    public short loadedBits;

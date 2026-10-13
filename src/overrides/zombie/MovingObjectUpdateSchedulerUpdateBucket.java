@@ -79,7 +79,7 @@ public final class MovingObjectUpdateSchedulerUpdateBucket {
             continue;
          }
 
-         if (pzoptBatch && pzopt.UpdateBatch.combinedFrame()) { // pzopt: entityUpdatePipeline -- inline entities defer to the phase that runs under the flight (spec 3.4); stock's order is kept by the queue
+         if (pzoptBatch && pzopt.UpdateBatch.combinedFrame() && !pzopt.UpdateBatch.playerFirst(isoMovingObject)) { // pzopt: entityUpdatePipeline -- inline entities defer to the phase that runs under the flight (spec 3.4); stock's order is kept by the queue. entityUpdatePlayerFirst: a player runs here, before the flight, since its update writes the zombies it sees
             pzopt.UpdateBatch.queueInline(isoMovingObject, this.simulationLevel.ordinal()); // pzopt: entityUpdatePipeline
             continue; // pzopt: entityUpdatePipeline
          } // pzopt: entityUpdatePipeline

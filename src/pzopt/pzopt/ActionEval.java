@@ -208,7 +208,7 @@ public final class ActionEval {
 
    /** headOnWorker: queue the zombie before its postUpdateAnimating head; the evaluation task runs the head first. */
    public static boolean submitWithHead(IsoGameCharacter character) {
-      return HEAD_ON_WORKER && submit(character, true);
+      return HEAD_ON_WORKER && GtAb.on(GtAb.HEAD_ON_WORKER) && submit(character, true); // devGtAlternate: within-run A/B
    }
 
    private static final boolean HEAD_ON_WORKER = Config.HEAD_ON_WORKER;

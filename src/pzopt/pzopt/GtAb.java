@@ -35,29 +35,41 @@ public final class GtAb {
    public static final int BAKE_GUARD = 2097152; // bakeTimeGuardPct
    public static final int POSTUPDATE = 4194304; // postupdateParallel (Louisville 120 plan B)
    public static final int TILE_RECORD = 8388608; // tileRecordParallel (Louisville 120 plan A)
-   public static final int RAGDOLL_GATE = 16777216; // ragdollGate
-   public static final int BODY_MODEL_CACHE = 33554432; // bodyModelCache
+   public static final int NEAR_VEHICLE = 16777216; // nearVehicleGrid (zombie pass 2026-10-13)
+   public static final int HEAD_ON_WORKER = 33554432; // headOnWorker (zombie pass 2026-10-13: the A/B after the see_all flood was gone)
+   public static final int PLAYER_FIRST = 67108864; // entityUpdatePlayerFirst (zombie pass 2026-10-13)
+   public static final int MORE_STATES = 1073741824; // entityUpdateMoreStates (zombie pass 2026-10-13)
+   public static final int NEAR_PLAYER = 536870912; // entityUpdateNearPlayer (zombie pass 2026-10-13)
+   public static final int SEPARATE_MEMO = 268435456; // separateMemo (zombie pass 2026-10-13)
+   public static final int FRAME_SPIN = 134217728; // frameSpin: the frame workers' spin before parking (frameSpinUs > 0), zombie pass 2026-10-13
+   public static final long RAGDOLL_GATE = 1L << 31; // ragdollGate (isRagdoll pass 2026-10-13; bits above 30 need the long mask)
+   public static final long BODY_MODEL_CACHE = 1L << 32; // bodyModelCache (isRagdoll pass 2026-10-13)
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
-      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "ragdollGate", "bodyModelCache"};
+      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "nearVehicleGrid", "headOnWorker", "entityUpdatePlayerFirst", "frameSpin", "separateMemo", "entityUpdateNearPlayer", "entityUpdateMoreStates", "ragdollGate", "bodyModelCache"};
 
-   private static final int MASK = parse(Config.DEV_GT_ALTERNATE_KEYS);
+   private static final long MASK = parse(Config.DEV_GT_ALTERNATE_KEYS);
+   // a second, independent alternation group (2026-10-13): its own keys and period, so one run measures two keys
+   // (a 2x2 within-run design; the row's phase column is on1 + 2 * on2)
+   private static final long MASK2 = Config.DEV_GT_ALTERNATE2 > 0 ? parse(Config.DEV_GT_ALTERNATE_KEYS2) : 0L;
+   private static volatile boolean off2;
+   private static boolean lastOff2;
    private static long t0;
    private static volatile boolean off; // this frame runs the listed keys' old path
 
-   private static int parse(String keys) {
-      int m = 0;
+   private static long parse(String keys) {
+      long m = 0;
       if (keys == null || keys.isEmpty()) {
          return 0;
       }
       for (String k : keys.split(",")) {
          k = k.trim();
          if (k.equals("all")) {
-            return -1;
+            return -1L;
          }
          for (int i = 0; i < NAMES.length; i++) {
             if (NAMES[i].equals(k)) {
-               m |= 1 << i;
+               m |= 1L << i;
             }
          }
       }
@@ -95,7 +107,7 @@ public final class GtAb {
       long proc = OS instanceof com.sun.management.OperatingSystemMXBean sun ? sun.getProcessCpuTime() : 0L;
       long wall = System.nanoTime();
       if (lastWall != 0L) {
-         LOG.append(now).append(' ').append(lastOff ? 0 : 1).append(' ').append(cpu - lastCpu).append(' ').append(proc - lastProc).append(' ').append(wall - lastWall).append(' ').append(zombieUpdates);
+         LOG.append(now).append(' ').append((lastOff ? 0 : 1) + (lastOff2 ? 0 : 2)).append(' ').append(cpu - lastCpu).append(' ').append(proc - lastProc).append(' ').append(wall - lastWall).append(' ').append(zombieUpdates);
          for (int i = 0; i < SECTIONS; i++) {
             LOG.append(' ').append(SECTION_NS[i]);
          }
@@ -115,6 +127,11 @@ public final class GtAb {
       // of misses "better" on, 2026-10-05)
       off = Config.DEV_GT_ABBA ? ((period + 1L) >> 1 & 1L) == 1L : (period & 1L) == 1L;
       lastOff = off;
+      if (MASK2 != 0) {
+         long period2 = (now - t0) / Config.DEV_GT_ALTERNATE2;
+         off2 = Config.DEV_GT_ABBA ? ((period2 + 1L) >> 1 & 1L) == 1L : (period2 & 1L) == 1L;
+         lastOff2 = off2;
+      }
    }
 
    private static void flush() {
@@ -169,7 +186,7 @@ public final class GtAb {
    }
 
    /** False in the off half of an alternation for a listed key: the caller takes its old path this frame. */
-   public static boolean on(int bit) {
-      return !off || (MASK & bit) == 0;
+   public static boolean on(long bit) {
+      return (!off || (MASK & bit) == 0) && (!off2 || (MASK2 & bit) == 0);
    }
 }

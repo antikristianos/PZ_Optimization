@@ -316,11 +316,12 @@ public final class UpdateBatch {
    private static final class PhysicsSlot {
       final java.util.ArrayList<zombie.characters.IsoGameCharacter> ballistics = new java.util.ArrayList<>();
       final java.util.ArrayList<RagdollHit> ragdolls = new java.util.ArrayList<>();
+      final java.util.ArrayList<RagdollHit> vehicleHits = new java.util.ArrayList<>(); // vehicleHitDefer (2026-10-13)
    }
 
    private static PhysicsSlot[] physicsSlots = new PhysicsSlot[4096];
    private static final ThreadLocal<PhysicsSlot> PHYSICS_CAPTURE = new ThreadLocal<>();
-   private static long ballisticsDeferred, ballisticsDrained, ragdollDeferred, ragdollDrained;
+   private static long ballisticsDeferred, ballisticsDrained, ragdollDeferred, ragdollDrained, vehicleHitDeferred, vehicleHitDrained;
 
    /**
     * A batch task reached {@code updateBallisticsTarget} with a live target: queue the character for the join's
@@ -356,6 +357,46 @@ public final class UpdateBatch {
       slot.ragdolls.add(new RagdollHit(zombie, vehicle));
       ragdollDeferred++;
       return true;
+   }
+
+   /**
+    * vehicleHitDefer (zombie pass 2026-10-13): a batch task reached IsoZombie.updateInternal's vehicle hit test (a moving
+    * vehicle's update had set the zombie's vehicle4testCollision): checkNetworkCollision -> hitCharacter -> onHitByVehicle ->
+    * slideAwayFromWalls runs PolygonalMap2's CollideWithObstacles, whose scratch is shared; on a worker it threw and left
+    * the scratch broken, and the player's own postupdate then crashed the game out of the world (run zomb-9-def). The test
+    * is queued with the vehicle (the task nulls the field) and made by the game thread at the join, in queue order. Off a
+    * batch task the slot is unset and the caller runs the stock branch in place.
+    */
+   public static boolean deferVehicleHit(zombie.characters.IsoZombie zombie, zombie.vehicles.BaseVehicle vehicle) {
+      PhysicsSlot slot = PHYSICS_CAPTURE.get();
+      if (slot == null) {
+         return false;
+      }
+
+      slot.vehicleHits.add(new RagdollHit(zombie, vehicle));
+      vehicleHitDeferred++;
+      return true;
+   }
+
+   /** Game thread, after the join: every task's queued vehicle hit tests, in queue order. */
+   private static void drainVehicleHits(int n) {
+      float[] h = POM.get();
+      final float[] poms = flightPomArr;
+      for (int i = 0; i < n; i++) {
+         PhysicsSlot slot = physicsSlots[i];
+         if (slot == null || slot.vehicleHits.isEmpty()) {
+            continue;
+         }
+
+         h[0] = poms != null ? poms[i] : flightPom;
+         for (int j = 0; j < slot.vehicleHits.size(); j++) {
+            RagdollHit hit = slot.vehicleHits.get(j);
+            hit.zombie().pzoptVehicleHit(hit.vehicle());
+            vehicleHitDrained++;
+         }
+
+         slot.vehicleHits.clear();
+      }
    }
 
    /**
@@ -936,6 +977,18 @@ public final class UpdateBatch {
          return false;
       }
 
+      // static audit (2026-10-13): a batched zombie's update reaches BaseVehicle.getPoly (getNearVehicle -> DistToSquared ->
+      // getClosestPointOnPoly), whose lazy re-init of a moved vehicle's polygons runs VehiclePoly.init on shared statics.
+      // The vehicles updated before this point (entityUpdatePlayerFirst), so every polygon is brought up to date here and
+      // the workers only read them.
+      if (Config.ENTITY_UPDATE_PLAYER_FIRST && zombie.iso.IsoWorld.instance != null && zombie.iso.IsoWorld.instance.currentCell != null) {
+         for (zombie.vehicles.BaseVehicle vehicle : zombie.iso.IsoWorld.instance.currentCell.getVehicles()) {
+            if (vehicle.getScript() != null) {
+               vehicle.getPoly();
+            }
+         }
+      }
+
       frames++;
       batched += n;
       if (n > maxBatch) {
@@ -1063,6 +1116,49 @@ public final class UpdateBatch {
     * through it, the POM holder stays NaN here by construction), stampInline publishing its post-update
     * position into the airborne snapshot. Global back to 1.0 after, stock's guarantee.
     */
+   /**
+    * entityUpdatePlayerFirst (2026-10-13): on a combined (pipelined) frame, a player is not queued for the inline phase
+    * under the airborne flight but updates at its place in the collection loop, before the dispatch. Its update writes the
+    * zombies it sees (updateLOS -> spotted: target, path, alert) and those writes raced the zombies' own updates on the
+    * workers; the brawl rig showed the horde closing in slower with the pipeline (harness/brawl.py, runs zomb-br-*).
+    */
+   /**
+    * PolygonalMap2.resolveCollision (zombie pass static audit, 2026-10-13): whether this call must take the
+    * CollideWithObstacles lock — a frame worker, or any thread while an entity flight or a postupdate movement batch is on
+    * the workers. Outside those windows only the game thread can be in there and the call stays lock-free.
+    */
+   // instrument (zombie pass 2026-10-13): why the safe-state filter kept a zombie on the game thread, per reason / state
+   private static final java.util.TreeMap<String, long[]> INLINE_REASONS = new java.util.TreeMap<>();
+
+   /** Game thread, IsoZombie.pzoptBatchSafe: one zombie kept inline this frame, and why. */
+   public static void inlineBecause(String reason, Object state) {
+      if (!Config.INSTRUMENT) {
+         return;
+      }
+      String key = state != null ? reason + ":" + state.getClass().getSimpleName() : reason;
+      long[] c = INLINE_REASONS.get(key);
+      if (c == null) {
+         INLINE_REASONS.put(key, c = new long[1]);
+      }
+      c[0]++;
+   }
+
+   public static boolean moreCalmStates() {
+      return Config.ENTITY_UPDATE_MORE_STATES && !GameClient.client && GtAb.on(GtAb.MORE_STATES);
+   }
+
+   public static boolean nearPlayerAllowed() {
+      return Config.ENTITY_UPDATE_NEAR_PLAYER && (!combinedFrame || Config.ENTITY_UPDATE_PLAYER_FIRST && GtAb.on(GtAb.PLAYER_FIRST)) && GtAb.on(GtAb.NEAR_PLAYER);
+   }
+
+   public static boolean collideLockNeeded() {
+      return inFlight || PostupdateBatch.activeNow() || Thread.currentThread() instanceof FrameBatch.Worker;
+   }
+
+   public static boolean playerFirst(IsoMovingObject entity) {
+      return Config.ENTITY_UPDATE_PLAYER_FIRST && (entity instanceof IsoPlayer || entity instanceof zombie.vehicles.BaseVehicle) && GtAb.on(GtAb.PLAYER_FIRST);
+   }
+
    public static void runInlinePhase() {
       zombie.GameTime gt = zombie.GameTime.getInstance();
       for (int i = 0; i < inlineCount; i++) {
@@ -1112,6 +1208,7 @@ public final class UpdateBatch {
       try {
          drainEmitters(n); // before the replay: a handler reading a zombie's sound state sees the ticked emitter
          drainRagdolls(n); // physicsDefer, in one zombie's own order: vehicleCollision sits above its super.update()
+         drainVehicleHits(n); // vehicleHitDefer: the hit test sits right after vehicleCollision in updateInternal
          drainBallistics(n); // ... which is what reaches updateBallisticsTarget; both before the replay, so no
          // handler of a captured event can observe a hitbox that is still where the zombie stood last frame
          if (flightLuaReplay) {
@@ -1256,7 +1353,8 @@ public final class UpdateBatch {
             + " luaCaptured=" + luaCaptured + " luaReplayed=" + luaReplayed
             + " emitterDeferred=" + emitterDeferred + " emitterDrained=" + emitterDrained
             + " ballisticsDeferred=" + ballisticsDeferred + " ballisticsDrained=" + ballisticsDrained
-            + " ragdollDeferred=" + ragdollDeferred + " ragdollDrained=" + ragdollDrained
+            + " inline(" + INLINE_REASONS.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()[0]).collect(java.util.stream.Collectors.joining(" ")) + ")"
+            + " ragdollDeferred=" + ragdollDeferred + " ragdollDrained=" + ragdollDrained + " vehicleHitDeferred=" + vehicleHitDeferred + " vehicleHitDrained=" + vehicleHitDrained
             + " luaSuppressed=" + luaSuppressed.get() + " lightEffectsDeferred=" + LightingDefer.deferred + " pathfindRaceEscaped=" + pathfindRaceEscaped.get()
             + " surfacePropertyRaceSkipped=" + surfacePropertyRaceSkipped.get()
             + " movingSquareDeferred=" + movingSquareDeferred
