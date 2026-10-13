@@ -66,7 +66,7 @@ public final class TileRecord {
       return deferReason(o) < 0;
    }
 
-   static final String[] REASONS = {"deferAll", "class", "noSprite", "lightOn", "roof", "model", "clock", "floorPath", "wallPath", "fascia", "attached", "cold", "mirror"};
+   static final String[] REASONS = {"deferAll", "class", "noSprite", "lightOn", "roof", "model", "clock", "floorPath", "wallPath", "fascia", "attached", "cold", "mirror", "seam"};
 
    static final java.util.concurrent.atomic.AtomicLongArray reasons = new java.util.concurrent.atomic.AtomicLongArray(REASONS.length);
    static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> deferClasses = new java.util.concurrent.ConcurrentHashMap<>();
@@ -82,6 +82,15 @@ public final class TileRecord {
     * queries) and children / wall blood splats.
     */
    static int deferReason(IsoObject o) {
+      return deferReason(o, false);
+   }
+
+   /**
+    * {@code bake}: bakeRecordParallel's object pass. A bake draws a roof tile's joined neighbour (FBORenderCell's
+    * renderJoinedRoofTile: another chunk's or level's object, its render info recomputed) only where the tile can have a
+    * seam (a chunk edge, a level-below join): only those roof tiles stay on the game thread there.
+    */
+   static int deferReason(IsoObject o, boolean bake) {
       if (Config.DEV_TILE_RECORD_DEFER_ALL) {
          return 0;
       }
@@ -101,6 +110,9 @@ public final class TileRecord {
       if (s == null || o.square == null) {
          return 2;
       }
+      if (bake && seamWall(o)) {
+         return 13; // FBORenderCell.renderSeamFix2_Wall's seam tile: TileSeamModifier.setupWallDepth reads IsoSprite.seamFix2, the game thread's
+      }
       zombie.core.properties.PropertyContainer props = s.getProperties();
       if (props.has(IsoFlagType.HasLightOnSprite)
          && (c != zombie.iso.objects.IsoLightSwitch.class || o.getOnOverlay() == null && o.shouldShowOnOverlay())) {
@@ -109,8 +121,9 @@ public final class TileRecord {
          // made on the game thread first (once)
          return 3;
       }
-      if (!s.pzoptRoofKnown() || s.getRoofProperties() != null) {
-         return 4;
+      if (!s.pzoptRoofKnown() || s.getRoofProperties() != null && (!bake || zombie.iso.fboRenderChunk.FBORenderCell.pzoptRoofJoinPossible(o.square, s)
+         || BakeRecord.roofJoinTarget(o.square))) {
+         return 4; // (bake: a tile that may draw a neighbour's joined, or be drawn joined by one, on the game thread at its splice)
       }
       if (o.getSpriteModel() != null) {
          return 5;
@@ -141,6 +154,39 @@ public final class TileRecord {
          return 11;
       }
       return -1;
+   }
+
+   /**
+    * bakeRecordParallel: an object whose wall draw may add a seam tile (FBORenderCell.renderSeamFix2_Wall's conditions: a
+    * north / west wall or window on the chunk's east / south edge with a wall, window frame or door wall on the next square;
+    * the tileset exclusions left out, so a few more stay than need to).
+    */
+   static boolean seamWall(IsoObject o) {
+      zombie.iso.IsoGridSquare sq = o.square;
+      boolean ex = Math.floorMod(sq.x, 8) == 7, ey = Math.floorMod(sq.y, 8) == 7;
+      if (!ex && !ey) {
+         return false;
+      }
+      zombie.core.properties.PropertyContainer p = o.sprite.getProperties();
+      if (p.has(IsoFlagType.HoppableN) || p.has(IsoFlagType.HoppableW)) {
+         return false;
+      }
+      boolean nw = p.has(IsoFlagType.WallNW);
+      if (ey && (nw || p.has(IsoFlagType.WallW) || p.has(IsoFlagType.WindowW))) {
+         zombie.iso.IsoGridSquare s = sq.getAdjacentSquare(zombie.iso.IsoDirections.S);
+         if (s != null && ((s.getWallType() & 4) != 0 || s.getWindowFrame(zombie.iso.objects.GridSquareEdgeFacingDirection.EAST_WEST) != null
+            || s.has(IsoFlagType.DoorWallW))) {
+            return true;
+         }
+      }
+      if (ex && (nw || p.has(IsoFlagType.WallN) || p.has(IsoFlagType.WindowN))) {
+         zombie.iso.IsoGridSquare e = sq.getAdjacentSquare(zombie.iso.IsoDirections.E);
+         if (e != null && ((e.getWallType() & 1) != 0 || e.getWindowFrame(zombie.iso.objects.GridSquareEdgeFacingDirection.NORTH_SOUTH) != null
+            || e.has(IsoFlagType.DoorWallN))) {
+            return true;
+         }
+      }
+      return false;
    }
 
    /** FBORenderCell.renderTranslucent(IsoObject): true when the calling thread records and {@code o} is deferred instead. */
@@ -832,7 +878,8 @@ public final class TileRecord {
 
       private String diffDraw(TextureDraw t) {
          if (t.flipped != this.flipped || t.singleCol != this.singleCol || t.useAttribArray != this.useAttribArray) {
-            return "draw flags";
+            return "draw flags flipped " + this.flipped + "/" + t.flipped + " singleCol " + this.singleCol + "/" + t.singleCol + " attrib " + this.useAttribArray + "/"
+               + t.useAttribArray + " tex " + texName(t.tex);
          }
          if (t.col0 != this.col0 || t.col1 != this.col1 || t.col2 != this.col2 || t.col3 != this.col3) {
             return "draw colours " + Integer.toHexString(this.col0) + "/" + Integer.toHexString(t.col0) + " tex " + texName(t.tex);

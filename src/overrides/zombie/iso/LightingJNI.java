@@ -1844,10 +1844,13 @@ public final class LightingJNI {
                if (this.updateTick != LightingJNI.updateCounter[this.playerIndex]) {
                   if (!LightingJNI.getSquareDirty(this.playerIndex, this.square.x, this.square.y, this.square.z + 32)) {
                      notDirty++;
+                     if (this.updateTick == -1 && pzoptDefer != null) pzopt.BakeRecord.lightUnread(false); // pzopt: bakeRecordParallel, a never-lit square read ahead of its bake
                   } else {
                      dirty++;
                      int[] lightInts = pzoptLightInts.get(); // pzopt: lightingReadParallel, thread-local scratch
-                     if (LightingJNI.getSquareLighting(this.playerIndex, this.square.x, this.square.y, this.square.z + 32, lightInts)) {
+                     boolean pzoptRead = LightingJNI.getSquareLighting(this.playerIndex, this.square.x, this.square.y, this.square.z + 32, lightInts); // pzopt
+                     if (!pzoptRead && pzoptDefer != null) pzopt.BakeRecord.lightUnread(true); // pzopt: bakeRecordParallel, dirty but its light not readable yet
+                     if (pzoptRead) { // pzopt
                         boolean pzoptWasWhite = this.pzoptBake; // pzopt: pixelLight, a lazy refresh in the middle of a bake reads and writes the real values (and re-decides white by the new visibility)
                         this.pzoptUnwhiten(); // pzopt
                         byte pzoptWasVis = this.vis; // pzopt: pixelLight, only a visibility change re-bakes

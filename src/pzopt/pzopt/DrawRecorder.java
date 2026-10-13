@@ -105,6 +105,13 @@ public final class DrawRecorder {
    public int uniformPoolSize;
    boolean windowFrameOutline; // FBORenderCell.renderWindowFrameOutline on this recording thread
    public zombie.iso.IsoObject lowestCutawayN, lowestCutawayW; // FBORenderCell.lowestCutawayObjectN / W on this recording thread
+   // bakeRecordParallel: a recorder of chunk-texture bake units (pzopt.BakeRecord) sees the bake's render mode (caching, not
+   // the translucent pass) and its own unit's texture, offsets and seam-fix tile instead of FBORenderChunkManager's / IsoSprite's
+   public boolean bakeUnit;
+   public Object bakeRc; // the unit's FBORenderChunk
+   public float bakeXoff, bakeYoff; // FBORenderChunkManager.xoff / yoff as beginRenderChunkLevel sets them for the unit
+   public Object seamFix2; // IsoSprite.seamFix2 on this recording thread (the floor seam fix's tile)
+   public boolean bakeUnsure; // the unit's render-info pass met an answer that may change by the bake's time (BakeRecord.unsure)
    private IOpenGLState<?>[] glState = new IOpenGLState<?>[32]; // by slot, the state objects this recorder has seen
    private IOpenGLState.Value[] glCur = new IOpenGLState.Value[32]; // by slot, this recorder's current value
    private boolean[] glKnown = new boolean[32]; // by slot, set since the unit started / since the last deferred object
@@ -152,6 +159,9 @@ public final class DrawRecorder {
 
    /** Ends the unit on the calling thread: what it set goes to the game thread's cache at the end of its splice. */
    void endUnit() {
+      if (this.bakeUnit && TileBatch.ON) {
+         this.classify(this.unitEntry, this.state.numSprites);
+      }
       this.knownToEvents();
       this.depthLeft();
       bind(null);
@@ -219,6 +229,113 @@ public final class DrawRecorder {
 
    int eventCount() {
       return this.events;
+   }
+
+   private int[] movedIdx = new int[256]; // bakeRecordParallel: recorder slots whose entry object moved into the frame's list
+   private TextureDraw[] movedObj = new TextureDraw[256]; // and the frame's spare object each slot takes back
+
+   /** Game thread, no unit recording: the moved slots take their spare objects (see move). */
+   void fixMoved() {
+      for (int i = 0; i < this.movedN; i++) {
+         this.state.sprite[this.movedIdx[i]] = this.movedObj[i];
+         this.movedObj[i] = null;
+      }
+      this.movedN = 0;
+   }
+
+   private int movedN;
+
+   // bakeRecordParallel: what the splice needs of each entry, written by the recording thread at the unit's end so the game
+   // thread reads one byte per entry instead of the entry object (each one another core's cache line)
+   static final byte K_PLAIN = 0, K_VDSTART = 1, K_VDDRAW = 2, K_MASK = 3, K_FUNC = 4;
+   private byte[] kind = new byte[16384];
+   private int[] kindArg = new int[16384];
+
+   private void classify(int from, int to) {
+      if (to > this.kind.length) {
+         int len = Math.max(to, this.kind.length * 2);
+         this.kindArg = java.util.Arrays.copyOf(this.kindArg, len);
+         this.kind = java.util.Arrays.copyOf(this.kind, len);
+      }
+      TextureDraw[] sprites = this.state.sprite;
+      for (int k = from; k < to; k++) {
+         TextureDraw e = sprites[k];
+         TextureDraw.Type t = e.type;
+         byte kd = K_PLAIN;
+         if (t == TextureDraw.Type.StartShader) {
+            if (e.pzoptVDStart) {
+               kd = K_VDSTART;
+               this.kindArg[k] = e.a;
+            }
+         } else if (t == TextureDraw.Type.glDraw) {
+            if (e.pzoptVD) {
+               kd = K_VDDRAW;
+            }
+         } else if (t == TextureDraw.Type.glDepthMask) {
+            kd = K_MASK;
+            this.kindArg[k] = e.a;
+         } else if (t == TextureDraw.Type.glDepthFunc) {
+            kd = K_FUNC;
+            this.kindArg[k] = e.a;
+         }
+         this.kind[k] = kd;
+      }
+   }
+
+   /** bakeRecordParallel's splice of entries [from, to): the entry objects move into the frame's list (see move). */
+   private void moveBake(GenericSpriteRenderState real, int from, int to) {
+      RecState rec = this.state;
+      boolean tiles = TileBatch.ON;
+      TextureDraw[] sprites = rec.sprite;
+      for (int k = from; k < to; k++) {
+         real.CheckSpriteSlots();
+         int n = real.numSprites;
+         TextureDraw src = sprites[k];
+         byte kd = tiles ? this.kind[k] : K_PLAIN;
+         if (kd == K_VDSTART && TileBatch.spliceStart(real, this.kindArg[k])) {
+            if (this.postCursor < rec.postRender.size() && rec.postRender.get(this.postCursor) == src) {
+               this.postCursor++; // stock never recorded this start: nothing to run after the frame
+            }
+            src.drawer = null;
+            src.future = null;
+            continue;
+         }
+         // the entry object itself moves into the frame's list (a copy of every field cost more); the frame's spare slot
+         // object (past numSprites: in no postRender list) goes to the recorder's slot at the frame's end (fixMoved: the
+         // recorder's thread may be growing its arrays for another unit now)
+         TextureDraw spare = real.sprite[n];
+         real.sprite[n] = src;
+         if (this.movedN == this.movedIdx.length) {
+            this.movedIdx = java.util.Arrays.copyOf(this.movedIdx, this.movedN * 2);
+            this.movedObj = java.util.Arrays.copyOf(this.movedObj, this.movedN * 2);
+         }
+         this.movedIdx[this.movedN] = k;
+         this.movedObj[this.movedN++] = spare;
+         spare.drawer = null;
+         spare.future = null;
+         real.style[n] = rec.style[k];
+         real.numSprites = n + 1;
+         if (this.postCursor < rec.postRender.size() && rec.postRender.get(this.postCursor) == src) {
+            real.postRender.add(src);
+            this.postCursor++;
+         }
+         if (tiles) {
+            if (kd == K_VDSTART) {
+               TileBatch.spliceStarted(real, this.kindArg[k], n);
+            } else {
+               TileBatch.spliceMoved(real, n, kd, this.kindArg[k]);
+            }
+         }
+      }
+   }
+
+   /** bakeRecordParallel: the splice of a unit starts at its own postRender entries (units the frame did not splice left theirs). */
+   void seekPost(int p) {
+      this.postCursor = p;
+   }
+
+   int postSize() {
+      return this.state.postRender.size();
    }
 
    /** After every unit of the pass was spliced: the lists start empty for the next pass. */
@@ -335,6 +452,9 @@ public final class DrawRecorder {
     * would have.
     */
    void splice(GenericSpriteRenderState real, Deferred deferred, int entryFrom, int entryTo, int evFrom, int evTo) {
+      if (this.bakeUnit && TileBatch.ON) {
+         TileBatch.spliceBegin(real); // bakeRecordParallel
+      }
       int i = entryFrom;
       for (int ev = evFrom; ev < evTo; ev++) {
          int pos = this.evPos[ev];
@@ -392,11 +512,25 @@ public final class DrawRecorder {
 
    /** Copies entries [from, to) of the recorder to the end of {@code real} (each recorder keeps its own TextureDraw objects). */
    private void move(GenericSpriteRenderState real, int from, int to) {
+      if (this.bakeUnit) {
+         this.moveBake(real, from, to);
+         return;
+      }
       RecState rec = this.state;
+      boolean tiles = this.bakeUnit && TileBatch.ON; // bakeRecordParallel: the unit recorded every tile start; merged / folded here as stock would
       for (int k = from; k < to; k++) {
          real.CheckSpriteSlots();
          int n = real.numSprites;
          TextureDraw src = rec.sprite[k];
+         boolean vdStart = tiles && src.type == TextureDraw.Type.StartShader && src.pzoptVDStart;
+         if (vdStart && TileBatch.spliceStart(real, src.a)) {
+            if (this.postCursor < rec.postRender.size() && rec.postRender.get(this.postCursor) == src) {
+               this.postCursor++; // stock never recorded this start: nothing to run after the frame
+            }
+            src.drawer = null;
+            src.future = null;
+            continue;
+         }
          real.sprite[n].pzoptCopyFrom(src);
          real.style[n] = rec.style[k];
          real.numSprites = n + 1;
@@ -410,6 +544,13 @@ public final class DrawRecorder {
          // without uniforms was released twice and looped the pool, 2026-10-06)
          src.drawer = null;
          src.future = null;
+         if (tiles) {
+            if (vdStart) {
+               TileBatch.spliceStarted(real, src.a);
+            } else if (real.sprite[n].type == TextureDraw.Type.glDraw && real.sprite[n].pzoptVD) {
+               TileBatch.spliceDraw(real, n);
+            }
+         }
       }
    }
 

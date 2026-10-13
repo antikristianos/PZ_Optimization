@@ -34,7 +34,7 @@ PzoptSettingsLayout = {
                     "windowsInChunkTexture", "translucentTilesInChunkTexture", "glassTilesPerFrame", "floorDecalsPerFrame", "translucentLightsPerFrame",
                     "curtainDepthNudgePct", "windSpriteSway" } },
                 { title = "Bake budgets", keys = { "bakeScheduler", "bakeFrameBudget", "bakeBudgetAdaptive", "occlusionGrantedOnly",
-                    "bakeMipLevels", "renderChunkTopUp", "bakeBudget", "rebakeBudget", "rebakeMaxFrames" } },
+                    "bakeNoSync", "bakeMipLevels", "renderChunkTopUp", "bakeBudget", "rebakeBudget", "rebakeMaxFrames" } },
                 { title = "Zoom", keys = { "zoomRetain", "zoomEase", "zoomEaseMs", "zoomRebakeBudget", "zoomPlaceholder", "zoomFrameMs" } },
                 { title = "Blood and flies", keys = { "bloodBake", "bloodAppend", "bloodSettleSec", "bloodFadeFix",
                     "bloodRebakeCoalesceMs", "bloodAppendPlants", "bloodAppendVegetation", "fliesToggleFix" } },

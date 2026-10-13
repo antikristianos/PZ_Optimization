@@ -6526,12 +6526,12 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
          } else if (FBORenderCell.pzoptTranslucentOnly()) { // pzopt: tileRecordParallel, a recording thread sees the translucent pass's render mode
             renderInfo.renderX = this.sx - IsoCamera.frameState.offX;
             renderInfo.renderY = this.sy - IsoCamera.frameState.offY;
-         } else if (FBORenderChunkManager.instance.renderChunk.highRes) {
-            renderInfo.renderX = this.sx + FBORenderChunkManager.instance.getXOffset() - FBORenderChunkManager.instance.renderChunk.w / 4.0F;
-            renderInfo.renderY = this.sy + FBORenderChunkManager.instance.getYOffset();
+         } else if (pzopt.BakeRecord.renderChunk().highRes) { // pzopt: bakeRecordParallel, a recording thread draws into its unit's texture
+            renderInfo.renderX = this.sx + pzopt.BakeRecord.xOffset() - pzopt.BakeRecord.renderChunk().w / 4.0F; // pzopt: bakeRecordParallel, a recording thread draws into its unit's texture
+            renderInfo.renderY = this.sy + pzopt.BakeRecord.yOffset(); // pzopt: bakeRecordParallel, a recording thread draws into its unit's texture
          } else {
-            renderInfo.renderX = this.sx + FBORenderChunkManager.instance.getXOffset();
-            renderInfo.renderY = this.sy + FBORenderChunkManager.instance.getYOffset();
+            renderInfo.renderX = this.sx + pzopt.BakeRecord.xOffset(); // pzopt: bakeRecordParallel, a recording thread draws into its unit's texture
+            renderInfo.renderY = this.sy + pzopt.BakeRecord.yOffset(); // pzopt: bakeRecordParallel, a recording thread draws into its unit's texture
          }
 
          renderInfo.renderWidth = tex.getWidthOrig() * scaleX;

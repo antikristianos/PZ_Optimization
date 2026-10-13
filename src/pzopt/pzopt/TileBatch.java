@@ -124,7 +124,10 @@ public final class TileBatch {
       GenericSpriteRenderState st = SpriteRenderer.instance.states.getPopulatingActiveState();
       Pending p = PENDING.get();
       int n = st.numSprites;
-      boolean reuse = p.state == st && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0 && p.lastDraw < n
+      // bakeRecordParallel: a bake unit's recorder records every tile start; its splice merges and folds them as this
+      // method would have against the frame's stream (spliceStart)
+      boolean raw = DrawRecorder.recording && BakeRecord.onBakeRecorder();
+      boolean reuse = !raw && p.state == st && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0 && p.lastDraw < n
          && st.sprite[p.lastDraw].type == TextureDraw.Type.glDraw && st.sprite[p.lastDraw].pzoptVD && onlyState(st, p.lastDraw + 1, n);
       if (!reuse && Config.TILE_STATE_FOLD && p.state == st && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0
          && p.lastDraw < n && !DrawRecorder.onRecordingThread() && fold(st, p, n)) {
@@ -331,6 +334,140 @@ public final class TileBatch {
       st.numSprites = end;
       p.next = end;
       return true;
+   }
+
+   // ------------------------------------------------------------------------------------------------ bake unit splice (game thread)
+
+   private static int spliceScan, spliceMask, spliceFunc; // the depth mask / function in effect at entry spliceScan of the splice
+
+   /** bakeRecordParallel, game thread: a bake unit's entries start being copied into {@code real} here. */
+   static void spliceBegin(GenericSpriteRenderState real) {
+      spliceScan = real.numSprites;
+      spliceMask = maskNow();
+      spliceFunc = funcNow();
+   }
+
+   /**
+    * bakeRecordParallel, game thread: a recorded tile start is next. True when start() at this point of the frame's stream
+    * would have merged it into the open start (or folded the state since its last draw): the caller drops the entry.
+    */
+   static boolean spliceStart(GenericSpriteRenderState real, int program) {
+      Pending p = PENDING.get();
+      int key = Sway.startKey();
+      int n = real.numSprites;
+      boolean reuse = p.state == real && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0 && p.lastDraw < n
+         && real.sprite[p.lastDraw].type == TextureDraw.Type.glDraw && real.sprite[p.lastDraw].pzoptVD && onlyState(real, p.lastDraw + 1, n);
+      if (!reuse && Config.TILE_STATE_FOLD && p.state == real && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0
+         && p.lastDraw < n && fold(real, p, n)) {
+         reuse = true;
+         folded++;
+      }
+      if (!reuse) {
+         return false;
+      }
+      merged++;
+      p.bound = true;
+      p.next = real.numSprites;
+      return true;
+   }
+
+   /** bakeRecordParallel: the depth mask / function entries of the game thread's own entries in [spliceScan, to) (its splice-time emits). */
+   private static void spliceScanTo(GenericSpriteRenderState real, int to) {
+      for (int i = spliceScan; i < to; i++) {
+         TextureDraw e = real.sprite[i];
+         if (e.type == TextureDraw.Type.glDepthMask) {
+            spliceMask = e.a;
+         } else if (e.type == TextureDraw.Type.glDepthFunc) {
+            spliceFunc = e.a;
+         }
+      }
+   }
+
+   /** bakeRecordParallel: a recorded entry moved to slot n (its kind from DrawRecorder.classify: no read of the entry itself). */
+   static void spliceMoved(GenericSpriteRenderState real, int n, byte kind, int arg) {
+      spliceScanTo(real, n);
+      if (kind == DrawRecorder.K_MASK) {
+         spliceMask = arg;
+      } else if (kind == DrawRecorder.K_FUNC) {
+         spliceFunc = arg;
+      }
+      spliceScan = n + 1;
+      if (kind == DrawRecorder.K_VDDRAW) {
+         spliceDraw(real, n);
+      }
+   }
+
+   /** bakeRecordParallel: the recorded tile start moved to slot n (it opened a start of its own). */
+   static void spliceStarted(GenericSpriteRenderState real, int program, int n) {
+      spliceScanTo(real, n);
+      spliceScan = n + 1;
+      spliceStarted(real, program);
+   }
+
+   /** bakeRecordParallel: the recorded tile start was copied (it opened a start of its own). */
+   static void spliceStarted(GenericSpriteRenderState real, int program) {
+      Pending p = PENDING.get();
+      p.state = real;
+      p.program = program;
+      p.swayKey = Sway.startKey();
+      p.lastDraw = -1;
+      starts++;
+      p.bound = true;
+      p.next = real.numSprites;
+   }
+
+   /** bakeRecordParallel: a recorded tile draw was copied to slot {@code idx} (stamp()'s bookkeeping for it). */
+   static void spliceDraw(GenericSpriteRenderState real, int idx) {
+      Pending p = PENDING.get();
+      if (p.state != real) {
+         return;
+      }
+      if (idx < p.next) {
+         p.state = null;
+         return;
+      }
+      if (p.bound && !onlyState(real, p.next, idx)) {
+         p.bound = false;
+      }
+      p.next = idx + 1;
+      if (p.bound) {
+         p.lastDraw = idx;
+         if (Config.TILE_STATE_FOLD) {
+            // the game cache's depth mask / function at this draw: the last such entry of the stream since the splice began, else
+            // the cache as the splice found it (a recorder's first set of a segment is issued or adopted against the cache).
+            // Scanned forward from where the last draw left off (a fold may have moved the scan point past the end: the
+            // entries it kept were scanned already and are still the latest)
+            if (spliceScan < idx) {
+               spliceScanTo(real, idx);
+               spliceScan = idx;
+            }
+            p.maskAtDraw = spliceMask;
+            p.funcAtDraw = spliceFunc;
+         }
+      }
+   }
+
+   /** devBakeRecordCheck: the game thread's open start, kept across a stock draw that is rolled back. */
+   static Object snapshot() {
+      Pending p = PENDING.get();
+      return new Object[]{p.state, new int[]{p.program, p.next, p.swayKey, p.lastDraw, p.bound ? 1 : 0, p.maskAtDraw, p.funcAtDraw}, new float[]{p.front, p.far}};
+   }
+
+   static void restore(Object o) {
+      Object[] a = (Object[])o;
+      Pending p = PENDING.get();
+      p.state = (GenericSpriteRenderState)a[0];
+      int[] v = (int[])a[1];
+      p.program = v[0];
+      p.next = v[1];
+      p.swayKey = v[2];
+      p.lastDraw = v[3];
+      p.bound = v[4] != 0;
+      p.maskAtDraw = v[5];
+      p.funcAtDraw = v[6];
+      float[] f = (float[])a[2];
+      p.front = f[0];
+      p.far = f[1];
    }
 
    // ------------------------------------------------------------------------------------------------ render thread

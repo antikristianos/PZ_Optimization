@@ -214,6 +214,10 @@ public final class BakeScheduler {
 
    /** Grants this frame's bakes (see the class comment); {@code budget} is this frame's bakeFrameBudget. */
    public void plan(int budget) {
+      boolean hold = Config.DEV_BAKE_HOLD_FRAMES > 0 && this == players[0] && this.frame / Config.DEV_BAKE_HOLD_FRAMES % 2 == 1;
+      if (Config.DEV_BAKE_HOLD_FRAMES > 0 && this == players[0]) {
+         BakeLog.holdBlock(hold); // devBakeHoldFrames: this frame's block, for the timing row
+      }
       boolean burst = this.burstLeft > 0;
       if (burst) {
          this.burstLeft--;
@@ -257,6 +261,12 @@ public final class BakeScheduler {
       }
       Arrays.sort(this.key, 0, this.n);
       int hard = Math.max(budget, Config.BAKE_FRAME_BUDGET_HARD);
+      // bakeCapUs: the grants beyond the must class that fit the frame's bake time, from the measured cost of a grant
+      int cap = Config.BAKE_CAP_US > 0 ? Math.max(1, (int)(Config.BAKE_CAP_US * 1000.0 / Math.max(20_000.0, this.grantNs))) : Integer.MAX_VALUE;
+      if (Config.BAKE_CAP_US > 0) {
+         hard = Math.max(hard, cap); // the cap is the burst limit now
+         this.capSum += cap;
+      }
       if (smooth) {
          // demand bound: the levels due within d frames need ceil(count / d) bakes a frame from now on; the largest over d
          // is the least rate that meets every deadline, so a backlog drains evenly instead of in budget-sized bursts
@@ -275,6 +285,13 @@ public final class BakeScheduler {
          int i = (int)(this.key[j] & 0xFFFF);
          long tier = this.key[j] >>> 48;
          boolean grant = tier == 0 || tier == 1 && arrivals < Config.BAKE_ARRIVAL_QUOTA || tier == 2 && given < hard || tier == 3 && given < budget;
+         if (grant && tier != 0 && given + arrivals >= cap) {
+            grant = false; // bakeCapUs: this frame's bake time is spent; the rest keeps its order for the next plan
+            this.capped++;
+         }
+         if (hold && this.cls[i] != MUST) {
+            grant = false; // devBakeHoldFrames: a hold block bakes only what must change at once
+         }
          if (!grant) {
             continue;
          }
@@ -316,6 +333,16 @@ public final class BakeScheduler {
       }
       if (this == players[0]) {
          DynRes.onBakesPlanned(given + arrivals, this.n - given - arrivals, budget); // dynResBakeFeedforward: this frame's bakes, the backlog for the next
+      }
+   }
+
+   private double grantNs = 250_000.0; // bakeCapUs: EWMA of the game thread's chunk-loop time per grant (a grant bakes its texture's levels)
+   private long capped, capSum;
+
+   /** bakeCapUs, game thread: a chunk whose levels took {@code ns} in the chunk loop baked {@code grants} granted textures. */
+   public void grantCost(long ns, int grants) {
+      if (grants > 0 && ns > 0L) {
+         this.grantNs += 0.1 * (ns / (double)grants - this.grantNs);
       }
    }
 
@@ -389,6 +416,11 @@ public final class BakeScheduler {
          .append(" deadline holds=").append(this.deadlineFrames)
          .append(" smooth avg=").append(this.frames == 0 ? 0 : String.format(java.util.Locale.ROOT, "%.2f", this.smoothSum / (double)this.frames))
          .append(" level-change frames=").append(this.burstFrames).append(" grants=").append(this.burstGrants);
+      if (Config.BAKE_CAP_US > 0) {
+         sb.append(" cap: grant us=").append(Math.round(this.grantNs / 1000.0)).append(" cap avg=")
+            .append(this.frames == 0 ? 0 : String.format(java.util.Locale.ROOT, "%.1f", this.capSum / (double)this.frames)).append(" held by cap=").append(this.capped);
+         this.capped = this.capSum = 0L;
+      }
       for (int k = 0; k < CLASSES; k++) {
          if (this.offered[k] == 0) {
             continue;

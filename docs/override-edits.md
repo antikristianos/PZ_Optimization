@@ -6825,3 +6825,91 @@ grapple), and a few in lunge, get-up and thump.
 - `entityUpdateNearPlayer` (default off): drops the 12-square rule for calm states, since the players now update before the
   flight. In the brawl check the horde behaved as with the key off (Jev same 0.92, runs zomb-br-np-near1/2), but there was no
   gain on the bench (zomb-13-nearab, zomb-15-statesab second group: +0.1 ms, noise). It stays off.
+
+### Chunk-bake bursts on the Louisville horde (2026-10-12/13, worktree agent-a55cd23b0b4d4142c): bake timing, bakeNoSync, bakeCapUs
+
+Goal (maintainer): on the Louisville horde bench a frame's chunk-texture bakes cost at most 15 ms, and frames that bake are
+no slower than frames that do not.
+
+- `FBORenderCell` (all instrumented-run only unless noted, `pzopt.BakeLog.ON`): `renderTilesInternal` times the scheduler
+  plan, the bake preparation + cutaway visit, the occlusion pass and `updateChunkLighting` (`BakeLog.preAdd`);
+  `performRenderTiles` times the chunk loop (`loopBegin` / `loopEnd`) and the AO / relief flushes and pixelLight's
+  `beforeComposite` (`postAdd`); `renderOneChunk` wraps each `renderOneLevel` (`levelBegin` / `levelEnd`, a level counts as
+  a bake when `BakeLog.bake` / `hidden` ran in it); `renderOneLevel` marks the phases (`mark(1..4)`: start, render-info
+  loop, floor / snow / blood, vegetation / corpses / objects, the rest) and queues a render-thread marker after
+  `beginRenderChunkLevel` and after the bake's end (`rtMark`), so the render thread's submission of each baked level is
+  timed. New rows in `pzopt-bakes.out` (`t`, `bt`, `rb`, `ra`; frame-causes.py reads only digit-first rows, unchanged);
+  `harness/bake-times.py` (per-frame bake ms, max level, render-thread bake / AO job time, steps by levels baked, the
+  devBakeHoldFrames A/B paired by block) and `harness/bake-windows.py` (async-profiler samples of heavy vs light frames,
+  bake vs hold blocks, inside slow baked levels / AO jobs).
+- `FBORenderCell.performRenderTiles` (`bakeCapUs`, off by default): the chunk loop's time per granted texture is fed to
+  `BakeScheduler.grantCost` (EWMA); `plan` stops arrivals / overdue / budgeted grants at the number that fits `bakeCapUs`.
+- pzopt only: `BakeScheduler` `devBakeHoldFrames=N` (every other block of N frames grants only the must class: a
+  within-run A/B of what a baking frame costs); `ChunkAo` / `GlNames` / `Sway` `bakeNoSync` (default on): the chunk AO
+  jobs and the sway attribute textures ask the driver nothing inside a bake (framebuffer from `TextureFBO.lastID`, a bake's
+  viewport = its texture, AO jobs after the bakes leave the viewport to a stock `glDoStartFrame` queued by `flush`, names
+  from `GlNames`' pools, no "anything drawn" query, the fade textures' residency from our own record);
+  `devBakeNoSyncCheck=N` compares the recorded state with the driver's every Nth job (0 mismatches over the runs).
+  `glNamePool` default 256 -> 1024 (glNoSync's texture pool ran dry in the frames bringing new zombies).
+- Findings and numbers: the task report of 2026-10-13 (runs `bake-*`, `ne-*`): with every Enhancement on, single baked
+  levels took 10-35 ms of render thread, nearly all in `glGetInteger` / `glGen*` / `glBeginQuery` of the AO pass waiting for
+  NVIDIA's driver thread; bakeNoSync took the render thread's bake time per frame from p99 8.3 / max 25 ms to p99 1.9 /
+  max 8.8 ms. With the Enhancements off (the maintainer's measuring setup since 2026-10-13) the bake passes are cheap
+  (game thread <= ~6 ms, render thread <= ~2 ms a frame in the route); a baking frame costs +0.6 +- 0.2 ms (9 levels,
+  devBakeHoldFrames A/B) and the large gap between frames with many bakes and none is chunk arrival (hand-off, new
+  zombies), not the bakes.
+
+#### bakeRecordParallel (2026-10-13, off by default): the chunk-level bakes recorded on the frame workers
+
+The draw lists of a frame's granted chunk-level bakes (render-info pass, floors, plants, walls, objects) are recorded on the
+frame workers and spliced into the frame's sprite stream at their stock place, so the game thread no longer draws them.
+Every change below is behind `bakeRecordParallel` (keys `bakeRecordLanes` 4, `bakeRecordLead` on, `bakeRecordPrewake` off,
+dev `devBakeRecordCheck=N`, `devBakeRecordSerial`).
+
+- `FBORenderCell.renderOneLevel`'s render-info, floor (+ snow, blood) and object passes moved verbatim into
+  `pzoptBakeInfo` / `pzoptBakeFloors` (+ `pzoptBakeSnow` / `pzoptBakeBlood`) / `pzoptBakeObjects` (+ `pzoptBakeTreesBegin` /
+  `End`); the stock path calls them with IsoCell's static lists. `pzoptBakePrePass` (called after `checkBlackedOutRooms`, before
+  the characters' pre-pass; it takes performRenderTiles' scheduler / zoom-flood / delayed-loading decision itself and sets the
+  render-mode flags performRenderTiles sets first) predicts the levels that bake (on screen, not occluded, dirty, the group's
+  lowest level granted by `BakeScheduler.peek`, or an upper level of a baking group), creates their textures and offsets as
+  `beginRenderChunkLevel` would, caches the N / W neighbour squares' light, and hands them to `pzopt.BakeRecord`.
+  `renderOneLevel` takes the level's unit (`BakeRecord.take`) after `BakeLog.mark(1)`: with one, the info pass is skipped and
+  the floor + object passes are replaced by `pzoptBakeSplice` (devBakeRecordCheck: `pzoptBakeInfoCheck`, then the stock draw,
+  rolled back, then the splice and an entry-by-entry comparison); the bake's tail (trees, AO, relief, end) stays stock.
+  `BakeRecord.chunkDone(c)` after each `renderOneChunk`, `BakeRecord.endFrame()` after the loop. A named inner class
+  `PzoptBakeCell` (an anonymous one renumbers stock's `$1`).
+- What a recording thread may not draw goes to the game thread at its place in the stream (`DrawRecorder.defer`,
+  `pzoptBakeDeferredDraw`): corpses, items, snow, blood, the tree batch begin / end, floors and objects failing
+  `BakeRecord.floorReason` / `TileRecord.deferReason(o, true)`: other classes, light-on sprites, 3D models, clocks, fascias,
+  children, cold sprites, sprites whose roof properties are unknown, roof tiles that may draw a neighbour chunk's tile joined
+  (`pzoptRoofJoinPossible`) or be drawn joined by one (`pzoptRoofJoinTarget`: renderJoinedRoofTile writes the target's
+  render square, depth adjust, alpha and render info around its draw), and walls that may add a seam tile
+  (`TileRecord.seamWall`: `TileSeamModifier.setupWallDepth`, a game class, reads the static `IsoSprite.seamFix2`).
+- Thread-local / per-recorder state: `renderSeamFix2_Floor` / `_Wall` set the seam tile through `pzoptSetSeamFix2` (the
+  recorder's own); `IsoSprite` / `IsoObject` read the bake's texture and offsets through `BakeRecord.renderChunk()` /
+  `xOffset()` / `yOffset()`; `pzoptTranslucentOnly()` / `pzoptCaching()` give a bake recorder the bake's mode; the floor shapers
+  are per thread (`RenderScratch.fsAttached` / `fsDeDiamond` / `fsDiamond`); the info pass's occlusion test is
+  `pzoptIsOccluded` (`FBORenderOcclusion.isOccluded` stores z in a shared `testValue`: parallel info passes read each other's
+  level); `renderMinusFloor_DoorOrWall`'s cutaway window frame list add runs at the splice (`BakeRecord.deferListAdd`).
+- `LightingJNI.updateFBORenderChunk`: a recording thread that finds a square dirty but its light not readable marks the unit
+  unsure (`BakeRecord.lightUnread`), and `FloorDecals.onFloor`'s "size not known yet" too (`BakeRecord.unsure`): such a level
+  bakes the stock way at its own time.
+- `FBORenderCell.PerPlayerData.addChunkWith_TranslucentNonFloor`: membership from an identity set beside the list (its
+  `ArrayList.contains` was 13 % of a baking frame's renderOneLevel); same list, same order.
+- pzopt: `BakeRecord` (units, a work item per level, a level's info pass after the one below it in the same texture,
+  N / W neighbour info before a draw, the lead, lanes, splice, check, counters on `bake_counters=`), `DrawRecorder`
+  (`bakeUnit` fields, `classify` / `moveBake`: entry objects move into the frame's list, spares returned in `fixMoved`),
+  `TileBatch` (raw tile starts on a bake recorder, merge / fold replayed at the splice: `spliceStart`, `spliceMoved`,
+  `spliceDraw`, `snapshot` / `restore`), `RenderScratch`.
+- Measured (Louisville horde bench, Enhancements off, uncapped, 2026-10-13, runs `br-*`): devBakeRecordCheck runs
+  br-check12 0 draw-list mismatches in 178,704 entries (br-check8 0 in 182,873); the rare differences seen otherwise are
+  timing, not threads: an overpass floor whose light the native lighting thread had not delivered when the worker read it,
+  an animated sign / a counter changing layer between the two times, IsoPuddlesGeometry.shouldRender answering differently on
+  its second call (`infoPuddleDecals`). The game thread's time inside the bakes of a baking frame 0.84-0.99 ms -> 0.30-0.37
+  ms; the devBakeHoldFrames step difference (bake blocks vs hold blocks) +0.47 +- 0.14 ms pooled over 8 runs with the key on
+  vs +0.59 +- 0.20 over 3 runs with it off: the splice (~0.28 ms: ~1,500 entries and ~65 deferred draws a frame), the first
+  level recorded by the game thread, the prediction and the stock bake tail stay on the game thread. drive-120-south: off
+  571-574 fps, p99 7.7-8.1 / p99.9 11.2-12.2 ms; on 568 fps, p99 7.3-7.8 / p99.9 10.9-12.1 ms (no regression). Jev parity
+  against a key-off recording of the same build: parity (0.85). Measured and rejected: a task per chunk (neighbour roof
+  joins waited for splices), waking the lanes at the prediction's start (`bakeRecordPrewake`), the first texture the stock way
+  on the game thread.
