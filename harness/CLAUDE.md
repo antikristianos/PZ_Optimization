@@ -752,10 +752,21 @@ https://pzopt-dashboard-20282332834.europe-west1.run.app): the same four dashboa
 from the desktop. Project `diegov`, Cloud Run + Artifact Registry in europe-west1, the VM in us-central1 (the free tier is
 US-only; the VPC is global and pg_hba's 10.128.0.0/9 covers the europe-west1 subnet, ~0.2 s a query), everything labelled `app=pzopt-dashboard`,
 EUR 5 budget alert (20 / 50 / 100 %) on that label; `harness/grafana/cloud.sh deploy|url|status|seed|tunnel|ssh`.
-- **Postgres** on `pzopt-db`, an e2-micro VM (the always-free tier: e2-micro + 30 GB pd-standard in us-central1), Debian 12,
+- **Postgres** on `pzopt-db`, an e2-micro VM (the always-free tier: e2-micro + 30 GB pd-standard in us-central1; the disk grew
+  to 100 GB on 2026-10-11 and was copied back to 30 GB `pzopt-db-boot` on 2026-10-12 after the columnstore pass: a disk cannot
+  shrink, so e2fsck + resize2fs + `e2image -ra` onto a new disk with the same partition GUIDs / fs UUID, BIOS-boot + EFI
+  partitions copied over real device nodes (a by-id link that does not exist yet makes dd write a plain file: emergency mode,
+  /boot/efi), then an image with the old disk's guest OS features (UEFI_COMPATIBLE...) to make the boot disk), Debian 12,
   Postgres 15, 1 GB swap file, no external IP (charged since 2024; set up with a temporary one). Roles: `pzopt` (writer,
   only from the IAP range 35.235.240.0/20) and `grafana` (read-only, only from the VPC, `statement_timeout` 30 s, 10
-  connections). Passwords in `~/.config/pzopt/grafana-remote.env` (0600), nowhere else.
+  connections). Passwords in `~/.config/pzopt/grafana-remote.env` (0600), nowhere else. Since 2026-10-12 TimescaleDB 2.28
+  (`timescaledb-2-postgresql-15` .deb copied over IAP: the VM has no internet; `shared_preload_libraries` in
+  `conf.d/pzopt.conf`): the run-sample tables (overlay, present, pacing, frames, series, gamethread, chunks, events, sysmon,
+  power) are columnstore hypertables, 1-day chunks on `t`, compressed per `run` ordered by `rt`, a compression policy
+  recompressing what re-imports leave (`cloud/columnstore.sql`, idempotent, `cloud.sh columnstore`; `seed` runs it).
+  Same SQL for dashboards and ingest; `stacks` stays plain (the stack_defs prune looks up `stack_id`). To keep the
+  follower out of a long remote operation: `ALTER ROLE pzopt CONNECTION LIMIT 0` + terminate its backends (its writes
+  spool), never NOLOGIN (Timescale refuses policies of an owner without LOGIN); `CONNECTION LIMIT -1` after.
 - **Sync**: the desktop reaches it through IAP TCP forwarding (user unit `pzopt-grafana-tunnel`, localhost:15433; firewall
   rule `pzopt-db-allow-iap-pg`). `ingest.py` applies every run import and every live batch to both databases; a remote
   failure goes to `~/.local/state/pzopt-grafana/spool/` and replays in order (`cloud.sh status` counts it). `--no-remote`
@@ -775,7 +786,9 @@ videos that were in it live in the private `gs://diegov-videos-coldline-private`
 videos at the path they have under the home directory of the main checkout
 (`home/diegov/Documents/ZedProjects/PZ_Optimization/harness/runs/<run>/...`; a worktree's runs go to the main checkout's
 path). `harness/cold-store.py runs <runs dir>...` uploads whole run folders except the raw dev dumps (`*.f16`, `*.f32`,
-`*.bin`, `capture/frames.rgba|gray`); `harness/cold-store.py videos --delete [--min-age-h H] <dir>...` moves video files
+`*.bin`, `capture/frames.rgba|gray`) and the GameProfiler's copies of earlier sessions (`profiler/backup_*`); text files
+(csv, tsv, json, out, txt, log, jfr) of 4 KB and more go up gzip-encoded (`Content-Encoding: gzip`: browsers, curl and
+gcloud get the plain file; the bucket's size of such a file is its deterministic gzip -9, which `--delete` compares); `harness/cold-store.py videos --delete [--min-age-h H] <dir>...` moves video files
 (uploads, checks the bucket's size, deletes the local copy; git-tracked files are never deleted). Every run video is
 linked in both Grafana DBs (table `run_videos`, its own table so a re-import keeps it): the Runs table's `video` column
 and the Run dashboard's Recording panel. Run folders too (2026-10-03): `runs` ends by writing each folder's `index.html`
@@ -788,6 +801,18 @@ are not uploaded by the follower: run `runs` (and `--delete` for the main checko
 `TMPDIR=~/.cache/pzopt-cold-store/tmp` (gcloud hit the /tmp quota). The links (`storage.googleapis.com`) play for everyone; every read is billed
 (Coldline retrieval + egress), so never put anything but PZ run data in this bucket. Log: `~/.cache/pzopt-cold-store/log.txt`. The desktop's uplink is ~6 MB/s
 (parallel uploads do not help): ~6 minutes a GB. Standard class since 2026-09-27 (public reads: no retrieval fee).
+Compression pass 2026-10-12 (385 -> ~240 GB): the raw `frames.rgba` dumps and the GameProfiler backup copies deleted (71 GB),
+every text file >= 4 KB gzip-encoded in place (20 GB), every PNG through `oxipng -o 3` (lossless, 13.5 GB), the AV1 captures
+above ~75 Mbps and the old SDR H.264 / HEVC recordings re-encoded with the house AV1 PQ encode (`harness/cold-reencode.py
+<manifest.jsonl> [--max-minutes M]`, one video per queue media job (`--max-minutes 0.01`), alternated 1:1 with other
+sessions' runs: download, `encode-av1-hdr.sh` CQ 22, replaced only
+when <= 85 % and the duration matches, upload conditional on the object's generation; done list
+`~/.cache/pzopt-cold-store/reencode-done.jsonl`; 101 videos, 75 replaced 71.3 -> 32.3 GB). Captures of ~60 Mbps gain
+nothing at CQ 22 (87 %). Replaced objects
+carry `pzopt-original-bytes` metadata; the 7-day soft delete kept the originals. Bulk work on bucket objects runs best on a
+temporary spot VM in us-central1 (no egress fee, no uplink limit; the desktop's free egress is 100 GB a month): global CPU
+quota is 32 (c2d-highcpu-16 + pzopt-db fit), no GPU quota, SVT-AV1 at 5K under 1 fps there (videos stay on the desktop's NVENC).
+Large conditional uploads need `CLOUDSDK_STORAGE_PARALLEL_COMPOSITE_UPLOAD_ENABLED=False`.
 Hard cap: the bucket carries the label `app=pzopt-videos`; the budget "pzopt videos hard cap" (EUR 10 a month on that
 label) posts to Pub/Sub `pzopt-budget-cap`, and the function `pzopt-budget-cap` (europe-west1,
 `harness/grafana/cloud/budget-cap/`, service account `pzopt-budget-cap`: Project Billing Manager + Browser) disables

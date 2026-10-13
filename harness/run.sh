@@ -911,7 +911,9 @@ fi
 if (( game_profiler )); then
   if [[ -d "$ZOMBOID/Recording" ]]; then
     mkdir -p "$out/profiler"
-    cp -a "$ZOMBOID/Recording/." "$out/profiler/"
+    # this session's files only: the game moves earlier sessions into backup_* folders, copying those put the same
+    # CSVs into every profiled run (37 GB of duplicates in cold storage, 2026-10-12)
+    find "$ZOMBOID/Recording" -maxdepth 1 -type f -newermt "@$launch_epoch" -exec cp -a {} "$out/profiler/" \;
   else
     echo "GameProfiler recording directory not found: $ZOMBOID/Recording" >&2
   fi

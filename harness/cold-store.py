@@ -7,7 +7,8 @@ run_videos: the Runs table's "video" column and the Run dashboard's video panel)
 
     harness/cold-store.py runs [--delete] [--min-age-h H] [--keep GLOB]... <runs dir>...
                                                     whole run folders (gcloud storage rsync, one per run), except the raw
-                                                    dev dumps (*.f16, *.f32, *.bin, capture/frames.rgba|gray): they only
+                                                    dev dumps (*.f16, *.f32, *.bin, capture/frames.rgba|gray, profiler/backup_*);
+                                                    text files from 4 KB on go up gzip-encoded (2026-10-12); the dumps only
                                                     fed metrics and videos that exist elsewhere; then each folder's
                                                     index.html and its run_data link; --delete removes a local folder
                                                     (raw dumps included) once the bucket holds every other file of it at
@@ -31,6 +32,7 @@ finished run folders to ~/.cache/pzopt-cold-store/done-runs.txt (a rerun skips t
 import argparse
 import concurrent.futures as cf
 import fnmatch
+import gzip
 import html
 import os
 import re
@@ -47,7 +49,24 @@ PREFIX = "home/diegov/Documents/ZedProjects/PZ_Optimization"
 GCLOUD = os.environ.get("GCLOUD", str(Path.home() / "Downloads/google-cloud-sdk/bin/gcloud"))
 STATE = Path.home() / ".cache/pzopt-cold-store"
 VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov")
-RAW = r".*\.(f16|f32|bin)$|(^|.*/)frames\.(rgba|gray)$"
+# never uploaded: raw dev dumps, and the GameProfiler's backups of earlier sessions (run.sh copied the whole
+# ~/Zomboid/Recording until 2026-10-12: the same CSVs sat in up to 13 runs)
+RAW = r".*\.(f16|f32|bin)$|(^|.*/)frames\.(rgba|gray)$|(^|.*/)profiler/backup_[^/]*/.*"
+# stored gzip-encoded (Content-Encoding: gzip; browsers, curl and gcloud get the plain file back), 2026-10-12
+TEXT = {".csv": "text/csv", ".tsv": "text/tab-separated-values", ".json": "application/json",
+        ".out": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
+        ".jfr": "application/octet-stream"}
+TEXT_RE = r".*\.(" + "|".join(e[1:] for e in TEXT) + r")$"
+TEXT_MIN = 4096  # smaller text files go up plain
+
+
+def is_text(f):
+    return f.suffix.lower() in TEXT and f.stat().st_size >= TEXT_MIN
+
+
+def gz_bytes(f):
+    """f gzip-compressed, deterministic (no name, mtime 0): the same file always gives the same object size."""
+    return gzip.compress(f.read_bytes(), compresslevel=9, mtime=0)
 
 
 def log(msg):
@@ -153,7 +172,9 @@ def index_page(run, files):
 <style>body{{font:14px system-ui,sans-serif;margin:2em;background:#111;color:#ddd}}a{{color:#8ab8ff}}td{{padding:1px 1.5em 1px 0}}</style>
 <h1>{html.escape(run)}</h1>
 <p>A PZ Optimization harness run (github.com/xD3I/PZ_Optimization). Its dashboard: <a href="{DASHBOARD}{q(run)}">PZ run</a>.
-The raw frame dumps of dev captures (capture/frames.gray|rgba, *.f16, *.f32, *.bin) are not kept.</p>
+The raw frame dumps of dev captures (capture/frames.gray|rgba, *.f16, *.f32, *.bin) and the profiler's copies of earlier
+sessions (profiler/backup_*) are not kept. Text files are stored gzip-encoded (the sizes below); a browser or curl gets the
+plain file.</p>
 <h2>Frame data</h2><ul>{frames or "<li>none in this run</li>"}</ul>
 <h2>All files ({len(files)}, {size_text(sum(files.values()))})</h2><table>{rows}</table>
 """
@@ -267,6 +288,40 @@ def is_run_dir(d):
 
 # ---- modes ----
 
+def stored_size(f):
+    """the size f has in the bucket: text files of TEXT_MIN bytes and more are stored gzip-encoded"""
+    return len(gz_bytes(f)) if is_text(f) else f.stat().st_size
+
+
+def upload_text(run):
+    """The run folder's text files (rsync skips them): gzip-encoded (Content-Encoding: gzip) from TEXT_MIN bytes on,
+    plain below, each with its TEXT content type. True when every cp succeeded."""
+    raw = re.compile(RAW)
+    stage = STATE / "text-stage"
+    shutil.rmtree(stage, ignore_errors=True)
+    groups = {}  # (content type, gzip) -> stage dir
+    for f in run.rglob("*"):
+        if not f.is_file() or f.is_symlink() or f.suffix.lower() not in TEXT or raw.match(f.relative_to(run).as_posix()):
+            continue
+        key = (TEXT[f.suffix.lower()], is_text(f))
+        d = groups.setdefault(key, stage / str(len(groups)))
+        out = d / object_of(f)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if key[1]:
+            out.write_bytes(gz_bytes(f))
+        else:
+            shutil.copyfile(f, out)
+    ok = True
+    for (ctype, gz), d in groups.items():
+        cmd = [GCLOUD, "storage", "cp", "-r", f"--content-type={ctype}"] + (["--content-encoding=gzip"] if gz else [])
+        r = subprocess.run(cmd + [str(d / PREFIX.split("/")[0]), f"gs://{BUCKET}/"], capture_output=True, text=True)
+        if r.returncode != 0:
+            log(f"  text upload FAILED {run.name}: {r.stderr.strip()[-300:]}")
+            ok = False
+    shutil.rmtree(stage, ignore_errors=True)
+    return ok
+
+
 def do_runs(dirs, delete=False, min_age_h=0.0, keep=()):
     STATE.mkdir(parents=True, exist_ok=True)
     done = set((STATE / "done-runs.txt").read_text().split()) if (STATE / "done-runs.txt").exists() else set()
@@ -282,8 +337,8 @@ def do_runs(dirs, delete=False, min_age_h=0.0, keep=()):
             if str(run) in done and not delete:  # (--delete syncs again: a folder may have changed since)
                 continue
             dst = f"gs://{BUCKET}/{object_of(run)}"
-            r = subprocess.run([GCLOUD, "storage", "rsync", "-r", "-x", RAW, str(run), dst], capture_output=True, text=True)
-            if r.returncode != 0:
+            r = subprocess.run([GCLOUD, "storage", "rsync", "-r", "-x", f"{RAW}|{TEXT_RE}", str(run), dst], capture_output=True, text=True)
+            if r.returncode != 0 or not upload_text(run):
                 log(f"  FAILED {run.name}: {r.stderr.strip()[-300:]}")
                 continue
             vids = [f for f in run.rglob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXT]
@@ -306,7 +361,7 @@ def do_runs(dirs, delete=False, min_age_h=0.0, keep=()):
     freed = removed = 0
     for run in synced:
         files = [f for f in run.rglob("*") if f.is_file() and not f.is_symlink()]
-        missing = [f for f in files if not raw.match(f.relative_to(run).as_posix()) and have.get(object_of(f)) != f.stat().st_size]
+        missing = [f for f in files if not raw.match(f.relative_to(run).as_posix()) and have.get(object_of(f)) != stored_size(f)]
         if missing:
             log(f"  kept {run.name}: {len(missing)} files not in the bucket at their size (e.g. {missing[0].relative_to(run)})")
             continue

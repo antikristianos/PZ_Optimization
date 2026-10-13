@@ -14,6 +14,7 @@
 #                                       # Cloudflare, DNS only / grey cloud, or Google's certificate never issues)
 #   harness/grafana/cloud.sh status     # service, VM, tunnel, spool, remote DB size
 #   harness/grafana/cloud.sh seed       # empty the remote DB and copy the local one over (after a schema change)
+#   harness/grafana/cloud.sh columnstore  # the run-sample tables as compressed TimescaleDB hypertables (cloud/columnstore.sql)
 #   harness/grafana/cloud.sh tunnel     # (re)install the desktop's IAP tunnel unit
 # One-time setup done on 2026-09-24 by hand (see harness/CLAUDE.md "Public dashboard"): the VM + Postgres, the firewall
 # rule, the passwords in ~/.config/pzopt/grafana-remote.env, the EUR 5 budget alert on label app=pzopt-dashboard.
@@ -116,6 +117,7 @@ status() {
 seed() {
   systemctl --user stop pzopt-grafana-follow
   remote_psql -q -v ON_ERROR_STOP=1 -f "$HERE/schema.sql"
+  remote_psql -q -v ON_ERROR_STOP=1 -f "$HERE/cloud/columnstore.sql"
   remote_psql -q -c "DO \$\$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP EXECUTE format('TRUNCATE %I', r.tablename); END LOOP; END \$\$;"
   rm -f "${XDG_STATE_HOME:-$HOME/.local/state}"/pzopt-grafana/spool/*.sql
   podman exec pzopt-grafana-pg pg_dump -U pzopt --data-only --no-owner pzopt | remote_psql -q -v ON_ERROR_STOP=1
@@ -129,7 +131,8 @@ case "${1:-status}" in
   domain) domain ;;
   status) status ;;
   seed) seed ;;
+  columnstore) remote_psql -v ON_ERROR_STOP=1 -f "$HERE/cloud/columnstore.sql" ;;
   tunnel) tunnel ;;
   ssh) exec gcloud compute ssh pzopt-db --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap ;;
-  *) sed -n 2,23p "$0"; exit 2 ;;
+  *) sed -n 2,21p "$0"; exit 2 ;;
 esac
