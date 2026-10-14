@@ -59,14 +59,21 @@ public final class Pacing {
       default -> OFF;
    };
    private static final String[] NAMES = {"off", "cpu", "gpu", "gpufinish", "auto"};
-   private static final boolean ACTIVE = LOG || MODE != OFF;
+   /** frameQueue: the render thread presents each capped frame at its limiter slot + D (see {@link #queueHold}). */
+   public static final boolean QUEUE = Config.FRAME_QUEUE && Overrides.enabled();
+   /** limiterCatchUp: missed cap slots the limiter makes up (0 = stock modulo). */
+   public static final int CATCH_UP = !Overrides.enabled() ? 0 : Math.max(0, Config.LIMITER_CATCH_UP);
+   private static final boolean ACTIVE = LOG || MODE != OFF || QUEUE;
 
    private static final int RING = 64;
    private static final long[] ring = new long[RING];
+   private static final long[] ringSlot = new long[RING]; // frameQueue: the limiter slot each pushed frame serves
+   private static final long[] ringPush = new long[RING]; // frameQueue: when the game thread arrived at the hand-off
    private static volatile int head; // written by the game thread
    private static volatile int tail; // written by the render thread
 
    private static volatile long stepStartNs;
+   private static volatile long stepSlotNs;
    /** Game thread: the limiter's frame interval in ns, 0 when uncapped. */
    private static volatile long capIntervalNs;
 
@@ -76,6 +83,8 @@ public final class Pacing {
    /** What AUTO means on this GL: gpu with timestamp queries, else cpu. */
    private static int autoMode = GPU;
    private static long frameSimNs;
+   private static long frameSlotNs;
+   private static long framePushNs;
    private static long acquireNs;
    private static long swapCallNs;
    private static long waitNs;
@@ -118,6 +127,15 @@ public final class Pacing {
 
    /** Game thread, at the start of a frame step (the time the frame's game state is built for). */
    public static void stepStart(long nowNs, long intervalNs) {
+      stepStart(nowNs, intervalNs, nowNs);
+   }
+
+   /**
+    * Game thread, at the start of a frame step; {@code slotNs} = the cap grid slot the step serves (the limiter's
+    * deadline: nowNs when on time, earlier when the step starts late or catches up).
+    */
+   public static void stepStart(long nowNs, long intervalNs, long slotNs) {
+      stepSlotNs = slotNs;
       GtAb.frame(); // devGtAlternate: this frame's A/B phase
       TorchSource.frameStart(); // devTorchSourceCycle: this frame's variant
       VisBlink.frame(); // devVisBlinkTrace: the last frame's visibility blinks
@@ -141,6 +159,8 @@ public final class Pacing {
          return; // render thread not consuming (no render state yet): drop
       }
       ring[h & (RING - 1)] = stepStartNs;
+      ringSlot[h & (RING - 1)] = stepSlotNs;
+      ringPush[h & (RING - 1)] = System.nanoTime();
       head = h + 1;
    }
 
@@ -153,9 +173,13 @@ public final class Pacing {
       int t = tail;
       if (t != head) {
          frameSimNs = ring[t & (RING - 1)];
+         frameSlotNs = ringSlot[t & (RING - 1)];
+         framePushNs = ringPush[t & (RING - 1)];
          tail = t + 1;
       } else {
          frameSimNs = stepStartNs;
+         frameSlotNs = stepSlotNs;
+         framePushNs = acquireNs;
       }
    }
 
@@ -184,6 +208,10 @@ public final class Pacing {
       if (timestamps) {
          collectQueries(now);
          issueQuery(frame);
+      }
+      if (QUEUE && interval > 0L && frameSlotNs != 0L) {
+         swapCallNs = queueHold(now, interval);
+         return;
       }
       if (m == GPU_FINISH && interval > 0L) {
          long sync = GL32.glFenceSync(GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -227,6 +255,133 @@ public final class Pacing {
 
    private static int lastMode = -1;
 
+   // --- frameQueue (render thread) -------------------------------------------------------------
+   private static final int Q_WINDOW = 240;
+   private static final long[] qWin = new long[Q_WINDOW];
+   private static final long[] qSorted = new long[Q_WINDOW];
+   private static int qCount, qPos, qSince;
+   private static long qTargetNs;
+   private static long qFrames, qHeld, qLate, qHoldNsSum, qTargetNsSum, qLastLogNs;
+   private static BufferedWriter qLog;
+   private static long qFlushNs;
+
+   /**
+    * frameQueue: holds the swap of the frame acquired last until its limiter slot + D and returns the swap-call time.
+    *
+    * D is the {@code frameQueuePct} percentile (+ margin) of "slot -> ready" over the last {@link #Q_WINDOW} frames, where
+    * ready = the game thread's arrival at the hand-off + this frame's render submit (acquire -> swap call). That is the time
+    * the frame would have been ready had the render thread been free when it was handed over, so the hold itself (which
+    * keeps the render thread busy and delays later acquires) never feeds back into D (presentPacing=gpu measured step start
+    * -> GPU done: its own queueing raised its target, p90 27 ms at the Louisville cap, and its one-interval guard made the
+    * render thread a stage of >= one interval per frame that could never catch up). On-time frames therefore reach the swap
+    * exactly one cap interval apart, whatever their own game step took; a frame later than its slot + D goes at once.
+    */
+   private static long queueHold(long now, long interval) {
+      GL11.glFlush(); // the frame's commands reach the GPU now: it is drawn during the hold
+      long ready = framePushNs + (now - acquireNs);
+      long lag = ready - frameSlotNs;
+      if (lag > 0L && lag < 250_000_000L) {
+         qWin[qPos] = lag;
+         qPos = (qPos + 1) % Q_WINDOW;
+         qCount = Math.min(Q_WINDOW, qCount + 1);
+      }
+      if (qCount > 0 && (++qSince >= 15 || qTargetNs == 0L)) {
+         qSince = 0;
+         System.arraycopy(qWin, 0, qSorted, 0, qCount);
+         Arrays.sort(qSorted, 0, qCount);
+         long d = qSorted[Math.min(qCount - 1, qCount * Config.FRAME_QUEUE_PCT / 100)] + Config.FRAME_QUEUE_MARGIN_US * 1000L;
+         long lo = interval * Config.FRAME_QUEUE_MIN_PCT / 100L;
+         long hi = interval * Config.FRAME_QUEUE_MAX_PCT / 100L;
+         qTargetNs = Math.max(lo, Math.min(hi, d));
+      }
+      long target = frameSlotNs + qTargetNs;
+      long latest = now + 3L * interval; // a bogus slot never parks the render thread for long
+      if (target > latest) {
+         target = latest;
+      }
+      waitNs = 0L;
+      qFrames++;
+      qTargetNsSum += qTargetNs;
+      if (target > now) {
+         waitUntil(target);
+         long after = System.nanoTime();
+         waitNs = after - now;
+         now = after;
+         qHeld++;
+         qHoldNsSum += waitNs;
+      } else if (now - target > 500_000L) {
+         qLate++;
+      }
+      if (LOG) {
+         queueLog(lag, target);
+      }
+      if (now - qLastLogNs > 10_000_000_000L) {
+         if (qLastLogNs != 0L && qFrames > 0) {
+            Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d",
+                  qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
+                  catchUpSlots, droppedSlots));
+         }
+         qLastLogNs = now;
+         qFrames = qHeld = qLate = qHoldNsSum = qTargetNsSum = 0L;
+         catchUpSlots = droppedSlots = 0L;
+      }
+      return now;
+   }
+
+   /** pzopt-framequeue.out: sim_ns slot_ns push_ns lag_ns target_ns per frame (join with pzopt-pacing.out on sim_ns). */
+   private static void queueLog(long lag, long target) {
+      if (logFailed) {
+         return;
+      }
+      try {
+         if (qLog == null) {
+            String dir = ZomboidFileSystem.instance.getCacheDir();
+            if (dir == null) {
+               return;
+            }
+            qLog = new BufferedWriter(new FileWriter(new File(dir, "pzopt-framequeue.out"), false), 1 << 16);
+            qLog.write("# sim_ns slot_ns push_ns lag_ns target_ns (frameQueue, System.nanoTime; join with pzopt-pacing.out on sim_ns)\n");
+         }
+         StringBuilder b = line;
+         b.setLength(0);
+         b.append(frameSimNs).append(' ').append(frameSlotNs).append(' ').append(framePushNs).append(' ').append(lag).append(' ').append(target).append('\n');
+         qLog.write(b.toString());
+         long t = System.nanoTime();
+         if (t - qFlushNs > 1_000_000_000L) {
+            qLog.flush();
+            qFlushNs = t;
+         }
+      } catch (IOException | RuntimeException e) {
+         logFailed = true;
+         Log.warn("pacing: frame queue log stopped: " + e);
+      }
+   }
+
+   // limiter catch-up counters (game thread writes, the render thread's log line reads; approximate is fine)
+   private static volatile long catchUpSlots, droppedSlots;
+
+   /**
+    * GameWindow.mainThreadStep after a capped step: the limiter's accumulator for the next step. Stock keeps
+    * {@code acc % interval} (whole overrun intervals are dropped: a 20 ms step at a 120 cap gives one frame for two slots);
+    * with {@link #CATCH_UP} = c the next steps make up to c missed slots back to back.
+    */
+   public static long limiterRemainder(long acc, long interval) {
+      if (CATCH_UP <= 0) {
+         return acc % interval;
+      }
+      long r = acc - interval;
+      if (r >= interval) {
+         catchUpSlots++;
+      }
+      long limit = (CATCH_UP + 1L) * interval;
+      if (r >= limit) {
+         long kept = CATCH_UP * interval + r % interval;
+         droppedSlots += (r - kept) / interval;
+         r = kept;
+      }
+      return r;
+   }
+
    /** Render thread: the frame number the next afterSwap logs (for on-glass feedback matched later). */
    public static long currentFrame() {
       return frameNo - 1;
@@ -263,7 +418,8 @@ public final class Pacing {
    }
 
    public static String describeMode() {
-      return mode == AUTO ? "auto (" + NAMES[autoResolved()] + ")" : NAMES[mode];
+      String m = mode == AUTO ? "auto (" + NAMES[autoResolved()] + ")" : NAMES[mode];
+      return QUEUE ? "frameQueue at a cap, else " + m : m;
    }
 
    private static void addLag(long lag) {
@@ -294,6 +450,10 @@ public final class Pacing {
             if (mode == GPU) {
                mode = CPU;
             }
+         }
+         if (QUEUE) {
+            Log.info("pacing: frameQueue on (p" + Config.FRAME_QUEUE_PCT + " + " + Config.FRAME_QUEUE_MARGIN_US + " us, D " + Config.FRAME_QUEUE_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT
+               + " % of the cap interval, limiter catch-up " + CATCH_UP + " slots); presentPacing applies uncapped only");
          }
          if (MODE != OFF) {
             Log.info("pacing: presentPacing=" + Config.PRESENT_PACING + " -> " + NAMES[mode] + (mode == AUTO ? " (" + NAMES[autoMode] + (autoMode == GPU ? ")" : " while VRR is active)") : "")
@@ -424,11 +584,12 @@ public final class Pacing {
    }
 
    public static void flushLog() {
-      BufferedWriter w = log;
-      if (w != null) {
-         try {
-            w.flush();
-         } catch (IOException ignored) {
+      for (BufferedWriter w : new BufferedWriter[]{log, qLog}) {
+         if (w != null) {
+            try {
+               w.flush();
+            } catch (IOException ignored) {
+            }
          }
       }
    }

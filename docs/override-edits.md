@@ -7436,3 +7436,16 @@ boundary stable:
   sprite fades its model in (`ZombieLod.won`); `lost` clears the state. `IsoZombie`: four fields for the fade state and
   this frame's model / sprite shares; `pzoptRenderFlat` draws the sprite under a fading model; the atlas sprite's alpha is
   multiplied by its share (1 otherwise).
+
+## Frame pacing at the cap (2026-10-13, worktree `f8-pace`): frameQueue, limiterCatchUp
+
+- `zombie.GameWindow.mainThreadStep`, capped branch: `Pacing.stepStart` also gets the cap-grid slot the step serves
+  (`newTime - (accumulator - desiredDt)`: the start itself when on time, earlier when the step starts late), and
+  `accumulator %= desiredDt` became `accumulator = Pacing.limiterRemainder(accumulator, desiredDt)`, which is that same
+  modulo unless `limiterCatchUp` (default 0) is set: then up to that many missed slots stay in the accumulator and the
+  next steps start back to back until the grid is reached again (stock forgets every interval beyond one, so the debt of a
+  burst is never made up).
+- pzopt only: `frameQueue` (off; `frameQueuePct` 99, `frameQueueMarginUs` 300, `frameQueueMaxPct` 300, `frameQueueMinPct`
+  60): `Pacing.queueHold` replaces presentPacing at a cap. The render thread holds each frame's swap until its slot + D,
+  D = the percentile of (hand-off arrival + render submit - slot) over the last 240 frames, clamped to the min / max share
+  of the cap interval; a frame later than that goes at once. Log `pzopt-framequeue.out`, console `frame queue:`.

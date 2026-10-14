@@ -1026,6 +1026,33 @@ public final class Config {
    public static final int PRESENT_PACING_PCT = Math.max(50, Math.min(100, integer("presentPacingPct", 90)));
    public static final int PRESENT_PACING_MARGIN_US = Math.max(0, integer("presentPacingMarginUs", 200));
    /**
+    * Paced frame queue at a frame cap (f8-pace, 2026-10-13; off by default: it adds up to a frame of latency). Every capped
+    * step serves one slot of the limiter's grid (start + k / cap); the render thread presents frame k at slot k + D, D a high
+    * percentile ({@code frameQueuePct}) of how long frames take from their slot to "ready to swap" without the hold (the
+    * game thread's hand-off arrival + the render submit), so a slow game step is absorbed by the slack of the frames around
+    * it instead of reaching the screen.
+    * Replaces presentPacing at the cap while on (pzopt.Pacing).
+    */
+   public static final boolean FRAME_QUEUE = bool("frameQueue", false);
+   public static final int FRAME_QUEUE_PCT = Math.max(50, Math.min(100, integer("frameQueuePct", 99)));
+   public static final int FRAME_QUEUE_MARGIN_US = Math.max(0, integer("frameQueueMarginUs", 300));
+   /**
+    * frameQueue: the longest slot -> present delay D in percent of the cap interval. The three sprite states hold about two
+    * frames: past ~230 % the game thread starts to wait at the hand-off (300 %: 1.3 ms a frame on the Louisville cap, run
+    * pace-cap-fqdeep) but the share of frames within 9 ms still rose (p97 / 230 %: 81.7 %, p99 / 300 %: 83.3 %).
+    */
+   public static final int FRAME_QUEUE_MAX_PCT = Math.max(50, Math.min(400, integer("frameQueueMaxPct", 300)));
+   /** frameQueue: the shortest D in percent of the cap interval. */
+   public static final int FRAME_QUEUE_MIN_PCT = Math.max(0, Math.min(400, integer("frameQueueMinPct", 60)));
+   /**
+    * Frame limiter: how many missed slots of the cap grid the next steps make up (they start back to back until the grid is
+    * reached again). 0 = stock (`accumulator %= interval`: a step longer than two intervals drops the whole intervals it
+    * overran). Raises the mean after a burst by running the next steps back to back, but those catch-up frames arrive late
+    * for their slots, so with frameQueue they go out at once instead of on the cadence (trace model on run pace-cap-fq1:
+    * catch-up 3 with the queue 79.7 % of frames within 9 ms, the stock limiter 83.8 %).
+    */
+   public static final int LIMITER_CATCH_UP = Math.max(0, Math.min(240, integer("limiterCatchUp", 0)));
+   /**
     * A borderless window covering the monitor is created as a GLFW monitor window at the desktop's own mode (no mode switch,
     * no auto-iconify), so the compositor sees a fullscreen window: KWin / Mutter / gamescope only switch variable refresh on
     * for fullscreen windows. auto = Linux (X11 / XWayland / Wayland), true = every platform, false = stock window.

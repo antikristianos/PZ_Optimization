@@ -681,11 +681,11 @@ public final class GameWindow {
                   newTime = System.nanoTime(); // pzopt
                   currentTime = newTime; // pzopt: the wait is not frame time
                } // pzopt
-               pzopt.Pacing.stepStart(newTime, desiredDt); // pzopt: the game time this frame shows (VRR pacing, pzopt-pacing.out)
+               pzopt.Pacing.stepStart(newTime, desiredDt, newTime - (accumulator - desiredDt)); // pzopt: the game time this frame shows (VRR pacing, pzopt-pacing.out) and the cap slot it serves (frameQueue)
                frameStep();
                pzopt.FrameCap.onFrame(newTime); // pzopt: per-phase frame counter for the console (menu vs game)
                pzopt.FrameCap.stepDone(newTime); // pzopt: the step's own length, without the limiter wait (zoom bake plan)
-               accumulator %= desiredDt;
+               accumulator = pzopt.Pacing.limiterRemainder(accumulator, desiredDt); // pzopt: limiterCatchUp (stock: accumulator %= desiredDt)
                if (pzoptShift < 0L) { // pzopt: frames ran late for their slots: bring the next step forward
                   accumulator -= pzoptShift; // pzopt
                } // pzopt
