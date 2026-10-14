@@ -1030,6 +1030,7 @@ public final class Harness {
                 + "\nsettings=" + Config.describe()
                 + "\nzombie_batches=" + AnimBatch.describe() + " | " + ZombieLate.describe() + " | " + ActionEval.describe() + " | " + AnimParallel.describe() + " | " + LightingBatch.describe() + " | " + FrameBatch.describe() + " | " + UpdateBatch.describe() + " | " + LuaGate.describe() + " | " + PostupdateBatch.describe() + " | " + ReuseSpread.describe() + " | " + VehicleNear.describe() + " | " + SeparateMask.describe() + " | " + RagdollGate.describe() + " | " + BodyModelCache.describe() + " | " + UpdateBatch.describeStream() // pzopt: entityUpdateParallel, its batch, Lua-suppression and deferral counters; luaWorkerGate
                 + "\ngt_offload=" + GtOffload.describe()
+                + "\ngc_slack=" + GcSlack.describe()
                 + "\nripples=" + Ripples.stats()
                 + "\nbake_counters=" + zombie.iso.fboRenderChunk.FBORenderCell.pzoptBakeCounters()
                 + "\nsway=" + Sway.stats()

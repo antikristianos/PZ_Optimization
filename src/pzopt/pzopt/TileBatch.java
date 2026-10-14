@@ -141,7 +141,7 @@ public final class TileBatch {
          if (Config.INSTRUMENT) {
             TextureDraw last = n > 0 ? st.sprite[n - 1] : null;
             why(p.state != st ? "state" : !p.bound ? "unbound" : p.program != program ? "program" : p.swayKey != key ? "sway" : last == null ? "empty"
-               : last.type != TextureDraw.Type.glDraw ? "op:" + last.type : !last.pzoptVD ? "draw-unstamped" : "gap");
+               : last.type != TextureDraw.Type.glDraw ? OP_KEYS[last.type.ordinal()] : !last.pzoptVD ? "draw-unstamped" : "gap");
          }
          IndieGL.StartShader(program);
          TextureDraw op = st.sprite[st.numSprites - 1];
@@ -495,6 +495,18 @@ public final class TileBatch {
    }
 
    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong> WHY = new java.util.concurrent.ConcurrentHashMap<>();
+
+   // the "op:<type>" keys made once (GC pass 2026-10-14: the per-start concatenation was ~4 MB/s of garbage in harness runs)
+   private static final String[] OP_KEYS = opKeys();
+
+   private static String[] opKeys() {
+      TextureDraw.Type[] t = TextureDraw.Type.values();
+      String[] k = new String[t.length];
+      for (int i = 0; i < t.length; i++) {
+         k[i] = "op:" + t[i];
+      }
+      return k;
+   }
 
    private static void why(String k) {
       WHY.computeIfAbsent(k, x -> new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();

@@ -477,19 +477,94 @@ public final class UpdateBatch {
     * {@code entityUpdateLuaReplay} is off. The varargs array only ever allocates on this already-guarded path.
     */
    public static void captureLuaEvent(String event, Object... params) {
+      Object[] record = luaRecord(event, params.length + 1);
+      if (record != null) {
+         System.arraycopy(params, 0, record, 1, params.length);
+      }
+   }
+
+   // fixed-arity forms (GC pass 2026-10-14): LuaEventManager's calls bind to these, so no varargs array is made per event
+   public static void captureLuaEvent(String event) {
+      luaRecord(event, 1);
+   }
+
+   public static void captureLuaEvent(String event, Object param1) {
+      Object[] record = luaRecord(event, 2);
+      if (record != null) {
+         record[1] = param1;
+      }
+   }
+
+   public static void captureLuaEvent(String event, Object param1, Object param2) {
+      Object[] record = luaRecord(event, 3);
+      if (record != null) {
+         record[1] = param1;
+         record[2] = param2;
+      }
+   }
+
+   public static void captureLuaEvent(String event, Object param1, Object param2, Object param3) {
+      Object[] record = luaRecord(event, 4);
+      if (record != null) {
+         record[1] = param1;
+         record[2] = param2;
+         record[3] = param3;
+      }
+   }
+
+   /** The task's next capture record (event in slot 0), or null when the event is not captured. */
+   private static Object[] luaRecord(String event, int len) {
       if (zombieUpdateSilent && "OnZombieUpdate".equals(event)) {
-         return; // luaSilentSkip: no Lua function listens to it this frame (the replay would find no callback and return)
+         return null; // luaSilentSkip: no Lua function listens to it this frame (the replay would find no callback and return)
       }
       java.util.ArrayList<Object[]> list = LUA_CAPTURE.get();
       if (list == null || !Config.ENTITY_UPDATE_LUA_REPLAY) {
          onLuaSuppressed();
-         return;
+         return null;
       }
 
-      Object[] record = new Object[params.length + 1];
+      Object[] record = list instanceof CaptureList c ? c.take(len) : new Object[len];
       record[0] = event;
-      System.arraycopy(params, 0, record, 1, params.length);
       list.add(record);
+      return record;
+   }
+
+   /**
+    * A task's capture list whose record arrays are kept after the replay and reused by the next captures of the same
+    * length (GC pass 2026-10-14: one record per captured event, ~5 MB/s on Louisville). The replay empties each record
+    * before keeping it, so nothing it referenced stays reachable.
+    */
+   static final class CaptureList extends java.util.ArrayList<Object[]> {
+      private Object[][] spare = new Object[8][];
+      private int spareN;
+
+      Object[] take(int len) {
+         for (int k = this.spareN - 1; k >= 0 && k >= this.spareN - 4; k--) {
+            Object[] r = this.spare[k];
+            if (r.length == len) {
+               this.spareN--;
+               this.spare[k] = this.spare[this.spareN];
+               this.spare[this.spareN] = null;
+               return r;
+            }
+         }
+         return new Object[len];
+      }
+
+      /** Game thread, after the replay: empty the records, keep up to 32, clear the list. */
+      void recycle() {
+         for (int j = 0; j < this.size(); j++) {
+            Object[] r = this.get(j);
+            java.util.Arrays.fill(r, null);
+            if (this.spareN < 32) {
+               if (this.spareN == this.spare.length) {
+                  this.spare = java.util.Arrays.copyOf(this.spare, this.spareN * 2);
+               }
+               this.spare[this.spareN++] = r;
+            }
+         }
+         this.clear();
+      }
    }
 
    /**
@@ -548,7 +623,11 @@ public final class UpdateBatch {
             luaReplayed++;
          }
 
-         list.clear();
+         if (list instanceof CaptureList c) {
+            c.recycle(); // GC pass: the record arrays are reused by the next frames' captures
+         } else {
+            list.clear();
+         }
       }
    }
 
@@ -941,7 +1020,7 @@ public final class UpdateBatch {
          if (flightReplay) {
             capture = luaCaptures[i];
             if (capture == null) {
-               capture = new java.util.ArrayList<>();
+               capture = new CaptureList(); // GC pass: records reused after the replay
                luaCaptures[i] = capture; // published to the game thread by the join
             }
             LUA_CAPTURE.set(capture); // captureLuaEvent appends here for this task
@@ -1016,7 +1095,7 @@ public final class UpdateBatch {
       if (flightReplay) {
          capture = luaCaptures[i];
          if (capture == null) {
-            capture = new java.util.ArrayList<>();
+            capture = new CaptureList(); // GC pass: records reused after the replay
             luaCaptures[i] = capture; // published to the game thread by the join
          }
          LUA_CAPTURE.set(capture); // captureLuaEvent appends here for this task

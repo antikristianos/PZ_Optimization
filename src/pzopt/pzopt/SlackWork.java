@@ -30,6 +30,7 @@ public final class SlackWork {
 
    private static final java.util.ArrayList<Producer> PRODUCERS = new java.util.ArrayList<>();
    private static int frame;
+   private static boolean gcRegistered;
    public static long jobs, forced, slackNs, usedNs, overruns, overruns1ms, overrunNs, failures;
    private static final java.util.HashMap<String, Integer> FORCED = new java.util.HashMap<>();
    private static long lastLogNs;
@@ -63,6 +64,10 @@ public final class SlackWork {
       }
       lastStepNs = step;
       frame++;
+      if (Config.GC_SLACK && !gcRegistered) {
+         gcRegistered = true;
+         register(GcSlack.PRODUCER); // gcSlack: the young collection as a slack job
+      }
       if (!active() || PRODUCERS.isEmpty()) {
          return;
       }

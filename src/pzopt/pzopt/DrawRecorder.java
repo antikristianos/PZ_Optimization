@@ -163,9 +163,16 @@ public final class DrawRecorder {
    private int[] evEnd = new int[64]; // EV_KNOWN: the slot; EV_DEFER: the deferred kind
    private Object[] evA = new Object[64]; // EV_COND: the state object; EV_KNOWN: the value; EV_DEFER: the object / square
    private Object[] evB = new Object[64]; // EV_COND: the value (a copy); EV_DEFER: the second argument
+   private float[] evZ = new float[64]; // EV_DEPTH_LEFT: nextZ (unboxed, GC pass 2026-10-14)
+   private float[] evCd = new float[64]; // EV_DEPTH_LEFT: nextChunkDepth
    private int events;
-   private final ArrayList<IOpenGLState.Value> valuePool = new ArrayList<>(); // copies handed to events, reused per unit
-   private int valuesUsed;
+   // copies handed to events, reused per unit, one pool per value class (GC pass 2026-10-14: a single pool by position
+   // re-made an entry whenever the class at that position changed between units, ~6 MB/s of garbage on Louisville)
+   private Class<?>[] valueCls = new Class<?>[8];
+   @SuppressWarnings("unchecked")
+   private ArrayList<IOpenGLState.Value>[] valuePools = new ArrayList[8];
+   private int[] valuesUsed = new int[8];
+   private int valueKinds;
    private boolean nonTreeSinceDefer; // a flush point is only needed at the first non-tree object of a segment
    private int postCursor; // splice: the next entry of the recorder's postRender list
 
@@ -241,8 +248,8 @@ public final class DrawRecorder {
       if (this.zTouched || this.cdTouched) {
          int ev = this.event(EV_DEPTH_LEFT);
          this.evEnd[ev] = (this.zTouched ? 1 : 0) | (this.cdTouched ? 2 : 0);
-         this.evA[ev] = this.nextZ;
-         this.evB[ev] = this.nextChunkDepth;
+         this.evZ[ev] = this.nextZ;
+         this.evCd[ev] = this.nextChunkDepth;
       }
       this.nextZ = 0.0F;
       this.nextChunkDepth = 0.0F;
@@ -391,25 +398,41 @@ public final class DrawRecorder {
          this.evB[ev] = null;
       }
       this.events = 0;
-      this.valuesUsed = 0;
+      java.util.Arrays.fill(this.valuesUsed, 0, this.valueKinds, 0);
       this.state.numSprites = 0;
       this.state.postRender.clear(); // queued on the frame's copies by move()
       this.postCursor = 0;
    }
 
    private IOpenGLState.Value copyOf(IOpenGLState<?> s, IOpenGLState.Value v) {
-      IOpenGLState.Value c;
-      if (this.valuesUsed < this.valuePool.size()) {
-         c = this.valuePool.get(this.valuesUsed);
-         if (c.getClass() != v.getClass()) {
-            c = s.pzoptNewValue();
-            this.valuePool.set(this.valuesUsed, c);
+      Class<?> cls = v.getClass();
+      int k = 0;
+      while (k < this.valueKinds && this.valueCls[k] != cls) {
+         k++;
+      }
+      if (k == this.valueKinds) {
+         if (k == this.valueCls.length) {
+            this.valueCls = java.util.Arrays.copyOf(this.valueCls, k * 2);
+            this.valuePools = java.util.Arrays.copyOf(this.valuePools, k * 2);
+            this.valuesUsed = java.util.Arrays.copyOf(this.valuesUsed, k * 2);
          }
+         this.valueCls[k] = cls;
+         this.valuePools[k] = new ArrayList<>();
+         this.valueKinds++;
+      }
+      ArrayList<IOpenGLState.Value> pool = this.valuePools[k];
+      int used = this.valuesUsed[k]++;
+      IOpenGLState.Value c;
+      if (used < pool.size()) {
+         c = pool.get(used);
       } else {
          c = s.pzoptNewValue();
-         this.valuePool.add(c);
+         if (c.getClass() != cls) { // never seen: a state whose default value is of another class than its values
+            c.set(v);
+            return c;
+         }
+         pool.add(c);
       }
-      this.valuesUsed++;
       c.set(v);
       return c;
    }
@@ -456,6 +479,8 @@ public final class DrawRecorder {
          this.evEnd = java.util.Arrays.copyOf(this.evEnd, n);
          this.evA = java.util.Arrays.copyOf(this.evA, n);
          this.evB = java.util.Arrays.copyOf(this.evB, n);
+         this.evZ = java.util.Arrays.copyOf(this.evZ, n);
+         this.evCd = java.util.Arrays.copyOf(this.evCd, n);
       }
       this.evKind[ev] = kind;
       this.evPos[ev] = this.state.numSprites;
@@ -539,10 +564,10 @@ public final class DrawRecorder {
             case EV_DEPTH_LEFT: {
                int m = this.evEnd[ev];
                if ((m & 1) != 0) {
-                  carryZ = (Float)this.evA[ev];
+                  carryZ = this.evZ[ev];
                }
                if ((m & 2) != 0) {
-                  carryCd = (Float)this.evB[ev];
+                  carryCd = this.evCd[ev];
                }
                break;
             }
