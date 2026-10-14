@@ -22,7 +22,7 @@ PzoptSettingsLayout = {
               subs = {
                 { title = "Car smoothness", keys = { "vehicleSmooth", "driveCameraLate", "driveLookSmooth", "cameraScreenPixels",
                     "physicsStepHz", "physicsStepMode" } },
-                { title = "Chunk streaming", keys = { "parallel", "workers", "loadWorkers", "wake", "chunkHandoffDivisor",
+                { title = "Chunk streaming", keys = { "parallel", "workers", "loadWorkers", "wake", "chunkHandoffDivisor", "slackWork",
                     "hotsaveStaged", "hotsaveIntervalSec" } },
                 { title = "Render distance", keys = { "chunkGridWidth", "chunkGridFollowView" } },
                 { title = "Trees while driving", keys = { "driveTreeCutaway", "treeRebakeLazy", "treeRebakeLingerMs",
@@ -56,7 +56,7 @@ PzoptSettingsLayout = {
                     "animatorParallel", "headOnWorker", "animatorPipeline", "animBatchAsync", "guardedCallbacks", "lightingReadParallel",
                     "charDrawThreads", "separateParallel", "skinTransformsPrecompute", "skinPalettePrecompute", "shadowPrep", "aoContextParallel",
                     "entityUpdateParallel", "entityUpdatePipeline", "entityUpdatePlayerFirst", "entityUpdateMoreStates", "postupdateParallel",
-                    "postupdateFuse", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker" } },
+                    "postupdateFuse", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "randPerWorker" } },
                 { title = "Cheaper checks", keys = { "playerLosFast", "ecsLookupFast", "actionConditionFast", "zombieCullSortFast", "vehicleCull", "nearVehicleGrid",
                     "zombieSpotFast", "zombieAtlasFast", "renderLastFast", "separateFast", "edgeTestFast", "separateEdgeCache", "postupdateNoopSkip", "luaSilentSkip", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",

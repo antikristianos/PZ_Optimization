@@ -7619,3 +7619,20 @@ boundary stable:
   waiting, or a queue that has not emptied for 1.5 paces (a steady stream: a car), the pace is off. The same chunks join in the same queue order; only the frame each one joins in moves.
 - `zombie.iso.IsoGridSquare.discard`: two dev counters (`pzoptDiscards`, `pzoptDiscardsDropped`: squares handed back to
   the square cache, and those a full cache dropped) for `devPoolLog`; the cache add itself is unchanged.
+
+## Maintainer defaults (2026-10-14, integration round 3): hordeBatch, zombieLodSpriteLight, randPerWorker, slackWork
+
+The maintainer turned four round-2 / round-3 keys on by default (Config defaults only, no override code changed):
+- `hordeBatch` = `exact` (was `off`): the 3D zombies' model draws batched on the render thread in the stock drawing order;
+  the devHordeCheck rig found 0 colour / 0 depth differences against stock. `defer` stays an option (a different object
+  order); GL < 4.3 keeps the stock path. Tab: Zombies and hordes > "Drawing the horde" (the entry the horde pass added).
+- `zombieLodSpriteLight` = 60 (was 0): when the zombie level of detail is on, the flat sprites take 60 % of their square's
+  light instead of the stock black silhouette. `zombieLodDynamic` itself stays off, so nothing changes until a player
+  turns the level of detail on. Tab: "Detail by distance".
+- `randPerWorker` = on: the frame workers draw Rand from their own CellularAutomatonRNG (pzopt.WorkerRand) instead of the
+  game's lock-guarded generator: the same distribution, not the same sequence as stock (approved by the maintainer). Tab:
+  Zombies and hordes > "On other cores", entry "Zombie dice rolls: one random stream per core".
+- `slackWork` = on: at a frame cap, queued chunk hand-offs (`chunkHandoffSlackWork`, already on), far loot rolls and far
+  zombie spawns (when lootDefer / zombieSpawnSpread queue them; both stay off by default) run in the step's slack before the
+  limiter parks, each while its learned cost fits. Inert uncapped. Tab: Driving > "Chunk streaming", entry "Deferred work in
+  the frame cap's spare time".
