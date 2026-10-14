@@ -776,8 +776,11 @@ public final class Config {
    public static final boolean DEV_MAP_VISITED_CHECK = bool("devMapVisitedCheck", false);
    /** devMapStreetCheck: lay the street labels out on every reuse too and log when the kept layout differs. */
    public static final boolean DEV_MAP_STREET_CHECK = bool("devMapStreetCheck", false);
-   /** uiRetained: fresh renders from mouse movement alone, per element and second (clicks, wheel and keys are immediate). */
-   public static final int UI_HOVER_HZ = integer("uiHoverHz", 60);
+   /**
+    * uiRetained: fresh renders from mouse movement alone, per element and second (clicks, wheel and keys are immediate);
+    * 0 = on every frame the pointer moves over it (2026-10-14; was 60). Elements uiVerify can check ignore it.
+    */
+   public static final int UI_HOVER_HZ = integer("uiHoverHz", 0);
    /** uiRetained: longest time between fresh renders of an element whose output stayed identical. */
    public static final int UI_RETAINED_MAX_MS = integer("uiRetainedMaxMs", 1000);
    /** uiRetained: elements whose fresh render costs less than this (us) keep the stock rate. */
@@ -794,6 +797,38 @@ public final class Config {
    public static final int UI_RETAINED_SETTLE_MS = integer("uiRetainedSettleMs", 300);
    /** devUiRetainedCheck: render replays fresh anyway and count the ones that would have been stale. */
    public static final boolean DEV_UI_RETAINED_CHECK = bool("devUiRetainedCheck", false);
+   /**
+    * devUiTruth (2026-10-14, UI latency pass): the UI renders every frame with every top-level element fresh (the ground
+    * truth of what the screen should show), while the uiRetained schedule and stock's uiRenderFPS schedule are simulated
+    * beside it; each stretch where what a schedule would show differs from the truth is logged with its cause and
+    * length (X / Y lines in pzopt-ui.out, harness/uiprof.py --truth).
+    */
+   public static final boolean DEV_UI_TRUTH = bool("devUiTruth", false);
+   /**
+    * uiVerify (2026-10-14, UI latency pass): uiRetained elements replay only while their last fresh render's read set
+    * (pzopt.UiDeps: the Lua tables it read, the Java getters it called and their results, the pointer position) is
+    * unchanged, checked every frame; a change (an item renamed, a stat, the clock, the pointer over it) renders the element
+    * fresh in that same frame instead of after the back-off timer (up to uiRetainedMaxMs) or the hover rate (uiHoverHz).
+    */
+   public static final boolean UI_VERIFY = bool("uiVerify", true);
+   /**
+    * uiAnimate: an element whose output changed in its last fresh renders (an animation, smooth scrolling, a drag, the map
+    * while panning) renders fresh on every frame instead of at uiRenderFPS.
+    */
+   public static final boolean UI_ANIMATE = bool("uiAnimate", true);
+   /** uiVerify / uiAnimate: UI frames no click, key or UI event caused come at most this often (0 = the display refresh, -1 = every frame). */
+   public static final int UI_MAX_HZ = integer("uiMaxHz", 0);
+   /**
+    * uiSlack: those UI frames' fresh renders only when they fit in the time the frame has left before the frame cap (the
+    * game thread's measured work without them); an element left waiting renders at uiRenderFPS at the latest (stock).
+    */
+   public static final boolean UI_SLACK = bool("uiSlack", true);
+   /**
+    * uiMoveReplay: a window whose fresh render after a move was its previous commands shifted by the move (learned per
+    * window) is replayed shifted while it is dragged, instead of running its Lua every frame; it still renders fresh at
+    * uiRenderFPS at the least.
+    */
+   public static final boolean UI_MOVE_REPLAY = bool("uiMoveReplay", true);
    /** devHotsaveTiming: IsoMetaGrid.save logs its serialize / write time per file (the transfer hitch). */
    public static final boolean DEV_HOTSAVE_TIMING = bool("devHotsaveTiming", false);
    /** pzopt.HotsaveWarmup: the loader serialises the map metadata three times into a scratch buffer, so the first hot save runs JIT-compiled code. */

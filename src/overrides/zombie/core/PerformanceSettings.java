@@ -119,6 +119,18 @@ public final class PerformanceSettings {
    /** Harness UI rig: give the mouse back. */
    public void pzoptUiMouseOff() {
       pzopt.Showcase.aimOverride = false;
+      pzopt.Showcase.uiButtonOverride = false;
+   }
+
+   /** Harness UI rig: one mouse wheel step (zombie.input.Mouse sees it on its next update). */
+   public void pzoptUiWheel(double delta) {
+      pzopt.Showcase.uiWheel = (int)delta;
+   }
+
+   /** Harness UI rig: hold (true) or release (false) the left mouse button (zombie.input.Mouse sees it on its next update). */
+   public void pzoptUiButton(boolean down) {
+      pzopt.Showcase.uiButtonDown = down;
+      pzopt.Showcase.uiButtonOverride = true;
    }
 
    /** The value in force since boot ("" for an unknown key). */

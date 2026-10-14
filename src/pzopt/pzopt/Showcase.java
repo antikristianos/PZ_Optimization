@@ -43,6 +43,10 @@ public final class Showcase {
    public static volatile int aimXA, aimYA;
    /** zombie.input.Mouse.update holds the right button (aim) and sets the left one (fire) from these */
    public static volatile boolean holdButtons, fireDown;
+   /** Harness UI rig (pzoptUiButton): the left mouse button held / released through zombie.input.Mouse.update. */
+   public static volatile boolean uiButtonOverride, uiButtonDown;
+   /** Harness UI rig (pzoptUiWheel): a wheel step handed to zombie.input.Mouse.update once. */
+   public static volatile int uiWheel;
 
    private enum Phase { WAIT, RUN, TURN, FIGHT }
 

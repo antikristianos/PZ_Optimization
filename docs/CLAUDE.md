@@ -84,3 +84,4 @@ Conventions: date findings in the heading, put numbers in tables, name the runs 
 from (label + timestamp under `harness/runs/`), and note resolution / renderer / zoom /
 launcher so the run is comparable later. Start new work from the relevant plan's open
 sections rather than re-deriving.
+| `findings-ui-latency-2026-10-14.md` | is there input lag when the UI renders at another rate than the game: the ground-truth rig (`devUiTruth`: every element fresh every frame, the schedule and stock's 60 Hz simulated, stale episodes by cause), the latency scenes with a 200-item stack, and the fixes: field- and getter-level read sets validated every frame (`uiVerify`, `pzopt.UiDeps`), the pointer as a read, learned noise, motion at frame rate (`uiAnimate`), frame-slack scheduling (`uiSlack`, `uiMaxHz`), translated replay of dragged windows (`uiMoveReplay`); hover / drag / scroll / passive changes 19-62 % stale frames -> ~0, 240 fps held, costs per scene |

@@ -74,7 +74,7 @@ PzoptSettingsLayout = {
               } },
             { id = "ui", title = "Menus, inventory and map", blurb = "Windows that answer in the frame you click.",
               subs = {
-                { title = "Windows", keys = { "uiRetained", "uiRetainedChildren", "uiTickStagger", "uiLuaFast", "hotsaveWarmup" } },
+                { title = "Windows", keys = { "uiRetained", "uiRetainedChildren", "uiVerify", "uiAnimate", "uiSlack", "uiMoveReplay", "uiTickStagger", "uiLuaFast", "hotsaveWarmup" } },
                 { title = "Map", keys = { "mapStreetCache", "mapStreetMemo", "mapVisitedFast" } },
                 { title = "Lua", keys = { "luaIndexCache", "luaInternConstants", "luaSkipEmpty" } },
               } },

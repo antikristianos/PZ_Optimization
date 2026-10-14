@@ -6913,3 +6913,64 @@ dev `devBakeRecordCheck=N`, `devBakeRecordSerial`).
   against a key-off recording of the same build: parity (0.85). Measured and rejected: a task per chunk (neighbour roof
   joins waited for splices), waking the lanes at the prediction's start (`bakeRecordPrewake`), the first texture the stock way
   on the game thread.
+
+## The UI latency pass (2026-10-14; UIManager, UIElement, Mouse, PerformanceSettings, KahluaTableImpl, MethodCaller)
+
+Keys `uiVerify`, `uiAnimate`, `uiSlack`, `uiMoveReplay`, `uiMaxHz` (0 = the display refresh), `uiHoverHz` (default now 0 =
+every frame the pointer moves, inside the frame's room), dev key `devUiTruth`. Findings: `docs/findings-ui-latency-2026-10-14.md`.
+The logic is in `pzopt.UiRetained` (schedule) and `pzopt.UiDeps` (read sets); the overrides only call into them.
+
+### se.krka.kahlua.integration.expose.caller.MethodCaller (new override)
+
+- `call`: while a UI element renders fresh (`pzopt.UiDeps.on`, game thread) the outermost Lua -> Java call of the render is
+  handed to `UiDeps.call` after it returned (method, receiver, arguments, result) and `UiDeps.threw` when it threw; calls the
+  Java method makes back into Lua are inside its result and not logged (`enter` / `exit` keep the depth). The call itself and
+  what it returns to Lua are unchanged.
+
+### se.krka.kahlua.j2se.KahluaTableImpl
+
+- New fields `pzoptDepMark` (the last read-set log that recorded this table, one entry per log) and `pzoptDepBorn` (the
+  recording epoch the table was created in: a render's local tables are not tracked).
+- Constructor, `rawget(Object)`, `len`, `iterator`: while a render records, the table (and its metatable chain, which
+  luaIndexCache answers lookups through) joins the render's read set. `rawset` / `wipe` on a value change: a table the
+  recording render read earlier marks its log mutating.
+
+### zombie.ui.UIManager
+
+- `render`: `UiRetained.freshBegin(element)` instead of `freshBegin()` (the element's read set is recorded between it and
+  `freshEnd`); `UiRetained.uiRenderBegin` / `uiRenderEnd` around the UI frame (its overhead for `uiSlack`).
+
+### zombie.ui.UIElement
+
+- `render`: `UiRetained.childBegin(this)` (a child's read set is recorded too and becomes part of its parent's).
+
+### zombie.input.Mouse
+
+- `update`: the harness UI rig's left button (`pzoptUiButton`) and wheel step (`pzoptUiWheel`) are applied after the
+  hardware state is read, so UIManager dispatches presses, drags and wheel steps as for real input. Off unless a rig sets them.
+
+### zombie.core.PerformanceSettings
+
+- New Lua-callable rig methods `pzoptUiButton(boolean)` and `pzoptUiWheel(double)`; `pzoptUiMouseOff` also releases the button.
+
+### pzopt (no game class)
+
+- `UiDeps`: the read sets. Lua table fields with the values read (re-read only when the table's or its class chain's write
+  counts moved), getters (get / is / has / can / are / contains / size / Measure / clamp ... with a result), pointer reads
+  (getMouseX / getMouseY), clock reads (checked at the stock rate), updaters re-run in order (`updateAge`, `updateWetness`),
+  what `UIElement.DrawItemIcon` reads of its item (texture, tint, masks, fluid colour and level) and what an unfocused
+  `UITextBox2` shows; a call with a result that is not a read, a void call passing a game object, a throw, or a Java-rendered
+  element (any UIElement subclass but an unfocused text box) makes the log opaque: that element renders at the stock rate
+  at the latest (uiVerify on: no back-off for it). Fades (`UITransition`) and colours
+  (`ColorInfo`, `Color`) the render steers are value holders. Validation re-checks tables by write count and re-invokes the
+  getters in order, memoised per frame; learned noise (an entry whose change re-rendered the same output) is checked at
+  the stock rate and unlearned when a check at that rate finds it changed the output.
+- `UiRetained`: `anyDirty` every frame (read set changed, the pointer moved over a pointer-reading element or a drag it
+  started, an element in motion: its last fresh render differed from the one before); `uiSlack` grants those renders from
+  the frame's room before the cap (`FrameCap.stepDone`'s step length without the UI's fresh renders) with the stock interval
+  as the floor; `uiMaxHz` caps such UI frames at the display refresh; `uiMoveReplay` replays a dragged window's recording
+  shifted when it learned that the window draws the same after a move; `devUiTruth` (all elements fresh every frame, the
+  schedule and stock's 60 Hz simulated, stale episodes logged as X / Y lines).
+- `FrameCap.stepDone`: hands the step length to `UiRetained.frameWorkDone`.
+- `UiRetained.decideFrame`: `ISInventoryPage.renderDirty` counts only while an inventory page is visible (a visible page's
+  prerender clears it; with both hidden it stayed set and made every frame a UI frame).
