@@ -321,6 +321,9 @@ public final class MovingObjectUpdateScheduler {
          }
          pzopt.GtAb.end(pzopt.GtAb.S_PU_FLUSH, pzoptPu); // pzopt: Louisville 120 plan B census
       }
+      if (pzoptBatch) { // pzopt: devCleanSkipCheck (f8-cleanfix)
+         pzopt.PostupdateBatch.skipCheck(); // pzopt: the zombies the bucket loop never reached, against their state before it
+      } // pzopt
 
       if (pzopt.SimChecksum.ENABLED) {
          pzopt.SimChecksum.frameDone(); // pzopt: devSimChecksum, the per-frame hash of every zombie's state

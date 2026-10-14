@@ -50,6 +50,9 @@ public final class PostupdateBatch {
       public String collideType;
       public int timeSinceZombieAttack;
       public IsoZombie lastTargettedBy;
+      // postupdateClean (f8-cleanfix): what IsoZombie.pzoptCleanPostupdate's tail changes, for pzoptCleanUndo
+      public float cleanUnbalanced, cleanSeenTime;
+      public boolean cleanCanSee, cleanHeadPending;
    }
 
    /** The stackless throwable of a hazard on a worker. */
@@ -191,6 +194,14 @@ public final class PostupdateBatch {
       if (count == 0) {
          return;
       }
+      if (reached.length < count) {
+         reached = new boolean[Math.max(count, reached.length * 2)];
+      } else {
+         java.util.Arrays.fill(reached, 0, count, false);
+      }
+      if (SKIP_CHECK) {
+         skipBefore();
+      }
       long t1 = System.nanoTime();
       vehiclesOnWorker = VEHICLE_ON_WORKER && ZombAb.on(ZombAb.EXTRA2);
       snapshotVehicles();
@@ -220,7 +231,7 @@ public final class PostupdateBatch {
          failed = true; // compute() catches what the body throws; this is the batch machinery itself
          Log.warn("postupdateParallel: the batch failed, off for the session: " + t);
       }
-      if (cleanFrame && t == null) {
+      if (EARLY && cleanFrame && t == null) { // devCleanEarly: the pre-f8-cleanfix shape (see cleanAt / finish for why it is gone)
          for (int i = 0; i < count; i++) {
             if (clean[i] == 2) {
                ActionEval.publishCleanEarly(queue[i]); // postupdateClean: its evaluation runs under the whole bucket loop
@@ -352,6 +363,7 @@ public final class PostupdateBatch {
          cursor = k;
       }
       int k = cursor++;
+      reached[k] = true;
       if (!cleanFrame) {
          return 0;
       }
@@ -364,6 +376,40 @@ public final class PostupdateBatch {
       }
       return f;
    }
+
+   // ---- postupdateClean exactness (f8-cleanfix, 2026-10-13) ----
+   // Stock's bucket loop (`for i < size: list.get(i).postupdate()`) skips the entry right after an entity that removes itself
+   // during its postupdate (IsoZombie.postUpdateInternal: no current square -> removeFromWorld -> the scheduler's removeObject
+   // shifts the list under the loop), and an entity removed by another one before the loop reaches it is never run either: stock
+   // runs NO postupdate for such a zombie that frame (no movement, no tail, no head, no evaluation, no animator). A clean zombie
+   // has done its movement and tail in its movement task before the loop, and its evaluation (with postupdateFuse its context
+   // update and animator) used to be published before the loop too (publishCleanEarly): ~95 zombies a run were moved, evaluated
+   // and animated in a frame where stock leaves them alone. Now: the evaluation goes out when the loop reaches the zombie
+   // (ActionEval.appendClean), the loop's visit is recorded per queue entry (`reached`: cleanAt, or IsoZombie.postupdate when the
+   // cursor lost track), and finish() puts back the movement and the tail of every clean zombie the loop never reached, as it
+   // already did for the other computed zombies (pzoptMoveFrame).
+   private static final boolean EARLY = Config.DEV_CLEAN_EARLY;
+   private static boolean[] reached = new boolean[1024]; // game thread: the bucket loop reached queue entry k this frame
+   private static long cleanUnreached, cleanUndone;
+
+   /** Game thread, IsoZombie.postupdate (the loop reached the zombie): its queue entry, when it has one this frame, is marked. */
+   public static void reachedAt(IsoZombie z) {
+      int k = z.pzoptCleanIdx;
+      if (k >= 0 && k < count && queue[k] == z) {
+         reached[k] = true;
+      }
+   }
+
+   /**
+    * Game thread, IsoZombie.postupdate of a clean zombie the loop reached where cleanAt did not recognise it (more removals than its
+    * look-ahead): what cleanAt does at its place, the queueing in ActionEval for an animating one.
+    */
+   public static void cleanGuard(IsoZombie z) {
+      int k = z.pzoptCleanIdx;
+      if (cleanFrame && k >= 0 && k < count && queue[k] == z && clean[k] == 2) {
+         ActionEval.appendClean(z);
+      }
+   }
    private static final boolean VEHICLE_ON_WORKER = Config.POSTUPDATE_VEHICLE_ON_WORKER;
    private static volatile boolean vehiclesOnWorker;
    private static final java.util.concurrent.atomic.AtomicLong vehicleResolved = new java.util.concurrent.atomic.AtomicLong();
@@ -371,6 +417,7 @@ public final class PostupdateBatch {
 
    private static void compute(int i) {
       IsoZombie z = queue[i];
+      z.pzoptCleanIdx = i; // f8-cleanfix: reachedAt / cleanGuard find the entry from the zombie
       if (cleanFrame) {
          clean[i] = 0; // postupdateClean: this frame's flag only (a stale 1 from an earlier frame skipped a zombie that bailed here: zomb2-br-on5/6)
       }
@@ -463,16 +510,128 @@ public final class PostupdateBatch {
 
    /** Game thread, after the bucket loop: a computed zombie the loop never reached (removed meanwhile) is put back. */
    public static void finish() {
+      if (SKIP_CHECK) {
+         skipAfterLoop();
+      }
       for (int i = 0; i < count; i++) {
          IsoZombie z = queue[i];
          if (z.pzoptMoveFrame == frame) {
             z.pzoptMoveFrame = 0L;
             z.pzoptMoveRestore(z.pzoptMoveSnap);
             notTaken++;
+         } else if (cleanFrame && clean[i] != 0 && !reached[i]) {
+            // f8-cleanfix: a clean zombie stock's loop never ran (the entry after a self-removal, or removed before its turn):
+            // its movement and tail put back; its evaluation never went out (it goes out at the zombie's place in the loop)
+            cleanUnreached++;
+            if (!EARLY) {
+               z.pzoptMoveRestore(z.pzoptMoveSnap);
+               z.pzoptCleanUndo(z.pzoptMoveSnap);
+               cleanUndone++;
+            }
          }
          queue[i] = null;
       }
       count = 0;
+   }
+
+   // ---- devCleanSkipCheck (f8-cleanfix): every queued zombie the bucket loop did not reach, against stock (no postupdate) ----
+   // Before the movement batch each queued zombie's movement fields (Snap) and the rest of what a postupdate writes
+   // (IsoGameCharacter / IsoZombie.pzoptSkipPrint) are saved. finish() lists the entries the loop never reached; after the frame's
+   // postupdate (ActionEval.flush, AnimBatch.flush) the pending stream is joined and each of them compared with its saved state:
+   // stock never ran its postupdate, so every field must be as it was. Counted apart: zombies still in the cell's object list
+   // (the skipped slot) and zombies removed during the loop (their removal writes fields of its own).
+   private static final boolean SKIP_CHECK = Config.DEV_CLEAN_SKIP_CHECK;
+   public static final int PRINT_CHAR = 8, PRINT = 11; // IsoGameCharacter's slots, then IsoZombie's
+   private static final String[] PRINT_NAMES = {"forwardX", "forwardY", "turning", "headMarks", "evalDone", "actionState", "animTime", "animTracks",
+      "unbalanced", "targetSeenTime", "canSeeTarget"};
+   private static Snap[] skipSnap = new Snap[0];
+   private static double[] skipPrint = new double[0];
+   private static final double[] NOW = new double[PRINT];
+   private static final Snap NOW_SNAP = new Snap();
+   private static IsoZombie[] skipZ = new IsoZombie[16];
+   private static int[] skipK = new int[16];
+   private static byte[] skipFlag = new byte[16];
+   private static int skipN;
+   private static long skipChecked, skipDiffs, skipGoneChecked, skipGoneDiffs, skipCleanChecked;
+   private static int skipLogged;
+
+   private static void skipBefore() {
+      if (skipSnap.length < count) {
+         int n = Math.max(count, skipSnap.length * 2);
+         Snap[] a = java.util.Arrays.copyOf(skipSnap, n);
+         for (int i = skipSnap.length; i < n; i++) {
+            a[i] = new Snap();
+         }
+         skipSnap = a;
+         skipPrint = new double[n * PRINT];
+      }
+      for (int i = 0; i < count; i++) {
+         queue[i].pzoptMoveSave(skipSnap[i]);
+         queue[i].pzoptSkipPrint(skipPrint, i * PRINT);
+      }
+   }
+
+   private static void skipAfterLoop() {
+      skipN = 0;
+      for (int i = 0; i < count; i++) {
+         if (!reached[i]) {
+            if (skipN == skipZ.length) {
+               skipZ = java.util.Arrays.copyOf(skipZ, skipN * 2);
+               skipK = java.util.Arrays.copyOf(skipK, skipN * 2);
+               skipFlag = java.util.Arrays.copyOf(skipFlag, skipN * 2);
+            }
+            skipZ[skipN] = queue[i];
+            skipK[skipN] = i;
+            skipFlag[skipN] = cleanFrame ? clean[i] : 0;
+            skipN++;
+         }
+      }
+   }
+
+   /** Game thread, the end of the scheduler's postupdate (after ActionEval.flush and AnimBatch.flush). */
+   public static void skipCheck() {
+      if (!SKIP_CHECK || skipN == 0) {
+         return;
+      }
+      FrameBatch.join(); // an evaluation / animator task of an unreached zombie may still be out on the stream
+      java.util.Collection<IsoMovingObject> objects = IsoWorld.instance.currentCell.getObjectList();
+      for (int j = 0; j < skipN; j++) {
+         IsoZombie z = skipZ[j];
+         int k = skipK[j];
+         boolean gone = !objects.contains(z);
+         String d = z.pzoptMoveDiff(skipSnap[k]);
+         if (d == null) {
+            z.pzoptSkipPrint(NOW, 0);
+            for (int f = 0; f < PRINT; f++) {
+               if (Double.doubleToLongBits(NOW[f]) != Double.doubleToLongBits(skipPrint[k * PRINT + f])) {
+                  d = PRINT_NAMES[f];
+                  break;
+               }
+            }
+         }
+         if (skipFlag[j] != 0) {
+            skipCleanChecked++;
+         }
+         if (gone) {
+            skipGoneChecked++;
+         } else {
+            skipChecked++;
+         }
+         if (d != null) {
+            if (gone) {
+               skipGoneDiffs++;
+            } else {
+               skipDiffs++;
+            }
+            if (skipLogged < 12) {
+               skipLogged++;
+               Log.info("devCleanSkipCheck: zombie " + z.getID() + " not reached by the bucket loop (" + (gone ? "removed" : "skipped slot")
+                  + ", clean flag " + skipFlag[j] + ") differs from its state before the postupdate in " + d);
+            }
+         }
+         skipZ[j] = null;
+      }
+      skipN = 0;
    }
 
    private static String bailReasons() {
@@ -485,8 +644,9 @@ public final class PostupdateBatch {
 
    public static String describe() {
       return "postupdate batch: frames=" + frames + " computed=" + computed + " bailed=" + bailed + " failures=" + failures.get() + " ineligible=" + ineligible
-         + " notTaken=" + notTaken + (ELIGIBLE_ON_WORKER ? " ineligibleOnWorker=" + ineligibleOnWorker.get() : "") + (VEHICLE_ON_WORKER ? " vehicleResolved=" + vehicleResolved.get() : "") + (CLEAN ? " clean=" + cleanCount.get() + " cleanSkipped=" + cleanSkipped + " cleanResync=" + cleanResync + " cleanGuarded=" + cleanGuarded : "") + " bails(" + bailReasons() + ")"
-         + (frames > 0 ? String.format(" us/frame scan=%.1f vehicles=%.1f run=%.1f pendingAtStart=%d", scanNs / 1e3 / frames, vehicleNs / 1e3 / frames, runNs / 1e3 / frames, pendingAtStart) : "") + (CHECK ? " checked=" + checked + " diffs=" + checkDiffs + (firstDiff != null ? " first=" + firstDiff : "") : "")
+         + " notTaken=" + notTaken + (ELIGIBLE_ON_WORKER ? " ineligibleOnWorker=" + ineligibleOnWorker.get() : "") + (VEHICLE_ON_WORKER ? " vehicleResolved=" + vehicleResolved.get() : "") + (CLEAN ? " clean=" + cleanCount.get() + " cleanSkipped=" + cleanSkipped + " cleanResync=" + cleanResync + " cleanGuarded=" + cleanGuarded + " cleanUnreached=" + cleanUnreached + " cleanUndone=" + cleanUndone : "") + " bails(" + bailReasons() + ")"
+         + (frames > 0 ? String.format(" us/frame scan=%.1f vehicles=%.1f run=%.1f pendingAtStart=%d", scanNs / 1e3 / frames, vehicleNs / 1e3 / frames, runNs / 1e3 / frames, pendingAtStart) : "") + (SKIP_CHECK ? " skipCheck slot=" + skipChecked + " slotDiffs=" + skipDiffs + " removed=" + skipGoneChecked + " removedDiffs=" + skipGoneDiffs + " clean=" + skipCleanChecked : "")
+         + (CHECK ? " checked=" + checked + " diffs=" + checkDiffs + (firstDiff != null ? " first=" + firstDiff : "") : "")
          + (failed ? " FAILED" : "");
    }
 }

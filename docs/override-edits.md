@@ -7312,3 +7312,61 @@ while the game thread writes random published ones with every guarded writer: 16
 guarded (~3,000 settles); (2b) a published evaluation behind tasks that hold every worker: the write runs it on the writing
 thread at once, the task that reaches it skips it (evaluated once); (3) a stream joined and replaced by another stream: the first owner's late publish / seal no longer
 reaches the second (the untokened publish ran its tasks past their list).
+
+## postupdateClean and stock's skipped bucket slot (2026-10-13, worktree f8-cleanfix): MovingObjectUpdateScheduler, IsoZombie, IsoGameCharacter
+
+What stock does. `MovingObjectUpdateSchedulerUpdateBucket.postupdate` walks its list with `for (i = 0; i < size(); ++i)
+list.get(i).postupdate()`. An entity that leaves the world inside its postupdate (a zombie whose move left it without a current
+square: the end of `IsoZombie.postUpdateInternal` calls `removeFromWorld`, which reaches `MovingObjectUpdateScheduler.removeObject`
+and `bucket.remove(object)`) shifts the list under the loop, so the entry right after it moves into the index already run and is
+skipped: stock runs **no** postupdate for that zombie in that frame (no movement, no tail, no head, no transition evaluation, no
+animator); it is run again in its next bucket frame. The same holds for an entity another one removes before the loop reaches it
+(never run that frame), and an entity removed behind the loop also skips the next entry. The reusable-zombie set, the bucket
+loop's other reason to skip, does not change during the loop (VirtualZombieManager.update reuses zombies), so it needed nothing.
+
+The inexactness. postupdateParallel already handled it for an ordinary computed zombie: `PostupdateBatch.finish` puts back the
+movement of a zombie the loop never took. A clean zombie (`postupdateClean`) has `pzoptMoveFrame` 0 because the loop must not take
+it, so nothing was put back: its movement and the tail of its postupdate (the unbalance lerp, canSeeTarget, targetSeenTime, the
+head left to its evaluation task) stayed, and `ActionEval.publishCleanEarly` had sent its evaluation to the stream before the loop,
+so the evaluation ran and, with postupdateFuse, its context update and animator too; only the apply was missing (`cleanEarly -
+cleanAppended`, ~95-100 a Louisville run, e.g. 2,087,864 - 2,087,764 in sf2-rig1).
+
+The fix (keys unchanged, on by default with postupdateClean):
+- A clean zombie's evaluation goes out when the loop reaches it: `ActionEval.appendClean` already published a zombie not yet out
+  (`publishEarly`), so the call in `prepass` is gone. A clean zombie the loop never reaches therefore never has a task (and a
+  game-thread write before its slot, e.g. a reportEvent, no longer settles an evaluation ahead of stock's order).
+- The loop's visit is recorded per movement-queue entry (`PostupdateBatch.reached`): `cleanAt` marks the entry it matches, and
+  `IsoZombie.postupdate` marks it (`reachedAt`, by the queue index the movement task stores in `IsoZombie.pzoptCleanIdx`) for every
+  zombie the loop does call. When `cleanAt`'s eight-entry look-ahead lost the cursor (more removals in a row than that), a clean
+  zombie reached `IsoZombie.postupdate`'s guard and returned without joining ActionEval's queue; the guard now does what
+  `cleanAt` would (`cleanGuard`: `appendClean` for an animating one).
+- `finish` puts back every clean zombie the loop never reached: the movement from the movement task's Snap
+  (`pzoptMoveRestore`, as for the others) and the tail from four values `pzoptCleanPostupdate` saves in the same Snap
+  (`IsoZombie.pzoptCleanUndo`: unbalancedLevel, targetSeenTime, canSeeTarget, pzoptHeadPending; pzoptCleanFrame cleared).
+  `clearAttackVars` needs no undo: only CombatManager fills attack vars, for an IsoLivingCharacter (never a zombie), so a
+  zombie's are always already clear; the context's snapshot map is the evaluation's own scratch, refilled before any read.
+  Counters on the postupdate batch line: `cleanUnreached=` (clean zombies the loop did not reach) and `cleanUndone=`.
+
+`devCleanEarly` (dev) is the old shape (the early publication, nothing put back), the rig's control arm.
+
+Rig `devCleanSkipCheck` (dev): before the movement batch every queued zombie's movement fields (Snap) and the rest of what a
+postupdate writes (`IsoGameCharacter.pzoptSkipPrint` / `IsoZombie.pzoptSkipPrint`: forward direction, turning flags, head marks,
+the context's evaluation mark and current state, the animation tracks' times and count, unbalance, targetSeenTime, canSeeTarget)
+are saved; after the frame's postupdate (ActionEval.flush, AnimBatch.flush) the stream is joined and every entry the loop never
+reached is compared with its saved state: stock left it alone, so nothing may differ. Counted apart: zombies still in the cell
+(`slot=` / `slotDiffs=`, the skipped slot) and zombies removed during the loop (`removed=` / `removedDiffs=`).
+
+Louisville, the full 120-target setup, uncapped, with `devActionEvalCheck` and `devPostupdateCheck` too:
+- control arm cf-rig-before (`devCleanEarly`): 163 entries the loop never reached, all in the skipped slot (none removed), 127 of
+  them clean, and all 127 differ from their pre-postupdate state (first fields: position, altCollide/firstUpdate); the 36 ordinary
+  computed ones were already put back (0). cleanEarly - cleanAppended = 111.
+- fix cf-rig-after: 223 unreached (162 clean, all put back: `cleanUndone=162`), 0 differences; cleanEarly 0.
+- Both: actionEvalCheck 0 mismatches in 3.1 M, postupdateCheck 0 differences in 134-138 k, no stream-task failure, no bounded-wait
+  timeout.
+- Cost at the 120 cap (cf-cap1 / cf-cap2): 112.0 / 113.2 fps, p99 17.2 / 17.0 ms, strongMarks 5.8k / 5.9k, 0 stream-task failures,
+  123-128 clean zombies put back a run; the stream-fix runs before it (sf2-cap1..6) were 110.9-113.1 fps, p99 16.5-17.8 ms.
+
+Test: `tests/pzopt/PostupdateCleanSkipTest` drives the real bucket override's loop over clean zombies (allocated without a
+constructor) and probe entities that remove themselves, the entries ahead of them (also more than the look-ahead, the guard path)
+or one behind them, and a model of stock's loop over the same list: after `finish` exactly the zombies the model ran keep their
+movement task's postupdate and every other one is back to its state before the movement batch (4 fixed shapes, 3,000 random lists).

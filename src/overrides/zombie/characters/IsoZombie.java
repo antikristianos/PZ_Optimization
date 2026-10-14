@@ -3449,9 +3449,13 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
 
    public long pzoptCleanFrame; // pzopt: postupdateClean (f8-zomb2), the movement-queue frame this zombie's postupdate finished in its task
 
+   public int pzoptCleanIdx = -1; // pzopt: postupdateClean exactness (f8-cleanfix), this zombie's index in PostupdateBatch's movement queue (valid while the queue holds it there)
+
    public void postupdate() {
+      pzopt.PostupdateBatch.reachedAt(this); // pzopt: postupdateClean exactness (f8-cleanfix), the bucket loop reached this zombie
       if (this.pzoptCleanFrame != 0L && this.pzoptCleanFrame == pzopt.PostupdateBatch.frameStamp()) { // pzopt: postupdateClean, done already this frame
          pzopt.PostupdateBatch.cleanGuarded++; // pzopt
+         pzopt.PostupdateBatch.cleanGuard(this); // pzopt: f8-cleanfix, reached past the loop's cursor: it joins ActionEval's queue here as cleanAt would have
          return; // pzopt
       } // pzopt
       AbstractPerformanceProfileProbe var1 = IsoZombie.s_performance.postUpdate.profile();
@@ -3493,6 +3497,11 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
       if (anim && !pzopt.ActionEval.cleanSubmitOk(this)) { // pzopt
          return 0; // pzopt
       } // pzopt
+      pzopt.PostupdateBatch.Snap pzoptUndo = this.pzoptMoveSnap; // pzopt: f8-cleanfix, what the tail below changes, kept for a zombie the loop then never reaches (stock skips it)
+      pzoptUndo.cleanUnbalanced = this.unbalancedLevel; // pzopt: f8-cleanfix
+      pzoptUndo.cleanSeenTime = this.targetSeenTime; // pzopt: f8-cleanfix
+      pzoptUndo.cleanCanSee = this.canSeeTarget; // pzopt: f8-cleanfix
+      pzoptUndo.cleanHeadPending = this.pzoptHeadPending; // pzopt: f8-cleanfix
       if (anim) { // pzopt
          pzopt.ActionEval.cleanPrepare(this); // pzopt: the empty snapshot, the head left to the evaluation task
       } // pzopt
@@ -3510,6 +3519,30 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
          this.targetSeenTime = 0.0F; // pzopt
       } // pzopt
       return anim ? (byte)2 : (byte)1; // pzopt
+   } // pzopt
+
+   /**
+    * pzopt: postupdateClean exactness (f8-cleanfix), game thread after the bucket loop: a clean zombie the loop never reached (stock
+    * skips the entry after one that removes itself, so it runs no postupdate this frame) gets back what pzoptCleanPostupdate's
+    * tail changed (the movement is put back from the same Snap by the caller). clearAttackVars needs nothing: a zombie's attack
+    * vars are only ever cleared (CombatManager fills an IsoLivingCharacter's), so a second clear is a no-op. The snapshot map is
+    * the evaluation's own scratch, refilled before any evaluation reads it.
+    */
+   public void pzoptCleanUndo(pzopt.PostupdateBatch.Snap s) { // pzopt
+      this.unbalancedLevel = s.cleanUnbalanced; // pzopt
+      this.targetSeenTime = s.cleanSeenTime; // pzopt
+      this.canSeeTarget = s.cleanCanSee; // pzopt
+      this.pzoptHeadPending = s.cleanHeadPending; // pzopt: the head it left to an evaluation task that never goes out
+      this.pzoptCleanFrame = 0L; // pzopt
+   } // pzopt
+
+   /** pzopt: devCleanSkipCheck (f8-cleanfix), what a postupdate writes into the zombie beyond the movement Snap. */
+   @Override // pzopt
+   public void pzoptSkipPrint(double[] o, int k) { // pzopt
+      super.pzoptSkipPrint(o, k); // pzopt
+      o[k + pzopt.PostupdateBatch.PRINT_CHAR] = this.unbalancedLevel; // pzopt
+      o[k + pzopt.PostupdateBatch.PRINT_CHAR + 1] = this.targetSeenTime; // pzopt
+      o[k + pzopt.PostupdateBatch.PRINT_CHAR + 2] = this.canSeeTarget ? 1.0 : 0.0; // pzopt
    } // pzopt
 
    private void postUpdateInternal() {

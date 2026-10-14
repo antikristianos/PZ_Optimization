@@ -10752,6 +10752,30 @@ public abstract class IsoGameCharacter
    public boolean pzoptHeadPending;
    public boolean pzoptHeadOnGame;
 
+   /**
+    * pzopt: devCleanSkipCheck (f8-cleanfix), game thread: what a zombie's postupdate writes beyond its movement (the head's forward
+    * direction and turning flags, the head / evaluation marks, the action state, the animation tracks' times), as numbers.
+    */
+   public void pzoptSkipPrint(double[] o, int k) { // pzopt
+      o[k] = this.forwardDirection.x; // pzopt
+      o[k + 1] = this.forwardDirection.y; // pzopt
+      o[k + 2] = (this.isTurning() ? 1 : 0) + (this.isTurning90() ? 2 : 0) + (this.isTurningAround() ? 4 : 0); // pzopt
+      o[k + 3] = (this.pzoptHeadPending ? 1 : 0) + (this.pzoptHeadOnGame ? 2 : 0); // pzopt
+      ActionContext pzoptCtx = this.getActionContext(); // pzopt
+      o[k + 4] = pzoptCtx == null ? -1 : pzoptCtx.pzoptEvalDone; // pzopt
+      o[k + 5] = pzoptCtx == null ? -1 : System.identityHashCode(pzoptCtx.getCurrentState()); // pzopt
+      double pzoptT = 0.0; // pzopt
+      int pzoptN = 0; // pzopt
+      if (this.animPlayer != null && this.animPlayer.getMultiTrack() != null) { // pzopt: the field, never the lazy getter
+         for (zombie.core.skinnedmodel.animation.AnimationTrack pzoptTr : this.animPlayer.getMultiTrack().getTracks()) { // pzopt
+            pzoptT += pzoptTr.getCurrentTimeValue(); // pzopt
+            pzoptN++; // pzopt
+         } // pzopt
+      } // pzopt
+      o[k + 6] = pzoptT; // pzopt
+      o[k + 7] = pzoptN; // pzopt
+   } // pzopt
+
    /** pzopt: headOnWorker, the evaluation task of a queued zombie on a frame worker: its head, then its transitions. */
    public void pzoptEvalTask() {
       if (this.pzoptHeadPending) {
