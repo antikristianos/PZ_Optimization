@@ -1016,7 +1016,7 @@ public final class LightingJNI {
                      IsoWorld.instance.currentCell.invalidatePeekedRoom(playerIndex);
                   }
 
-                  if (pzopt.VisionBatch.ENABLED) { // pzopt: the dirty levels' vision tests on the workers first (lightingVisionParallel)
+                  if (pzopt.VisionBatch.active()) { // pzopt: the dirty levels' vision tests on the workers first (lightingVisionParallel; GtAb bit 50)
                      int n = 0; // pzopt
                      IsoChunk[] dirty = pzoptVisionChunks; // pzopt
                      for (int cy = 0; cy < IsoChunkMap.chunkGridWidth; cy++) { // pzopt

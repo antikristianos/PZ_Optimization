@@ -228,6 +228,8 @@ public final class IsoChunkMap {
    private void updateInternal() {
       boolean bChanged = false;
       pzopt.LootDefer.drain(); // pzopt: lootDefer, this frame's share of the queued far containers
+      pzopt.PoolWarm.frame(); // pzopt: renderPoolMax (render-data pool caps) and devPoolLog
+      pzopt.ChunkPace.frame(IsoChunk.loadGridSquare.size() + (pzoptStaged != null ? 1 : 0)); // pzopt: chunkHandoffPaceMs, this frame's hand-off credit
       int count = IsoChunk.loadGridSquare.size();
       if (count != 0) {
          count = 1 + count * 3 / chunkGridWidth;
@@ -239,6 +241,7 @@ public final class IsoChunkMap {
          if (pzoptDiv > 0) {
             count = Math.min(count, 1 + IsoChunk.loadGridSquare.size() / pzoptDiv);
          }
+         count = pzopt.ChunkPace.limit(count, IsoChunk.loadGridSquare.size()); // pzopt: chunkHandoffPaceMs, a steady rate instead of a row at once
          if (pzopt.ChunkHandoff.defer(IsoChunk.loadGridSquare.size())) { // pzopt: chunkHandoffSlack, wait for a frame with headroom
             count = 0; // pzopt
          } // pzopt
@@ -305,7 +308,7 @@ public final class IsoChunkMap {
             pzoptStagedFrame = pzopt.SlackWork.frame(); // pzopt
             pzoptStagedSquares = pzoptSquares(pzoptStaged); // pzopt
          } // pzopt
-         return pzoptStaged != null; // pzopt
+         return pzoptStaged != null && pzopt.ChunkPace.mayTake(IsoChunk.loadGridSquare.size() + 1); // pzopt: chunkHandoffPaceMs in the slack too
       } // pzopt
       public long nextCostNs() { // pzopt
          return PZOPT_LEVEL_COST.estimate() * pzoptStagedSquares; // pzopt
@@ -328,6 +331,7 @@ public final class IsoChunkMap {
             } // pzopt
          } // pzopt
          PZOPT_LEVEL_COST.learn((System.nanoTime() - t0) / squares); // pzopt
+         pzopt.ChunkPace.took(); // pzopt: chunkHandoffPaceMs
       } // pzopt
    }; // pzopt
 

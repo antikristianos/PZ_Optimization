@@ -237,6 +237,7 @@ public final class IsoGridSquare {
    public static float gmod;
    public static float bmod;
    public static int idMax = -1;
+   public static long pzoptDiscards, pzoptDiscardsDropped; // pzopt: devPoolLog counters (discard)
    private static int col = -1;
    private static int path = -1;
    private static int pathdoor = -1;
@@ -1222,7 +1223,10 @@ public final class IsoGridSquare {
       Arrays.fill(this.playerCutawayFlags, (byte)0);
       Arrays.fill(this.playerCutawayFlagLockUntilTimes, 0L);
       Arrays.fill(this.targetPlayerCutawayFlags, (byte)0);
-      isoGridSquareCache.add(this);
+      pzoptDiscards++; // pzopt: devPoolLog counter (squares returned to the cache, racy by design)
+      if (!isoGridSquareCache.add(this)) { // pzopt: the add itself is stock; a full cache drops the square
+         pzoptDiscardsDropped++; // pzopt: devPoolLog counter
+      } // pzopt
    }
 
    public float DistTo(int x, int y) {

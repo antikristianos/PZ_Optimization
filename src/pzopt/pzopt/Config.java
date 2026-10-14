@@ -589,6 +589,10 @@ public final class Config {
    public static final int LOOT_DEFER_DISTANCE = Math.max(0, integer("lootDeferDistance", 20));
    public static final int LOOT_DEFER_BUDGET_US = Math.max(0, integer("lootDeferBudgetUs", 400));
    public static final int CHUNK_HANDOFF_DIVISOR = integer("chunkHandoffDivisor", 8);
+   public static final int CHUNK_HANDOFF_PACE_MS = Math.max(0, integer("chunkHandoffPaceMs", 0)); // chunk pass 2026-10-13: queued chunks join the world at a steady rate, the queue's peak (+8) spread over this many ms, instead of within ~10 frames of a row's arrival; 0 = off (pzopt.ChunkPace)
+   public static final int CHUNK_HANDOFF_PACE_BACKLOG = Math.max(1, integer("chunkHandoffPaceBacklog", 160)); // chunkHandoffPaceMs: with this many chunks waiting (a load, a teleport, a fast car) the pace is off
+   public static final int RENDER_POOL_MAX = Math.max(0, integer("renderPoolMax", 0)); // chunk pass 2026-10-13: the free-object caps of the character render-data pools (ModelSlotRenderData 1,024, ModelInstanceRenderData 4,096, ...) raised to this (0 = stock): a horde's releases past the cap were dropped and re-made with their 60-bone palettes, the largest class G1 copied in the young pauses (pzopt.PoolWarm)
+   public static final boolean DEV_POOL_LOG = bool("devPoolLog", false); // dev: every 2 s the squares created and the free sizes of the square / object / render pools (pzopt.PoolWarm)
    public static final boolean CHUNK_HANDOFF_SLACK_WORK = bool("chunkHandoffSlackWork", true); // slackWork: at a cap, queued chunks join the world in the step's slack, one at a time while their learned cost fits (IsoChunkMap.pzoptHandOffChunk)
    public static final int CHUNK_HANDOFF_SLACK_BACKLOG = Math.max(1, integer("chunkHandoffSlackBacklog", 24)); // chunkHandoffSlackWork: with this many queued (a world load, a teleport) the in-frame hand-off runs as before
    public static final boolean CHUNK_HANDOFF_SLACK = bool("chunkHandoffSlack", false); // pzopt.ChunkHandoff: after a heavy frame the chunk hand-off waits for one with headroom

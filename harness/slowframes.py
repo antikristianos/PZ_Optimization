@@ -35,6 +35,8 @@ ap.add_argument("--detail", type=int, default=12, help="sub-phases / labels per 
 ap.add_argument("--all", action="store_true", help="the whole recording, not the route window")
 ap.add_argument("--min-share", type=float, default=0.35)
 ap.add_argument("--quiet", action="store_true", help="only the census table")
+ap.add_argument("--near", type=int, default=0, help="per-frame mean ms per game-thread sub-phase (and gtab section) in the "
+                "frames within 0.5 s after a chunk burst vs the rest: the N largest differences (chunk pass 2026-10-13)")
 a = ap.parse_args()
 
 
@@ -565,6 +567,45 @@ def analyse(run):
             print(f"   chunk arrivals: {len(chunks)} chunks in {len(rows_)} bursts; frames within 0.5 s after a burst: {len(near)} "
                   f"({100 * sum(1 for f in near if f['step'] > a.budget) / max(1, len(near)):.0f} % slow) vs the rest "
                   f"({100 * sum(1 for f in frames if f not in near and f['step'] > a.budget) / max(1, n - len(near)):.0f} % slow)")
+            if a.near and near:
+                nearid = set(id(f) for f in near)
+                rest = [f for f in frames if id(f) not in nearid]
+                ms = lambda fs: sum(f["step"] for f in fs) / max(1, len(fs))
+                cn_, cr_ = collections.Counter(), collections.Counter()
+                for st_, f_, ct_, cause_ in slow:
+                    (cn_ if id(f_) in nearid else cr_)[cause_.split(":")[0] if cause_.startswith("render:") else cause_] += 1
+                print("   slow-frame causes near a burst (per 1000 near frames) vs the rest (per 1000 other frames):")
+                for k_, v_ in (cn_ + cr_).most_common(a.near):
+                    print(f"       {k_:56} {1000 * cn_[k_] / len(near):6.1f} vs {1000 * cr_[k_] / max(1, len(rest)):6.1f}")
+                print(f"   near-burst step mean {ms(near):.2f} ms vs rest {ms(rest):.2f} ms (+{ms(near) - ms(rest):.2f})")
+                if d:
+                    def mean_gt(fs):
+                        c = collections.Counter()
+                        for f in fs:
+                            for k, v in f["gt"].items():
+                                c[k] += v * interval
+                        return {k: v / max(1, len(fs)) for k, v in c.items()}
+                    mn, mr = mean_gt(near), mean_gt(rest)
+                    diff = sorted(((mn.get(k, 0) - mr.get(k, 0), k) for k in set(mn) | set(mr)), reverse=True)
+                    print(f"   near-burst minus rest, game-thread CPU ms a frame (asprof): total "
+                          f"{sum(mn.values()) - sum(mr.values()):+.2f}")
+                    for dv, k in diff[:a.near]:
+                        print(f"       {k:56} {mn.get(k, 0):6.3f} vs {mr.get(k, 0):6.3f}  {dv:+.3f}")
+                    print(f"       ... most negative: " + ", ".join(f"{k} {dv:+.3f}" for dv, k in diff[-3:]))
+                gn = [f["gtab"] for f in near if "gtab" in f]
+                gr = [f["gtab"] for f in rest if "gtab" in f]
+                if gn and gr and gcol:
+                    rowsd = []
+                    for n_, i_ in gcol.items():
+                        mn_ = sum(g[6 + i_] for g in gn if 6 + i_ < len(g)) / len(gn)
+                        mr_ = sum(g[6 + i_] for g in gr if 6 + i_ < len(g)) / len(gr)
+                        sc = 1 if n_ in ("minflt", "majflt", "rtGenTex", "newTex", "bake_t0", "bake_t1", "bake_t2", "bake_t3",
+                                         "bake_offered", "pu_zombies", "pu_moved", "pu_collided", "z_flight_n") else 1e6
+                        rowsd.append(((mn_ - mr_) / sc, n_, mn_ / sc, mr_ / sc))
+                    rowsd.sort(reverse=True)
+                    print("   near-burst minus rest, gtab columns (ms a frame, counts as counts):")
+                    for dv, n_, x, y in rowsd[:a.near]:
+                        print(f"       {n_:24} {x:8.3f} vs {y:8.3f}  {dv:+.3f}")
         if gcol and "runq_ns" in gcol and any("gtab" in f for f in frames):
             gs = [f for f in frames if "gtab" in f]
             rq = [f["gtab"][6 + gcol["runq_ns"]] / 1e6 for f in gs]

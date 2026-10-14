@@ -52,6 +52,8 @@ public final class GtAb {
    public static final long TILE_FLOORS = 1L << 34; // tileRecordFloors (render-phase pass f8-render1, 2026-10-13)
    public static final long ANIMAL_WALK = 1L << 56; // animalLosWalk (tail pass 2026-10-13; tail1 takes bits 56-63, named in parse())
    public static final long COMBINER = 1L << 57; // combinerPool (tail2): keep storage, reserve, budget retention
+   public static final long CHUNK_PACE = 1L << 51; // chunkHandoffPaceMs (chunk pass f8-chunk 2026-10-13)
+   public static final long VISION_BATCH = 1L << 50; // lightingVisionParallel (chunk pass f8-chunk 2026-10-13; bits 50-55, named in parse())
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
       "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "nearVehicleGrid", "headOnWorker", "entityUpdatePlayerFirst", "frameSpin", "separateMemo", "entityUpdateNearPlayer", "entityUpdateMoreStates", "ragdollGate", "bodyModelCache", "bakeRecordParallel", "tileRecordFloors", "tileRecordMoveRef", "renderLastFast", "tileRecordModels", "tileRecordWeather"};
@@ -86,6 +88,12 @@ public final class GtAb {
          }
          if (k.equals("combinerPool")) { // tail2
             m |= COMBINER;
+         }
+         if (k.equals("lightingVisionParallel")) { // chunk pass (f8-chunk): bits 50-55 by name
+            m |= VISION_BATCH;
+         }
+         if (k.equals("chunkHandoffPace")) { // chunk pass (f8-chunk)
+            m |= CHUNK_PACE;
          }
       }
       return m;

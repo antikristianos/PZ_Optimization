@@ -7449,3 +7449,25 @@ boundary stable:
   60): `Pacing.queueHold` replaces presentPacing at a cap. The render thread holds each frame's swap until its slot + D,
   D = the percentile of (hand-off arrival + render submit - slot) over the last 240 frames, clamped to the min / max share
   of the cap interval; a frame later than that goes at once. Log `pzopt-framequeue.out`, console `frame queue:`.
+
+## Chunk-arrival pass (2026-10-13, worktree `f8-chunk`): render-data pool caps, vision batch A/B
+
+- `zombie.iso.IsoChunkMap.updateInternal`: one call per frame to `pzopt.PoolWarm.frame()` after the loot drain. With
+  `renderPoolMax` (int, 0 = stock) it raises, once, the free-object caps of the character render-data pools
+  (`ModelSlotRenderData`, `ModelInstanceRenderData`, `AnimatedModel.instDataPool`, `ModelInstanceTextureInitializer`,
+  `ModelCameraRenderData`, `ModelInstance.PlayerData`; stock 1,024 / 4,096) through `ObjectPool.setMaxSize` (never lowers
+  them). A cap only decides whether a released object is kept or dropped; every user re-initialises what it takes, as
+  it does with any pooled object, so nothing the game computes changes. On the Louisville horde the releases past the caps
+  were dropped and the next frames made new render data with a new 60-bone palette (the largest class G1 copied in the
+  young pauses). `devPoolLog` (dev) logs every 2 s the squares created (`IsoGridSquare.idMax`), the free squares / objects /
+  trees of the streaming caches, the save / reuse / hand-off queues and the render pools' free / cap.
+- `zombie.iso.LightingJNI.update` (`pzoptUpdateBody`): the existing `lightingVisionParallel` batch is asked through
+  `VisionBatch.active()` (the key and, under `devGtAlternate`, GtAb bit 50) so it can be A/B'd inside one run; a level
+  that was not batched keeps computing its vision bits in `updateChunk`, as before.
+- `zombie.iso.IsoChunkMap.updateInternal` and its slack hand-off producer (`chunkHandoffPaceMs`, int ms, 0 = off,
+  `pzopt.ChunkPace`): every frame accrues a hand-off credit (the queue's largest size since it was last empty, plus 8,
+  spread over the pace); the in-frame hand-off count is capped by the credit after the divisor, and slackWork's producer
+  only offers its staged chunk when a chunk's credit is there. With `chunkHandoffPaceBacklog` (160) or more chunks
+  waiting, or a queue that has not emptied for 1.5 paces (a steady stream: a car), the pace is off. The same chunks join in the same queue order; only the frame each one joins in moves.
+- `zombie.iso.IsoGridSquare.discard`: two dev counters (`pzoptDiscards`, `pzoptDiscardsDropped`: squares handed back to
+  the square cache, and those a full cache dropped) for `devPoolLog`; the cache add itself is unchanged.
