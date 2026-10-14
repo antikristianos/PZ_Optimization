@@ -7571,6 +7571,28 @@ without the character draws 0.2 ms. Most of the cost was per-draw state and unif
   by pixel; `devHordeCheckVariants` rotates bisect variants; a mismatch logs its box, the per-character state and which
   stock / batch draws touch the first differing pixel. Run horde-chk13 (exact and defer): 39 runs, 368,535 drawn pixels,
   0 colour / 0 depth differences.
+- Is exact's "flicker" real (2026-10-14, worktree `f8-hflick`)? Jev parity had called two exact recordings "flicker"
+  (0.44 / 0.53) and flicker.py counted 254-277 transient px/frame against 169-179 for off / defer, on building and road
+  edges. Not a rendering difference: the Louisville bench moves the player by whole-tile teleports, so the camera stands
+  still and jumps ~(25, -12) px every ~10 captured frames, and a few world events at those teleports (the seen area
+  popping open for one frame, a roof revealed chunk by chunk, the whole picture at a wrong offset for two captured frames)
+  carry most of a recording's transients (exact2: one frame held 25,586 of 72,029). They happen in off and defer runs too.
+  Over 13 capped recordings of the route (route seconds 2-24, 1280 px; off 3, exact 5, defer 5) the mean without the top
+  1 % of frames is 22.2 / 22.2 / 22.8 transients per frame, still frames 24.9 / 24.1 / 24.7, frames over 2,000 per run
+  1.7 / 2.2 / 1.4; the plain means overlap (off 33-42, exact 31-52, defer 34-45). In one run alternating stock / exact /
+  defer per frame (`devHordeModes=005566`, run hflick-ab1) with a 1:1 1280x720 gray capture tagged per frame: on
+  consecutive still frames a stock -> exact switch changes a median 0 px more than the stock -> stock pair next to it
+  (n = 245), no pixel changes in 25 or more pairs of any mode pair, flicker.py transients per frame stock 9.1 / exact 9.7
+  / defer 12.8 (defer is another draw order by design). Dev rig `devHordeStateDump=MS` (`pzopt.HordeStateDump`): ~200 GL
+  states (enables, blend / depth / stencil / colour masks, program, vertex array and its 16 attributes, buffer and
+  texture / sampler bindings of units 0-3, viewport, scissor, depth range, pixel store) plus the Java caches the next draws
+  trust (the thirteen GLStateRenderThread values and dirty flags, ShaderHelper's program, DefaultShader.isActive,
+  Texture.lastTextureID, the ring buffer's style / textures / restore flags), read before and after one batch flush and
+  one stock zombie draw at most every MS ms per path; console "horde state:". Run hflick-ab1 (stock 62, exact 63, defer
+  62 samples): both batch tails leave what the stock tail leaves, but for the generic GL_SHADER_STORAGE_BUFFER binding
+  (glBindBufferBase sets it to 0; a stock draw can leave one of the game's storage buffers bound there), which nothing
+  reads (the game's ShaderBuffer / InstancedBuffer and every pzopt user bind their buffer before an upload). `pzopt.FrameCapture`: with devHordeModes set, each index.txt line also carries the presented
+  frame number and that frame's horde mode.
 
 ### Zombie LOD boundary (`zombieLodHysteresis`, `zombieLodFadeMs`; part of the `zombieLodDynamic` option, off by default)
 

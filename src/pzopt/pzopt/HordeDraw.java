@@ -73,7 +73,7 @@ public final class HordeDraw {
    private static long indices;
    private static long paletteFloats;
    private static long charNs;
-   private static int frameMode;
+   static int frameMode; // (FrameCapture tags captured frames with it)
    private static int runs;
    private static int maxRun;
    private static int curRun;
@@ -143,6 +143,9 @@ public final class HordeDraw {
     * characters only). Mode 3 issues one extra attribute push / pop pair.
     */
    public static boolean modelBegin(TextureDraw.GenericDrawer drawer) {
+      if (HordeStateDump.ON) {
+         HordeStateDump.stockBefore(drawer); // (dev: the GL state before / after a stock zombie draw)
+      }
       if (mode == 0 && !LOG) {
          return true;
       }
@@ -191,6 +194,9 @@ public final class HordeDraw {
 
    /** Render thread, after the drawer rendered (paired with a true {@link #modelBegin}). */
    public static void modelEnd(TextureDraw.GenericDrawer drawer) {
+      if (HordeStateDump.ON) {
+         HordeStateDump.stockAfter();
+      }
       if (t0 != 0L) {
          charNs += System.nanoTime() - t0;
          t0 = 0L;

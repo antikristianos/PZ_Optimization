@@ -1414,6 +1414,9 @@ public final class HordeBatch {
          checkDrawSet = ssboDraws;
          checkPalSet = ssboPalette;
       }
+      if (HordeStateDump.ON) {
+         HordeStateDump.batchBefore(pendingMode); // (dev: the GL state before / after the run)
+      }
       GpuSections.markNow("horde.batch", false); // (gpuSections: the batch's own GPU time, nested in moving)
       if (units && check) {
          unitsSave(); // dev check: the units' bindings, compared after the pop
@@ -1578,6 +1581,9 @@ public final class HordeBatch {
       GL11.glAlphaFunc(516, 0.0F);
       GLStateRenderThread.restore();
       GpuSections.markNow("horde.batch", true);
+      if (HordeStateDump.ON) {
+         HordeStateDump.batchAfter();
+      }
       statFlushes++;
       runStart = frameDraws;
       runPaletteStart = framePalette;
