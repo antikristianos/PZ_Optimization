@@ -175,7 +175,7 @@ public final class ActionEval {
    }
 
    public static void exitSnapshot() {
-      SNAPSHOT.remove();
+      SNAPSHOT.set(null); // tail pass: keeps the thread's map entry for the next enterSnapshot (remove + set allocated an Entry per evaluation, 3.5 MB/s); get() reads null either way
    }
 
    /** Game thread: from here on eligible zombies stop their postUpdateAnimating after the turning flags and queue here. */

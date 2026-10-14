@@ -88,6 +88,7 @@ public final class IsoChunkMap {
 
    public IsoChunkMap(IsoCell cell) {
       this.cell = cell;
+      pzopt.CellObjectSet.install(cell); // pzopt: animalLosWalk (tail pass), the cell's still-empty object set swapped for the counting subclass
       WorldReuserThread.instance.finished = false;
       this.chunksSwapB = new IsoChunk[chunkGridWidth * chunkGridWidth];
       this.chunksSwapA = new IsoChunk[chunkGridWidth * chunkGridWidth];

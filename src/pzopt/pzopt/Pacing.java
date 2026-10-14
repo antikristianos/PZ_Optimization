@@ -95,6 +95,10 @@ public final class Pacing {
    private static final long[] queryFrame = new long[QUERIES];
    private static final long[] querySim = new long[QUERIES];
    private static boolean timestamps;
+   // pacingQueryBuffer (tail2 pass 2026-10-13): the timestamps land in a persistently mapped buffer (GL_QUERY_BUFFER,
+   // ARB_query_buffer_object) and are read from client memory, so the per-frame result polling no longer asks the driver
+   // (each glGetQueryObject waited for NVIDIA's threaded driver queue: up to 9 ms render-thread stalls in texture-heavy frames)
+   private static QueryBuf queryBuf;
    private static boolean glChecked;
    private static long gpuToCpuNs;
    private static long lastCalibrationNs;
@@ -117,6 +121,7 @@ public final class Pacing {
       GtAb.frame(); // devGtAlternate: this frame's A/B phase
       TorchSource.frameStart(); // devTorchSourceCycle: this frame's variant
       VisBlink.frame(); // devVisBlinkTrace: the last frame's visibility blinks
+      AnimalPreload.drain(); // animalPreload (tail pass): preloaded action groups into the game's map
       stepStartNs = nowNs;
       capIntervalNs = intervalNs;
    }
@@ -281,6 +286,7 @@ public final class Pacing {
          if (timestamps) {
             queryIds = new int[QUERIES];
             GL15.glGenQueries(queryIds);
+            queryBuf = QueryBuf.create(QUERIES, "pacing");
             Arrays.fill(queryFrame, -1L);
             calibrate(System.nanoTime());
          } else {
@@ -318,20 +324,35 @@ public final class Pacing {
          return; // still pending from QUERIES frames ago (GPU far behind): skip this frame
       }
       GL33.glQueryCounter(queryIds[slot], GL33.GL_TIMESTAMP);
+      if (queryBuf != null) { // pacingQueryBuffer: the GPU writes the result into the slot once it is there
+         queryBuf.request(slot, queryIds[slot]);
+      }
       queryFrame[slot] = frame;
       querySim[slot] = frameSimNs;
    }
 
    private static void collectQueries(long now) {
-      if (now - lastCalibrationNs > 1_000_000_000L) {
+      if (now - lastCalibrationNs > 8_000_000_000L) { // tail pass: every 8 s, was 1 s: glGetInteger64(GL_TIMESTAMP) waits for NVIDIA's threaded driver queue (a render-thread stall in 15 of the slow frames of run t1-jfrn1); the GPU and CPU clocks drift far less than a microsecond in 8 s
          calibrate(now);
       }
       for (int i = 0; i < QUERIES; i++) {
          long f = queryFrame[i];
-         if (f == -1L || GL15.glGetQueryObjecti(queryIds[i], GL15.GL_QUERY_RESULT_AVAILABLE) == 0) {
+         if (f == -1L) {
             continue;
          }
-         long done = GL33.glGetQueryObjecti64(queryIds[i], GL15.GL_QUERY_RESULT) + gpuToCpuNs;
+         long done;
+         if (queryBuf != null) { // pacingQueryBuffer: read from client memory, no driver call
+            long v = queryBuf.get(i);
+            if (v == -1L) {
+               continue;
+            }
+            done = v + gpuToCpuNs;
+         } else {
+            if (GL15.glGetQueryObjecti(queryIds[i], GL15.GL_QUERY_RESULT_AVAILABLE) == 0) {
+               continue;
+            }
+            done = GL33.glGetQueryObjecti64(queryIds[i], GL15.GL_QUERY_RESULT) + gpuToCpuNs;
+         }
          queryFrame[i] = -1L;
          if (effectiveMode() == GPU && querySim[i] != 0L) {
             addLag(done - querySim[i]);

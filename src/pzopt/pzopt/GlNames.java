@@ -20,7 +20,9 @@ import org.lwjgl.opengl.GL30;
 public final class GlNames {
    public static final boolean ON = Config.GL_NO_SYNC && Overrides.enabled();
    /** bakeNoSync: the pools also serve the bake passes' own GL objects (AO, sway), whether or not glNoSync is on. */
-   public static final boolean POOLS = (Config.GL_NO_SYNC || Config.BAKE_NO_SYNC) && Overrides.enabled();
+   public static final boolean POOLS = (Config.GL_NO_SYNC || Config.BAKE_NO_SYNC || Config.COMBINER_POOL) && Overrides.enabled();
+   /** combinerPool (tail2): TextureCombiner's composites take pooled names while this is set (render thread), glNoSync or not. */
+   public static boolean combinerScope;
    private static final int[] textures = new int[Math.max(8, Config.GL_NAME_POOL)];
    private static final int[] framebuffers = new int[Math.max(4, Config.GL_NAME_POOL / 4)];
    private static final int[] queries = new int[64];
@@ -104,13 +106,21 @@ public final class GlNames {
 
    /** A texture name for TextureID.generateHwId. */
    public static int texture() {
-      if (ON && texN > 0 && Thread.currentThread() == owner) {
+      if ((ON || combinerScope) && texN > 0 && Thread.currentThread() == owner) {
          texServed++;
          return textures[--texN];
       }
       texFallback++;
+      if (GtAb.TIMING) { // tail pass (devFrameSections): the driver round trip's time, read per game frame by GtAb
+         long t0 = System.nanoTime();
+         int id = GL11.glGenTextures();
+         genTexNanos += System.nanoTime() - t0;
+         return id;
+      }
       return GL11.glGenTextures();
    }
+
+   public static volatile long genTexNanos; // tail pass: render thread's time in glGenTextures round trips (dev timing only)
 
    /** A framebuffer name for TextureFBO (core GL 3.0 framebuffers only; {@code core} false = the EXT / ARB path). */
    public static int framebuffer(boolean core) {

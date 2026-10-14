@@ -50,6 +50,8 @@ public final class GtAb {
    public static final long TILE_MODELS = 1L << 37; // tileRecordModels (render-phase pass f8-render1, 2026-10-13)
    public static final long TILE_WEATHER = 1L << 38; // tileRecordWeather (render-phase pass f8-render1, 2026-10-13)
    public static final long TILE_FLOORS = 1L << 34; // tileRecordFloors (render-phase pass f8-render1, 2026-10-13)
+   public static final long ANIMAL_WALK = 1L << 56; // animalLosWalk (tail pass 2026-10-13; tail1 takes bits 56-63, named in parse())
+   public static final long COMBINER = 1L << 57; // combinerPool (tail2): keep storage, reserve, budget retention
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
       "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "nearVehicleGrid", "headOnWorker", "entityUpdatePlayerFirst", "frameSpin", "separateMemo", "entityUpdateNearPlayer", "entityUpdateMoreStates", "ragdollGate", "bodyModelCache", "bakeRecordParallel", "tileRecordFloors", "tileRecordMoveRef", "renderLastFast", "tileRecordModels", "tileRecordWeather"};
@@ -79,6 +81,12 @@ public final class GtAb {
             }
          }
          m |= ZombAb.bit(k); // zombie redesign (f8-zomb2): its keys on bits 40-47
+         if (k.equals("animalLosWalk")) { // tail pass: bits 56-63 by name
+            m |= ANIMAL_WALK;
+         }
+         if (k.equals("combinerPool")) { // tail2
+            m |= COMBINER;
+         }
       }
       return m;
    }
@@ -99,7 +107,7 @@ public final class GtAb {
     * render thread), and the process column shows where the work went.
     */
    public static void frame() {
-      if (Config.DEV_GT_ALTERNATE <= 0 || MASK == 0) {
+      if (!TIMING) { // tail pass: devFrameSections writes the rows without an alternation
          return;
       }
       long now = System.currentTimeMillis();
@@ -109,6 +117,9 @@ public final class GtAb {
          }
          t0 = now;
          Log.info("gt ab: alternating every " + Config.DEV_GT_ALTERNATE + " ms from epoch_ms " + now + " (on first), keys " + Config.DEV_GT_ALTERNATE_KEYS);
+      }
+      if (Config.DEV_FRAME_SECTIONS) { // tail pass: the OS columns of the frame that just ended (deltas since its start)
+         osSample();
       }
       long cpu = THREADS.getCurrentThreadCpuTime();
       long proc = OS instanceof com.sun.management.OperatingSystemMXBean sun ? sun.getProcessCpuTime() : 0L;
@@ -129,6 +140,9 @@ public final class GtAb {
       lastCpu = cpu;
       lastProc = proc;
       lastWall = wall;
+      if (Config.DEV_GT_ALTERNATE <= 0 || MASK == 0) { // tail pass: devFrameSections alone, every frame "on"
+         return;
+      }
       long period = (now - t0) / Config.DEV_GT_ALTERNATE;
       // ABBA (devGtAbba, default on): on, off, off, on, on, off, ... so a scene that grows heavier along the route weighs
       // both halves alike; plain alternation put every off half after its on half (an A/A placebo read 0.6 ms / 7 points
@@ -142,12 +156,85 @@ public final class GtAb {
       }
    }
 
+   // tail pass (devFrameSections): /proc readers, game thread only
+   private static java.io.RandomAccessFile schedFile, statFile;
+   private static final byte[] PROC_BUF = new byte[1024];
+   private static long lastRunq = -1, lastMin = -1, lastMaj = -1;
+   private static boolean osFailed;
+
+   private static void osSample() {
+      if (osFailed) {
+         return;
+      }
+      try {
+         if (schedFile == null) {
+            schedFile = new java.io.RandomAccessFile("/proc/thread-self/schedstat", "r");
+            statFile = new java.io.RandomAccessFile("/proc/self/stat", "r");
+         }
+         schedFile.seek(0L);
+         int n = schedFile.read(PROC_BUF);
+         long runq = field(PROC_BUF, n, 0, 1); // "run_ns wait_ns slices": the second number
+         statFile.seek(0L);
+         n = statFile.read(PROC_BUF);
+         int close = 0;
+         for (int i = n - 1; i > 0; i--) {
+            if (PROC_BUF[i] == ')') {
+               close = i + 2;
+               break;
+            }
+         }
+         long min = field(PROC_BUF, n, close, 7); // after "pid (comm) ": state ppid pgrp session tty tpgid flags minflt cminflt majflt
+         long maj = field(PROC_BUF, n, close, 9);
+         SECTION_NS[S_HANDOFF_WAIT] = zombie.core.SpriteRenderer.getWaitTime();
+         long bw = FrameBatch.waitNanos + FrameBatch.asyncJoinNanos;
+         long gt = GlNames.genTexNanos;
+         if (lastBatchWait >= 0) {
+            SECTION_NS[S_BATCH_WAIT] = bw - lastBatchWait;
+            SECTION_NS[S_RT_GENTEX] = gt - lastGenTex;
+         }
+         long nt = zombie.core.textures.Texture.totalTextureID;
+         if (lastNewTex >= 0) {
+            SECTION_NS[C_NEW_TEX] = nt - lastNewTex;
+         }
+         lastNewTex = nt;
+         lastBatchWait = bw;
+         lastGenTex = gt;
+         if (lastRunq >= 0) {
+            SECTION_NS[C_RUNQ] = runq - lastRunq;
+            SECTION_NS[C_MINFLT] = min - lastMin;
+            SECTION_NS[C_MAJFLT] = maj - lastMaj;
+         }
+         lastRunq = runq;
+         lastMin = min;
+         lastMaj = maj;
+      } catch (Throwable t) {
+         osFailed = true;
+         Log.warn("gt ab: no /proc frame counters: " + t);
+      }
+   }
+
+   /** The index-th space-separated decimal number of buf[from, n). */
+   private static long field(byte[] buf, int n, int from, int index) {
+      int i = from;
+      for (int k = 0; k < index; k++) {
+         while (i < n && buf[i] != ' ') {
+            i++;
+         }
+         i++;
+      }
+      long v = 0;
+      while (i < n && buf[i] >= '0' && buf[i] <= '9') {
+         v = v * 10 + (buf[i++] - '0');
+      }
+      return v;
+   }
+
    private static void flush() {
       try {
          if (out == null) {
             java.io.File f = new java.io.File(zombie.ZomboidFileSystem.instance.getCacheDir(), "pzopt-gtab.out");
             out = new java.io.BufferedWriter(new java.io.FileWriter(f));
-            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice rt_handoff rt_prepop rt_tilesInternal rt_renderlast rt_weather tl_floor" + ZombTiming.HEADER + "  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
+            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice rt_handoff rt_prepop rt_tilesInternal rt_renderlast rt_weather tl_floor runq_ns minflt majflt handoff batchWait rtGenTex newTex" + ZombTiming.HEADER + "  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
                + Config.DEV_GT_ALTERNATE_KEYS + ")\n");
          }
          out.write(LOG.toString());
@@ -176,9 +263,17 @@ public final class GtAb {
    // clear (prePopulating: the last use's postRender), renderTilesInternal, the renderlast loops, the weather fx, the
    // translucent floor passes
    public static final int S_HANDOFF = 36, S_PREPOP = 37, S_TILES_INTERNAL = 38, S_RENDERLAST = 39, S_WEATHER = 40, S_TL_FLOOR = 41;
-   private static final int SECTIONS = 42;
+   // tail pass 2026-10-13 (devFrameSections): per frame, the game thread's run-queue wait (ns runnable but not on a CPU,
+   // /proc/thread-self/schedstat) and the process's minor / major page faults (/proc/self/stat), counts not ns
+   public static final int C_RUNQ = 42, C_MINFLT = 43, C_MAJFLT = 44;
+   // tail pass: the frame's hand-off wait (SpriteRenderer.pushFrameDown), the game thread's frame-batch join waits
+   // (FrameBatch.waitNanos + asyncJoinNanos), the render thread's glGenTextures round trips since the last frame
+   public static final int S_HANDOFF_WAIT = 45, S_BATCH_WAIT = 46, S_RT_GENTEX = 47; // integ-r2: render1 took 36-41 (its S_HANDOFF is the timed pushFrameDown, column rt_handoff)
+   public static final int C_NEW_TEX = 48; // tail pass: textures created since the last frame (Texture.totalTextureID, render thread)
+   private static final int SECTIONS = 49;
+   private static long lastBatchWait = -1, lastGenTex = -1, lastNewTex = -1;
    private static final long[] SECTION_NS = new long[SECTIONS];
-   public static final boolean TIMING = Config.DEV_GT_ALTERNATE > 0 && MASK != 0;
+   public static final boolean TIMING = Config.DEV_GT_ALTERNATE > 0 && MASK != 0 || Config.DEV_FRAME_SECTIONS; // tail pass: or devFrameSections
 
    /** Game thread: a section starts (0 when no alternation runs). */
    public static long begin() {

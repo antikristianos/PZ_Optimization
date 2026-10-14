@@ -7133,7 +7133,7 @@ which spreads both ways (zomb2-br-*).
   postupdateEligibleOnWorker, postupdateVehicleOnWorker, postupdateClean, isLocalFast, ecsValuesCache), with tab entries;
   entityUpdateStream and entityUpdateAlerted off pending the maintainer; separateAsync off (rig differences).
 
-### Game-thread render phase on the Louisville horde (2026-10-13, worktree f8-render1): tileRecordFloors, tileRecordMoveRef
+## Game-thread render phase on the Louisville horde (2026-10-13, worktree f8-render1): tileRecordFloors, tileRecordMoveRef
 
 Goal (maintainer, Louisville locked at 120): the game thread's render phase (`GameWindow.renderInternal`) at most 1.5 ms a
 frame. Both changes extend tileRecordParallel (off by default) and only act under it.
@@ -7193,3 +7193,67 @@ frame. Both changes extend tileRecordParallel (off by default) and only act unde
   a DrawModel entry (a recorded door model) could miss the frame's postRender, leaving its drawer on the entry object for the
   next StartShader (devDrawListCheck "StartShader drawer" differences, r1-fcheck). The check's rollback also clears the rolled
   back entries' drawers.
+
+## Frame-time tail pass (2026-10-13, worktree `f8-tail1`): animal LOS walk, animal preload, GL syncs
+
+Louisville horde, uncapped; the per-frame attribution tool is `harness/slowframes.py` (sources: pzopt-pacing.out,
+pzopt-gtab.out with `devFrameSections`, asprof / JFR samples, gc.log, the bake / chunk logs).
+- `IsoAnimal.updateLOS` / `pzoptUpdateLosWalk` (`animalLosWalk`, off; exact): the animalLosFast fold walk over
+  `pzopt.AnimalLosWalk`'s array of the cell's moving objects in the set's own iteration order, rebuilt whenever the set
+  changed (`pzopt.CellObjectSet`: `IsoCell.objectList` swapped, while still empty, for a HashSet subclass that counts adds;
+  any removal lowers the size, so `(version, size)` names an unchanged set). Every test reads the live values stock reads; a
+  zombie whose fold tick cannot change an idle animal (`spottedChr` null, `lastAlerted` exactly 0) is passed after reading
+  its x / y only (beyond 10.01 squares on an axis stock's distance is above 10); a non-idle animal's ticks are applied one by
+  one where the fold applies them; a set change inside a `spotted()` call throws as stock's iterator does.
+  `devAnimalLosCheck` lists the stock fold's events from the live set first and replays them on the walk's recorded states:
+  45,588 walks, 0 mismatches (run t1-diag2). In-run A/B (`devGtAlternate` 230 ms, t1-gl1): animalLos 0.393 -> 0.248 ms a frame.
+- `IsoChunkMap(IsoCell)`: `pzopt.CellObjectSet.install(cell)` (the swap above; the cell's field initializer has run, its
+  constructor has not added anything yet).
+- `GameLoadingState`: `pzopt.AnimalPreload.start()` after `BootAsync.joinAnimSets()` (`animalPreload`, off): every animal
+  type's animation set (`AnimationSet.GetAnimationSet`, synchronized in our override) and action group (ActionGroup's own
+  constructor and load on a private instance, after ActionContext's class init registered the condition factories) are
+  parsed on a background thread; `Pacing.stepStart` hands the groups to ActionGroup's map once the loader thread has ended,
+  only for names the game has not loaded itself. Stock parsed them on the game thread in the chunk hand-off that first
+  spawned the type (`IsoChunk.addRatsAfterLoading`): 15-37 ms frames.
+- pzopt only (no override): `TexBcGpu.mips` / `encode` take the current program from ShaderHelper's record
+  (`GlState.currentProgram()`, weatherNoGlGet) instead of `glGetInteger(GL_CURRENT_PROGRAM)`: with NVIDIA's threaded driver
+  each glGet waited for the driver queue, 18-36 ms in the frames that load new zombie clothing (JFR native samples, t1-jfrn1:
+  140 of the call's 165 samples were in frames over 16.7 ms). `LightingDefer.end` / `ActionEval.exitSnapshot`:
+  `ThreadLocal.set(null)` instead of `remove()` (each remove + set allocated a ThreadLocalMap entry, 16 MB/s of the horde's
+  135 MB/s). `GtAb` / `devFrameSections`: per-frame rows without an alternation, plus the game thread's run-queue wait,
+  page faults, the frame hand-off wait, the frame-batch join wait and the render thread's glGenTextures time.
+- `TextureID.generateHwId`: `TexCompress.pollStagingIfLow()` instead of `pollStaging()` (the staging fences are polled per
+  new texture only while less than a quarter of the 128 MB staging buffer is free; RenderThread still polls once a frame
+  after the swap): each glClientWaitSync was a threaded-driver sync per new texture. `devTexCensus` (dev, off):
+  `pzopt.TexCensus.add` counts created textures by folder and size (Louisville route: ~3,600 created in 25 s, ~2,900 of
+  them generated 256-1023 px textures without a path: TextureCombiner's character / item composites; the frames that
+  create them carry the hand-off stalls).
+- `Pacing.collectQueries` calibrates the GPU clock every 8 s instead of every second (glGetInteger64(GL_TIMESTAMP) syncs).
+
+## Frame-time tail pass 2 (2026-10-13, worktree `f8-tail1`, agent tail2): TextureCombiner composites
+
+- `zombie.core.textures.TextureCombiner` (new override, `combinerPool`, off; `devCombinerCensus`, dev): the composites a
+  zombie's body and clothing are drawn with (blood, dirt, holes, tints) come from `createTexture` / `releaseTexture`. With
+  the key on: `releaseTexture` keeps a released composite when stock would (fewer than 100 free of its size) or while the
+  free composites' bytes stay under the VRAM budget (`pzopt.CombinerPool.budgetBytes`: `combinerPoolMb`, 256 MB, scaled
+  down linearly on GPUs under 6 GB, half when the size is unknown), and destroys it otherwise as stock does;
+  `createTexture` (`combinerKeepStorage`) no longer re-specifies the storage of a reused or new composite with
+  `glTexImage2D(null)` (same size and format as it already has; every combine clears the whole framebuffer first, scissor
+  off) but still sets stock's clamp / linear parameters. New `pzoptAfterSwap` (render thread, from `RenderThread` right
+  after the swap and `GlNames.refill`): tops up a reserve of free composites of every size that was asked for
+  (`combinerReserve` a size, at most `combinerReservePerFrame` a frame, same budget rule), each made with stock's reuse
+  parameters and marked (`CombinerPool.READY`) so `createTexture` does not set them again; reserve composites sit under
+  the released ones, which are taken first as in stock (LIFO). The first composite of a size keeps stock's path (its repeat
+  wrap included). The census counts requests / reuses / new / reserve / released / destroyed / free per size and the
+  render-thread time of `combine`, a console line every 10 s.
+- `RenderThread`: the `TextureCombiner.instance.pzoptAfterSwap()` call after the swap.
+- `TextureCombiner.combine` / `createTexture` (`devCombinerCheck=N`, dev): every Nth combine into a reused composite is drawn
+  again into a new composite whose storage is specified the stock way (`CombinerPool.forceFresh`), both are read back and
+  compared byte for byte (run t2-ccheck: 1,550 compared, 0 mismatches). The keep-storage / reserve / budget behaviours read
+  `CombinerPool.active()`, so `devGtAlternateKeys=combinerPool` switches them inside one run (GtAb bit 57).
+- `TextureCombiner.createTexture` (b2): with the key on, new composites take a pooled GL name (`GlNames.combinerScope`; the
+  name pool refills after the swap whenever combinerPool is on), not a glGenTextures round trip.
+- pzopt only: `pacingQueryBuffer` (off): `pzopt.QueryBuf` writes the Pacing GPU timestamps and the overlay's GPU timer
+  results into a persistently mapped GL_QUERY_BUFFER (GL 4.4 / ARB_query_buffer_object) and reads them from client memory
+  instead of polling `glGetQueryObject(GL_QUERY_RESULT_AVAILABLE)` every frame (a threaded-driver sync; 9.4 ms render-thread
+  stall in run t2-cc-on).

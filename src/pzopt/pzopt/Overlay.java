@@ -129,6 +129,7 @@ public final class Overlay {
    // --- GPU timer queries (render thread only) ---
    private static int gpuState; // 0 untried, 1 running, -1 unavailable
    private static final int[] queryIds = new int[QUERIES];
+   private static QueryBuf queryBuf; // pacingQueryBuffer (tail2)
    private static final long[] queryFrame = new long[QUERIES]; // head value the query belongs to, -1 free
    private static int queryNext;
    private static int activeQuery = -1;
@@ -318,6 +319,7 @@ public final class Overlay {
             }
             GL15.glGenQueries(queryIds);
             Arrays.fill(queryFrame, -1L);
+            queryBuf = QueryBuf.create(QUERIES, "overlay"); // pacingQueryBuffer (tail2)
             gpuState = 1;
          }
          collectQueries();
@@ -340,6 +342,9 @@ public final class Overlay {
       }
       try {
          GL15.glEndQuery(GL33.GL_TIME_ELAPSED);
+         if (queryBuf != null) { // pacingQueryBuffer (tail2): the result lands in mapped memory, no per-frame polling
+            queryBuf.request(activeQuery, queryIds[activeQuery]);
+         }
          queryFrame[activeQuery] = head;
          queryNext = (activeQuery + 1) % QUERIES;
       } catch (Throwable t) {
@@ -356,10 +361,18 @@ public final class Overlay {
          if (f == -1L) {
             continue;
          }
-         if (GL15.glGetQueryObjecti(queryIds[i], GL15.GL_QUERY_RESULT_AVAILABLE) == 0) {
-            continue;
+         long ns;
+         if (queryBuf != null) { // pacingQueryBuffer (tail2): read from client memory
+            ns = queryBuf.get(i);
+            if (ns == -1L) {
+               continue;
+            }
+         } else {
+            if (GL15.glGetQueryObjecti(queryIds[i], GL15.GL_QUERY_RESULT_AVAILABLE) == 0) {
+               continue;
+            }
+            ns = GL33.glGetQueryObjecti64(queryIds[i], GL15.GL_QUERY_RESULT);
          }
-         long ns = GL33.glGetQueryObjecti64(queryIds[i], GL15.GL_QUERY_RESULT);
          queryFrame[i] = -1L;
          if (f < head) { // slot already written by onSwap: fill it in (still within the ring)
             gpuMs[(int)(f & (RING - 1))] = ns / 1e6f;
