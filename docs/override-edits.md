@@ -7636,3 +7636,12 @@ The maintainer turned four round-2 / round-3 keys on by default (Config defaults
   zombie spawns (when lootDefer / zombieSpawnSpread queue them; both stay off by default) run in the step's slack before the
   limiter parks, each while its learned cost fits. Inert uncapped. Tab: Driving > "Chunk streaming", entry "Deferred work in
   the frame cap's spare time".
+
+## slackWork counts game steps, not limiter passes (2026-10-14)
+
+`SlackWork.run` is called from `Pacing.limiterWait`, and the stock limiter loop calls that on every pass: it parks, then
+spins the last `limiterSpinUs`. So `SlackWork.frame()` advanced once per pass, not per step. Job ages and
+`slackMaxWaitFrames` (600, meant as about 5 s at 120) were therefore reached many times sooner than intended, and more
+than one forced job could run per step. The `slack` total was also summed per pass: integ3-cap2 logged 199 s of slack in
+about 44 s of play. Now only the first call of a game step (keyed by `Pacing.stepStartNs()`) counts a frame and runs jobs.
+A later pass of the same step has less time left than the first had, so nothing that would have fitted is lost.

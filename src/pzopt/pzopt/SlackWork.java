@@ -33,6 +33,7 @@ public final class SlackWork {
    public static long jobs, forced, slackNs, usedNs, overruns, overruns1ms, overrunNs, failures;
    private static final java.util.HashMap<String, Integer> FORCED = new java.util.HashMap<>();
    private static long lastLogNs;
+   private static long lastStepNs = Long.MIN_VALUE;
 
    public static void register(Producer p) {
       if (!PRODUCERS.contains(p)) {
@@ -50,8 +51,17 @@ public final class SlackWork {
       return frame;
    }
 
-   /** Game thread, at the start of the limiter wait: run what fits before {@code deadlineNs}. */
+   /**
+    * Game thread, at the start of the limiter wait: run what fits before {@code deadlineNs}. The stock limiter loop calls
+    * the wait on every pass (park, then spin), so only the first call of a game step counts a frame and runs jobs: a later
+    * pass of the same step has less time left than the first had.
+    */
    public static void run(long deadlineNs) {
+      long step = Pacing.stepStartNs();
+      if (step == lastStepNs) {
+         return;
+      }
+      lastStepNs = step;
       frame++;
       if (!active() || PRODUCERS.isEmpty()) {
          return;
