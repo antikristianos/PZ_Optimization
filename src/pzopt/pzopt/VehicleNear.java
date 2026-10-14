@@ -35,6 +35,11 @@ public final class VehicleNear {
    private static final boolean KEY = Config.NEAR_VEHICLE_GRID;
    private static final boolean CHECK = Config.DEV_NEAR_VEHICLE_CHECK;
 
+   /** The change counter (separateAsync, f8-zomb2: a chunk-grid or vehicle-list change under the asynchronous separation). */
+   public static int mods() {
+      return MODS.get();
+   }
+
    /** Something a grid was built from changed: a chunk's vehicle list or the chunk map. Any thread. */
    public static void changed() {
       MODS.incrementAndGet();

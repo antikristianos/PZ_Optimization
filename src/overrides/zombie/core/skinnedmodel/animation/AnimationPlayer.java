@@ -94,7 +94,7 @@ public final class AnimationPlayer extends PooledObject {
    private final Vector3f grappleOffset = new Vector3f();
    private AnimationPlayerRecorder recorder;
    private static final ThreadLocal<AnimationTrack[]> tempTracks = ThreadLocal.withInitial(() -> new AnimationTrack[0]);
-   private static final ThreadLocal<Vector2> tempo = ThreadLocal.withInitial(Vector2::new); // pzopt: per thread (pzopt.AnimBatch)
+   private static final pzopt.Tl<Vector2> tempo = new pzopt.Tl<>(Vector2::new); // pzopt: per thread (pzopt.AnimBatch)
    private RagdollController ragdollController;
    private final org.lwjgl.util.vector.Vector3f ragdollWorldPosition = new org.lwjgl.util.vector.Vector3f();
    private final Quaternion ragdollWorldRotation = new Quaternion();
@@ -773,7 +773,7 @@ public final class AnimationPlayer extends PooledObject {
       return data.pzoptPalette;
    }
 
-   private static final ThreadLocal<SkinningData[]> pzoptSkinnedTo = ThreadLocal.withInitial(() -> new SkinningData[16]);
+   private static final pzopt.Tl<SkinningData[]> pzoptSkinnedTo = new pzopt.Tl<>(() -> new SkinningData[16]); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
 
    /** pzopt: animBatchAsync, set by the game thread when this player's bone math is queued, cleared when its batch is joined. */
    public boolean pzoptInFlight;
@@ -2163,7 +2163,7 @@ public final class AnimationPlayer extends PooledObject {
 
    private static class L_applyTwistBone {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_applyTwistBone> TL = ThreadLocal.withInitial(AnimationPlayer.L_applyTwistBone::new);
+      static final pzopt.Tl<AnimationPlayer.L_applyTwistBone> TL = new pzopt.Tl<>(AnimationPlayer.L_applyTwistBone::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final Matrix4f twistParentBoneTrans = new Matrix4f();
       final Matrix4f twistParentBoneTransInv = new Matrix4f();
       final Matrix4f twistBoneTrans = new Matrix4f();
@@ -2181,14 +2181,14 @@ public final class AnimationPlayer extends PooledObject {
 
    private static class L_getBoneModelTransform {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_getBoneModelTransform> TL = ThreadLocal.withInitial(AnimationPlayer.L_getBoneModelTransform::new);
+      static final pzopt.Tl<AnimationPlayer.L_getBoneModelTransform> TL = new pzopt.Tl<>(AnimationPlayer.L_getBoneModelTransform::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final Matrix4f boneTransform = new Matrix4f();
       final Matrix4f modelTransform = new Matrix4f();
    }
 
    private static final class L_getTrackTransform {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_getTrackTransform> TL = ThreadLocal.withInitial(AnimationPlayer.L_getTrackTransform::new);
+      static final pzopt.Tl<AnimationPlayer.L_getTrackTransform> TL = new pzopt.Tl<>(AnimationPlayer.L_getTrackTransform::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final Matrix4f Pa = new Matrix4f();
       final Matrix4f mA = new Matrix4f();
       final Matrix4f mB = new Matrix4f();
@@ -2201,7 +2201,7 @@ public final class AnimationPlayer extends PooledObject {
 
    private static class L_getUnweightedBoneTransform {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_getUnweightedBoneTransform> TL = ThreadLocal.withInitial(AnimationPlayer.L_getUnweightedBoneTransform::new);
+      static final pzopt.Tl<AnimationPlayer.L_getUnweightedBoneTransform> TL = new pzopt.Tl<>(AnimationPlayer.L_getUnweightedBoneTransform::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final org.lwjgl.util.vector.Vector3f pos = new org.lwjgl.util.vector.Vector3f();
       final Quaternion rot = new Quaternion();
       final org.lwjgl.util.vector.Vector3f scale = new org.lwjgl.util.vector.Vector3f();
@@ -2209,7 +2209,7 @@ public final class AnimationPlayer extends PooledObject {
 
    private static class L_getUnweightedModelTransform {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_getUnweightedModelTransform> TL = ThreadLocal.withInitial(AnimationPlayer.L_getUnweightedModelTransform::new);
+      static final pzopt.Tl<AnimationPlayer.L_getUnweightedModelTransform> TL = new pzopt.Tl<>(AnimationPlayer.L_getUnweightedModelTransform::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final Matrix4f boneTransform = new Matrix4f();
    }
 
@@ -2219,7 +2219,7 @@ public final class AnimationPlayer extends PooledObject {
 
    private static final class L_updateBoneAnimationTransform {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.L_updateBoneAnimationTransform> TL = ThreadLocal.withInitial(AnimationPlayer.L_updateBoneAnimationTransform::new);
+      static final pzopt.Tl<AnimationPlayer.L_updateBoneAnimationTransform> TL = new pzopt.Tl<>(AnimationPlayer.L_updateBoneAnimationTransform::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       final Quaternion rot = new Quaternion();
       final org.lwjgl.util.vector.Vector3f pos = new org.lwjgl.util.vector.Vector3f();
       final org.lwjgl.util.vector.Vector3f scale = new org.lwjgl.util.vector.Vector3f();
@@ -2288,7 +2288,7 @@ public final class AnimationPlayer extends PooledObject {
 
    private static final class updateMultiTrackBoneTransforms_DeferredMovementOnly {
       // pzopt: one scratch set per thread; the standard-animation math of a zombie runs on a worker (pzopt.AnimBatch)
-      static final ThreadLocal<AnimationPlayer.updateMultiTrackBoneTransforms_DeferredMovementOnly> TL = ThreadLocal.withInitial(AnimationPlayer.updateMultiTrackBoneTransforms_DeferredMovementOnly::new);
+      static final pzopt.Tl<AnimationPlayer.updateMultiTrackBoneTransforms_DeferredMovementOnly> TL = new pzopt.Tl<>(AnimationPlayer.updateMultiTrackBoneTransforms_DeferredMovementOnly::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       int[] boneIndices = new int[60];
    }
 }

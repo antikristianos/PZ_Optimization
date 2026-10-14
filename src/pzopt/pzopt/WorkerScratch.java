@@ -32,7 +32,7 @@ public final class WorkerScratch {
       }
    }
 
-   private static final ThreadLocal<Slots> SLOTS = ThreadLocal.withInitial(Slots::new);
+   private static final Tl<Slots> SLOTS = new Tl<>(Slots::new);
 
    /** The static vector on any thread but a frame worker; there, this thread's vector for {@code slot}. */
    public static Vector2 v2(Vector2 shared, int slot) {

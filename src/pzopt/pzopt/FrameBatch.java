@@ -33,6 +33,9 @@ public final class FrameBatch {
       public boolean noInterpolate; // animatorParallel: this thread's keyframe sampling behaves as interpolateAnims=false
       public AnimCapture capture; // animatorParallel: the character whose anim events this thread is capturing, or null
       public Object drawRecorder; // tileRecordParallel: the DrawRecorder of the tile draw unit this thread is recording, or null
+      public Object[] tl = new Object[64];
+      int index; // frameThreadsAlt: this worker's number (a batch uses workers 0..limit-1) // pzopt.Tl: this worker's thread-local values (zombie redesign, f8-zomb2)
+      public Object zCurrent; // entityUpdateParallel (zombie redesign, f8-zomb2): the entity this worker's flight task updates (UpdateBatch.CURRENT without the ThreadLocal lookup)
 
       Worker(Runnable r, String name) {
          super(r, name);
@@ -40,6 +43,14 @@ public final class FrameBatch {
    }
 
    public static final int THREADS = Math.max(1, Math.min(Config.FRAME_THREADS, Config.CPUS - 1));
+   // frameThreadsAlt (zombie redesign, f8-zomb2): the worker count of the alternation's "on" half (bit 40, in-run A/B of the
+   // pool size); the pool starts the larger of the two and a batch only wakes its own count's workers into work
+   private static final int ALT = Config.FRAME_THREADS_ALT > 0 ? Math.max(1, Math.min(Config.FRAME_THREADS_ALT, Config.CPUS - 1)) : 0;
+   private static final int SPAWN = Math.max(THREADS, ALT);
+
+   private static int batchLimit() {
+      return ALT > 0 && ZombAb.on(ZombAb.THREADS_ALT) ? ALT : THREADS;
+   }
 
    /**
     * One batch: its runner, size and counters in one object, published to the workers through {@link #current}. A worker
@@ -49,7 +60,9 @@ public final class FrameBatch {
     */
    private static final class Batch {
       final Runner runner;
-      final int count;
+      volatile int count; // entityUpdateStream (zombie redesign, f8-zomb2): grows while the batch is a stream, final once sealed
+      volatile boolean sealed; // false only for a stream the game thread is still publishing tasks into
+      final int limit = batchLimit(); // frameThreadsAlt: workers past this many leave the batch to the others
       final AtomicInteger cursor = new AtomicInteger();
       final AtomicInteger finished = new AtomicInteger();
       volatile Throwable failure;
@@ -57,12 +70,39 @@ public final class FrameBatch {
       Batch(Runner runner, int count) {
          this.runner = runner;
          this.count = count;
+         this.sealed = true;
+      }
+
+      Batch(Runner runner) { // a stream: tasks are published as the game thread collects them (runStream / publish / seal)
+         this.runner = runner;
+         this.count = 0;
+         this.sealed = false;
+      }
+
+      /** A claimed index past the published count: wait for it to be published (true) or for the seal to drop it (false). */
+      private boolean awaitPublished(int i) {
+         int spins = 0;
+         while (i >= this.count) {
+            if (this.sealed) {
+               return i < this.count; // seal writes the final count before the flag
+            }
+            if (++spins < 2000) {
+               Thread.onSpinWait();
+            } else {
+               ShortWait.pause(10_000L);
+            }
+         }
+         return true;
       }
 
       void work() {
          boolean serve = !(Thread.currentThread() instanceof Worker); // the game thread runs the workers' Lua calls (LuaGate)
          int i;
-         while ((i = this.cursor.getAndIncrement()) < this.count) {
+         while (true) {
+            i = this.cursor.getAndIncrement();
+            if (i >= this.count && (this.sealed && i >= this.count || !this.awaitPublished(i))) {
+               break;
+            }
             if (serve) {
                LuaGate.service();
             }
@@ -134,6 +174,58 @@ public final class FrameBatch {
 
    public static long helped; // tasks of an asynchronous batch the game thread ran while waiting for one (helpOne)
 
+   // ---- entityUpdateStream (zombie redesign pass, 2026-10-13, f8-zomb2) ----
+   // An asynchronous batch whose task count grows while the game thread still collects: workers start on the first
+   // published tasks at once, claim an index past the count and wait for it to be published (or for the seal to drop it).
+   public static long streams, streamSealedByJoin;
+
+   /** Game thread: start an empty stream on the workers only (joined like runAsync's batch, after {@link #seal}). */
+   public static void runStream(Runner r, Completion done) {
+      landEntityFlight();
+      join();
+      if (running) {
+         throw new IllegalStateException("FrameBatch.runStream inside a batch");
+      }
+      if (workers == null) {
+         start();
+      }
+      batches++;
+      asyncBatches++;
+      streams++;
+      Batch batch = new Batch(r);
+      pending = batch;
+      pendingDone = done;
+      current = batch;
+      synchronized (gate) {
+         generation++;
+         gate.notifyAll();
+      }
+   }
+
+   /** Game thread: tasks 0..count-1 of the pending stream may run (count only grows). */
+   public static void publish(int count) {
+      Batch batch = pending;
+      if (batch != null && !batch.sealed && count > batch.count) {
+         batch.count = count;
+      }
+   }
+
+   /** Game thread: the pending stream's final task count; no task past it runs. */
+   public static void seal(int count) {
+      Batch batch = pending;
+      if (batch != null && !batch.sealed) {
+         tasks += Math.max(count, batch.count);
+         batch.count = Math.max(count, batch.count);
+         batch.sealed = true;
+      }
+   }
+
+   /** Game thread: true while a stream is pending and unsealed. */
+   public static boolean streamOpen() {
+      Batch batch = pending;
+      return batch != null && !batch.sealed;
+   }
+
    private static volatile int lastPreClaimed; // spec 3.5 (review finding 7): cursor position at the last join's entry
 
    /**
@@ -180,7 +272,7 @@ public final class FrameBatch {
    public static boolean helpOne() {
       LuaGate.service(); // every caller is a game-thread wait loop
       Batch batch = pending;
-      if (batch == null) {
+      if (batch == null || !batch.sealed) { // entityUpdateStream: an index claimed past an unsealed stream's count could never run
          return false;
       }
       int i = batch.cursor.getAndIncrement();
@@ -208,6 +300,10 @@ public final class FrameBatch {
       Batch batch = pending;
       if (batch == null) {
          return;
+      }
+      if (!batch.sealed) { // entityUpdateStream: its owner seals it before any join; a join from elsewhere lands what is published
+         streamSealedByJoin++;
+         seal(batch.count);
       }
       pending = null;
       Completion done = pendingDone;
@@ -284,9 +380,10 @@ public final class FrameBatch {
       // zombies serialized. Free in the game, where the frame limiter has called onStep since boot; active() has no
       // side effect, unlike background(), which would put the CALLING thread on the efficient cores on macOS.
       CorePlacement.active();
-      workers = new Thread[THREADS];
-      for (int k = 0; k < THREADS; k++) {
-         Thread t = new Worker(FrameBatch::workerLoop, "pzopt-frame-" + k);
+      workers = new Thread[SPAWN];
+      for (int k = 0; k < SPAWN; k++) {
+         Worker t = new Worker(FrameBatch::workerLoop, "pzopt-frame-" + k);
+         t.index = k;
          t.setDaemon(true);
          t.setPriority(Thread.NORM_PRIORITY);
          workers[k] = t;
@@ -313,7 +410,7 @@ public final class FrameBatch {
          if (generation != seen) {
             seen = generation;
             Batch batch = current;
-            if (batch != null) {
+            if (batch != null && ((Worker) Thread.currentThread()).index < batch.limit) {
                batch.work();
                PoolStats.flush(); // poolStatsBatched: this worker's pool counts of the batch
             }
@@ -330,7 +427,7 @@ public final class FrameBatch {
             seen = generation;
          }
          Batch batch = current;
-         if (batch != null) {
+         if (batch != null && ((Worker) Thread.currentThread()).index < batch.limit) {
             batch.work();
             PoolStats.flush(); // poolStatsBatched
          }

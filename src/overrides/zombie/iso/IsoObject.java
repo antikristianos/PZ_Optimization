@@ -468,6 +468,26 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
       return this.ecsComponentMap;
    }
 
+   private ECSComponent[] pzoptEcsValues; // pzopt: ecsValuesCache (zombie redesign, f8-zomb2), the component map's values in iteration order
+
+   @Override
+   public ECSComponent[] pzoptEcsValues() { // pzopt: the map only changes through ECSEntity.setECSComponent / removeECSComponent, which clear this
+      if (!pzopt.Config.ECS_VALUES_CACHE) { // pzopt
+         return null; // pzopt
+      } // pzopt
+      ECSComponent[] v = this.pzoptEcsValues; // pzopt
+      if (v == null) { // pzopt
+         v = this.ecsComponentMap.values().toArray(new ECSComponent[0]); // pzopt: the iterator's order
+         this.pzoptEcsValues = v; // pzopt
+      } // pzopt
+      return v; // pzopt
+   } // pzopt
+
+   @Override
+   public void pzoptEcsChanged() { // pzopt
+      this.pzoptEcsValues = null; // pzopt
+   } // pzopt
+
    public boolean isUnbentObject(GridSquareEdgeFacingDirection facingDirection) {
       return BentFences.getInstance().isUnbentObject(this, facingDirection);
    }

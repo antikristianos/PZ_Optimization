@@ -405,7 +405,7 @@ public abstract class IsoGameCharacter
    // thread: the game thread still sees a single buffer reused across calls, exactly as the static gave it, so
    // this is unconditional rather than behind the key. Every user below fills it and reads it inside the one
    // call and nothing carries over between calls, so per-thread is behaviour-identical on one thread.
-   protected static final ThreadLocal<ItemVisuals> pzoptTempItemVisuals = ThreadLocal.withInitial(ItemVisuals::new);
+   protected static final pzopt.Tl<ItemVisuals> pzoptTempItemVisuals = new pzopt.Tl<>(ItemVisuals::new); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
    public static final float HUMANOID_WORLD_CHEST_HEIGHT = 0.495F;
    public static final float HUMANOID_SCREEN_CHEST_HEIGHT = 20.0F;
    private final float extraLungeRange = 0.2F;
@@ -11040,6 +11040,16 @@ public abstract class IsoGameCharacter
       return this.animationUpdatingThisFrame;
    }
 
+   /** pzopt: postupdateClean (f8-zomb2), a frame worker: clearHitInfo is a no-op and nothing ballistic is tracked. */
+   public boolean pzoptCleanTailOk() { // pzopt
+      return this.hitInfoList.isEmpty() && pzopt.Config.LAZY_POSE && this.ballisticsController == null; // pzopt
+   } // pzopt
+
+   /** pzopt: postupdateClean, a frame worker: postUpdateInternal's tail after the animating part (clearHitInfo is a no-op here). */
+   public void pzoptCleanTail() { // pzopt
+      this.clearAttackVars(); // pzopt
+   } // pzopt
+
    public void clearHitInfo() {
       if (this.hitInfoList.isEmpty() && pzopt.Config.LAZY_POSE) {
          return; // pzopt: an empty list releases and clears nothing; skips a synchronized pool call per character per frame
@@ -14888,6 +14898,9 @@ public abstract class IsoGameCharacter
    }
 
    public final boolean isLocal() {
+      if (pzopt.Config.IS_LOCAL_FAST && !GameClient.client && !GameServer.server) { // pzopt: isLocalFast (zombie redesign, f8-zomb2): NetworkComponent.isLocal() is
+         return true; // pzopt: "!client && !server || !remote" and an absent component answers true: true off the network either way (6.5 % of the entity flight was the component lookup)
+      } // pzopt
       return (Boolean)PZOptional.ifPresent((NetworkComponent)this.tryGetECSComponent(NetworkComponent.class), true, NetworkComponent::isLocal);
    }
 
@@ -17234,7 +17247,7 @@ public abstract class IsoGameCharacter
       private static final Vector2 v2 = new Vector2();
    }
 
-   private static final ThreadLocal<MoveDeltaModifiers> PZOPT_MOVE_DELTAS = ThreadLocal.withInitial(MoveDeltaModifiers::new); // pzopt: animatorParallel
+   private static final pzopt.Tl<MoveDeltaModifiers> PZOPT_MOVE_DELTAS = new pzopt.Tl<>(MoveDeltaModifiers::new); // pzopt: animatorParallel
 
    private static class L_postUpdate {
       static final MoveDeltaModifiers moveDeltas = new MoveDeltaModifiers();

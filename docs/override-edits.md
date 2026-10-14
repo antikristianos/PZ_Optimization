@@ -6974,3 +6974,161 @@ The logic is in `pzopt.UiRetained` (schedule) and `pzopt.UiDeps` (read sets); th
 - `FrameCap.stepDone`: hands the step length to `UiRetained.frameWorkDone`.
 - `UiRetained.decideFrame`: `ISInventoryPage.renderDirty` counts only while an inventory page is visible (a visible page's
   prerender clears it; with both hidden it stayed set and made every frame a UI frame).
+## Zombie redesign pass (2026-10-13, worktree f8-zomb2): the zombie frame's game-thread waits and loops
+
+Goal (Louisville 120 lock, maintainer): zombie work on the game thread at most 1.5 ms a frame. Baseline (run zomb2-base1,
+async-profiler on every thread, Louisville horde, Enhancements off, uncapped): 3.84 ms a frame by `harness/zombieshare.py
+--source asprof`, made of the game thread's share of parallel batches (it joins and runs a tenth of each) and of loops that
+visit every zombie. The workers (8, `frameThreads`) spent ~14 ms a frame on zombie batches: the entity flight 6.9, the
+separation 2.2, the transition evaluations 1.9, the animators 2.1, the bones 1.4, the movement 0.8. 15 workers doubled the
+flight's task time (SMT siblings, preemption: run zomb2-thr15, 113 -> 100 fps): the pool stays at 8.
+
+Every key below is behind a Config key and a `pzopt.ZombAb` alternation name (the pass's own A/B mask on GtAb's two
+groups: one GtAb bit, 40, for all of them). Per-frame timers: `pzopt.ZombTiming`, columns `z_*` after GtAb's sections in
+pzopt-gtab.out (`harness/gtabsec.py`).
+
+### The entity flight streamed during the collection (`entityUpdateStream` + `entityUpdateStreamHoist`)
+
+The combined flight left after the buckets' collection, and the only game-thread work under it was the inline phase
+(~0.12 ms of a ~0.83 ms flight): the game thread then ran ~280 of the ~2,650 tasks itself at the join (0.73 ms). With
+the stream the flight opens before the collection and every batchable zombie is published to the running workers as the
+collection reaches it (`FrameBatch.runStream` / `publish` / `seal`: a worker that claims an index past the published count
+waits for it or for the seal). The tasks see what they saw: no entity updates on the game thread between the opening and
+the inline phase, a task's position snapshot is taken when it is queued (only a zombie's own task moves it; the stamp is
+published with a release store, `frozen()` reads it with an acquire load), the per-task captures, deferrals, the Lua replay
+and the join are the combined flight's. The stream can only open once the frame's in-place entities (the players and the
+vehicles `entityUpdatePlayerFirst` updates at their place) have updated, and on Louisville the player sits behind ~2,150
+of the ~2,400 zombies in the full bucket (run zomb2-ab2: no gain), so `entityUpdateStreamHoist` updates the frame's players
+and vehicles first, in bucket order, before the collection (`MovingObjectUpdateSchedulerUpdateBucket.pzoptHoist`; the
+bucket counts them in `add`). **Behaviour difference (needs the maintainer's approval):** a zombie listed before the
+player is classified calm or not (state, near-player ring, physical flags) after the player's update instead of before it,
+as every zombie listed after the player always was; the old order could hand a zombie the player just shot or shoved to a
+worker in its calm state. In-run A/B (zomb2-ab3b): flight join 0.62 -> 0.40 ms, scheduler update -0.10 ms. A first build
+kept 16 hoisted entities and double-updated the 17th parked car (`Double-update call` in ECSEntity.frameStep, zomb2-ab3).
+
+### Separation: the blocked-edge answers shared (`separateEdgeCache`), the batch ahead of the frame (`separateAsync`, off)
+
+`SeparateMask.blocked` (39 % of the separation batch) cached its square-to-neighbour answers per frame for the game thread
+only; the workers asked the grid each time. The answer now lives on the square (`IsoGridSquare.pzoptSepEdges`: frame stamp,
+computed bits, blocked bits in one long, written whole; a racing worker that loses its bit recomputes it), keyed by the
+separation's frame stamp: the validity the game thread's table always had. Rig `devSeparateEdgeCheck` (1 in 32 asked of the
+grid again): 0 differences in 813,527 (zomb2-rig1). `separateAsync` starts the batch at the end of the scheduler's startFrame
+and joins it at the top of its update (the cell's pre-phases as runway; a chunk-grid or vehicle-list change in between redoes
+it): z_sep 0.34 -> 0.27 ms (zomb2-ab4), but `devSeparateAsyncCheck` found 4 differences in 1,575,411 (zomb2-rig1: something
+in the pre-phases changes an input), so it stays off.
+
+### Postupdate: no-op commits, eligibility and vehicle resolution on the workers (`postupdateNoopSkip`, `postupdateEligibleOnWorker`, `postupdateVehicleOnWorker`)
+
+- `postupdateNoopSkip`: a computed zombie's latched square move that is the stock call with its own square, already in
+  that square's list (only the zombie adds or removes itself there), commits nothing in the loop (`ArrayList.contains` per
+  zombie per frame). pu_loop -0.055 ms (zomb2-ab3b).
+- `postupdateEligibleOnWorker`: the movement batch's eligibility test (animation player, ragdoll, reuse set, state) runs in
+  each zombie's task instead of in the game thread's scan, where it was the first touch of every zombie's animation player.
+  pu_move -0.08 ms (zomb2-ab7).
+- `postupdateVehicleOnWorker`: a zombie whose move comes within reach of a vehicle used to bail to the game thread's stock
+  movement (32-54 a frame on Louisville's parked cars); the task now runs stock's `PolygonalMap2.resolveCollision` under its
+  `CollideWithObstacles` lock (taken while the batch is active), the vehicles' polygons brought up to date on the game thread
+  first (they do not move in the postupdate). `devPostupdateCheck`: 0 differences in 1,901,775, 551,615 vehicle resolutions on
+  the workers (zomb2-rig1).
+
+### Postupdate: transition evaluations and animators streamed under the loop (`postupdateFuse`, `headOnWorker` on)
+
+The evaluations started after the bucket loop and the apply loop waited for them and for the animators (~0.3 ms), then ran
+every zombie's context update. A zombie with no target reads nothing the rest of the loop changes, so right after its loop
+body (its snapshot taken) its evaluation is published to the postupdate stream (`pzopt.PuStream`); when the evaluation
+changes no state, the same task consumes it (`ActionContext.pzoptUpdateNoChange`: the stamp, the context's events cleared,
+no state-changed callback pending, no recorder), arms the capture and runs the animator and model update, the work apply()
+gives a worker after its step 1; apply() skips such a zombie in step 1 (`AnimCapture.fusedGen`) and finishes it in step 3 in
+queue order. The evaluation-done mark is set after that decision (`ActionEval.deferEvalDone`), so the apply loop never sees a
+half-fused zombie. The evaluation runs with the multiplier the flush-time one saw (1), the animator with the zombie's bucket
+multiplier (`UpdateBatch.pomSet`). `devActionEvalCheck` (the streamed evaluations against the apply-time one): 0 mismatches in
+2,893,733 (zomb2-rig1). postupdate 1.97 -> 1.60 ms (zomb2-ab4). `headOnWorker` (existing key, off until now, default on since this
+pass) now runs its head on the streamed task under the loop: pu_loop -0.10 ms (zomb2-ab5). `postupdateStreamMin` (128): a frame
+with fewer zombies in the movement queue (a drive) keeps the synchronous shape, the stream's wake and join being more than a
+handful of zombies save.
+
+### Postupdate: a clean zombie's whole postupdate in its movement task (`postupdateClean`)
+
+A computed zombie whose square move is a no-op, with no target, no hit infos or ballistics, no grapple-only reanimation, and
+(when its animation updates this frame) states whose transitions read no side-effecting variable, finishes the rest of its
+postupdate in its movement task (`IsoZombie.pzoptCleanPostupdate`: attack vars cleared, the unbalance lerp under its bucket
+multiplier, canSeeTarget false; the snapshot left empty and the head to the evaluation task). Its flag sits in a dense array
+in queue order and the bucket loop, which walks the same lists in the same order, compares the entry with the queue by
+reference (`PostupdateBatch.cleanAt`, which looks a few entries ahead when an entity removed during the loop shifted a list):
+the loop never reads a clean zombie. An animating clean zombie joins ActionEval's queue at its place (`appendClean`) and its
+evaluation is published before the loop (`publishCleanEarly`), so the whole loop is its runway. Nothing else in the loop reads
+what the tail writes (the player's, the animals' and the vehicles' postupdates do not read zombies; the other zombies' snapshot
+callbacks touch their own zombie). A clean zombie carries the postupdate's stamp (`IsoZombie.pzoptCleanFrame`) and
+`IsoZombie.postupdate` returns at once for it, so it can never run twice. The first build kept a flag from an earlier frame
+for a zombie whose movement bailed this frame: that zombie got no postupdate at all, and the brawl rig showed it (turn-alerted
+time doubled, thumps gone, Jev "less aggressive" 0.73, runs zomb2-br-on5/6 and noalert1/2; with the key off, noclean1/2, the
+horde matched the off runs); the flag is now cleared at the top of every task. pu_loop 0.755 -> 0.323 ms (zomb2-ab8, before the
+fix: numbers re-measured in zomb2-all3).
+
+### Alerted zombies with the calm ones (`entityUpdateAlerted`, off: behaviour difference)
+
+When a sound reaches the horde (an alarm, a shot, a car) ~300 zombies a frame sit in ZombieTurnAlerted, which is not one of
+the calm states, so their updates ran on the game thread in the inline phase (1.1-1.2 ms a frame, zomb2-prof2). The state
+has no execute of its own (the update is the idle zombie's), its enter sets the turn angle and its exit asks for a path to
+the sound, both where a state change happens. With the key they update on the workers like the idle ones (the frame-start
+read semantics the calm states already have). House-alarm scene (zomb2-ab7): inline 0.87 -> 0.27 ms, scheduler update
+-0.30 ms. Same class of difference as the calm states the maintainer accepted; off until approved.
+
+### The zomb2-all1 hang (fixed before any release)
+
+With every key on, a run hung at frame 19: the game thread waited in `AnimParallel.waitEval` for an evaluation no task would
+run, all workers idle. ActionEval released the postupdate stream's task list at the seal, while workers still had unstarted
+tasks; such a task read a null zombie, threw (caught by the batch) and the evaluation never ran. The list (`pzopt.StreamTasks`)
+is released only after the stream is joined (the next frame's `ActionEval.begin` joins first). `AnimParallel.waitEval` /
+`waitDone` now give up after 200 ms: logged once, the early-evaluation stream off for the session, the evaluation run inline /
+the zombie finished serially (one slow frame instead of a hung game). `tests/pzopt/FrameBatchStreamTest`: 3,000 random
+publish / seal / external-join patterns (every task exactly once, helpOne never claims past an unsealed stream) and a
+deterministic reproduction (releasing at the seal is caught, releasing after the join is clean).
+
+### Smaller ones
+
+- `luaSilentSkip`: a batched zombie's OnZombieUpdate (none in the vanilla Lua) is not captured while no Lua function
+  listens to it (checked when the flight opens, `LuaEventManager.pzoptHasListeners`; a listener added under the flight is
+  counted, `luaSilentLate`, 0 in every run). drain -0.04 ms (zomb2-ab5).
+- `isLocalFast` (default on): `IsoGameCharacter.isLocal()` returns true in single player without the network component
+  lookup; the component answers `!client && !server || !remote`, an absent one true (6.5 % of the flight's self time).
+- `ecsValuesCache` (default on): an entity's ECS component values kept as an array in the map's iteration order
+  (`IsoObject.pzoptEcsValues`, cleared by `ECSEntity.setECSComponent` / `removeECSComponent`, the only writers of the map), so
+  the per-frame `frameStep` visits iterate without an iterator (13 MB/s of allocation on Louisville).
+- `pzopt.Tl`: the hot ThreadLocals of the zombie batches (UpdateBatch's scratch and captures, WorkerScratch, LightingDefer,
+  PostupdateBatch, AnimationPlayer's L_* scratch, GameProfiler's per-thread instance, ...) keep a frame worker's value on its
+  Thread object and the game thread's in a static array; same values (a thread's first fast-path read takes the object it
+  already had). `UpdateBatch.current()`: the flight task's entity in a Worker field.
+- `ActionContext.pzoptSnapshot`: an empty map is not cleared (IdentityHashMap.clear fills its table: a third of submit).
+- Dropped after measurement: `sceneCullParallel` (the on-screen test on the workers: no gain, zomb2-ab1; most of
+  sceneCull is ModelManager.Add), `postupdateMoveStream` (the movement computes as the first tasks of the postupdate stream:
+  the loop waited for them as long as the batch had taken, zomb2-ab6), `frameThreads=15`.
+
+Behaviour: brawl rig (`--flag brawl=60`, harness/brawl.py), 4 runs with this pass's keys off and 4 on (entityUpdateStream,
+separateEdgeCache, postupdateNoopSkip, postupdateFuse, separateAsync, headOnWorker, luaSilentSkip): Jev "same" (0.54); the
+on runs sit inside the off runs' spread on every metric but within-4 (on 15.4 / 12.1 / 15.8 / 13.3 vs off 13.5-13.9),
+which spreads both ways (zomb2-br-*).
+
+### Results of the pass (2026-10-13, full maintainer setup: G1, tieredZombieUpdates, zombieSpawnSpread, lootDefer, zombieReuseSpread, zombieModelAddBudgetUs=500)
+
+- In-run A/B of the exact keys together (zomb2-all3, ABBA 230 ms, 1,977 / 1,847 frames): the zombie sections of the game
+  thread (separation, collection, inline phase, flight join, drain, postupdate, sceneCull, characters draw, FinishAnimation)
+  2.86 -> 2.39 ms a frame; postupdate 1.08 -> 0.70; frame wall -0.54 ms, game-thread CPU -0.56 ms; frames whose zombie sections
+  exceed 8 ms 5 -> 2. The second group (entityUpdateStream with the hoist + entityUpdateAlerted) moved the flight join -0.13 ms
+  but the paired estimate read +1.4 ms of wall (+4.5 ms of process CPU: workers waiting for the next published task spin): off.
+- async-profiler zombie share (zombieshare.py, all threads): zomb2-prof3off (keys off) 2.52 ms a frame, zomb2-prof5 (exact keys)
+  1.98 ms (the latter run had ~0.5 ms of alerted zombies updating inline; scenes differ run to run, the in-run A/B above is the
+  reference).
+- Whole runs, uncapped: keys off 129.7 fps (p50 6.8 / p90 11.5 / p99 17.6 / p99.9 29.4 ms, zomb2-unc0), exact keys 146.5 fps
+  (5.9 / 10.6 / 17.7 / 36.5, zomb2-unc2). Capped at 120: keys off 112.6 fps, 81.8 % of frames within 9 ms (zomb2-lock0); exact keys
+  111.7 fps, 80.2 % (zomb2-lock3): the lock's misses are not zombie work.
+- Exactness rigs, every key on (zomb2-rig2): devActionEvalCheck 0 / 2,518,391, devPostupdateCheck 0 / 79,329 (723,423 vehicle
+  resolutions on the workers), devSeparateEdgeCheck 0 / 526,351, devNearVehicleCheck 0 / 376,940; no batch latch, no bounded
+  wait timing out (waitTimeouts=0). Car through a populated Rosewood (ram, zomb2-ram3-off / ram3b-on): crashes 108 and car
+  condition 3,499 both, no worker exception. Brawl, exact keys, 4 runs against 4 off runs: Jev "same" (0.69).
+- drive-120-south: in-run A/B of the exact keys (zomb2-drive-ab) wall 1.695 vs 1.700 ms, paired +0.03 +- 0.04 ms (6-7 zombie
+  updates a frame there). Two whole-run pairs read 596 / 578 fps on against 611 / 594 off (-2.5 %); isLocalFast and
+  ecsValuesCache are not in that alternation: an open check.
+- Defaults: the exact keys on (separateEdgeCache, postupdateNoopSkip, postupdateFuse, headOnWorker, luaSilentSkip,
+  postupdateEligibleOnWorker, postupdateVehicleOnWorker, postupdateClean, isLocalFast, ecsValuesCache), with tab entries;
+  entityUpdateStream and entityUpdateAlerted off pending the maintainer; separateAsync off (rig differences).

@@ -191,6 +191,7 @@ import zombie.vehicles.BaseVehicle;
 
 @UsedFromLua
 public final class IsoGridSquare {
+   public long pzoptSepEdges; // pzopt: separateEdgeCache (zombie redesign, f8-zomb2), this frame's blocked-to-neighbour answers: frame << 16 | computed << 8 | blocked
    public static final boolean USE_WALL_SHADER = true;
    public static final boolean ADD_UNDERGROUND_BLOCKS = false;
    private static final float CUTAWAY_OUTLINE_ALPHA = 0.35F;

@@ -1392,7 +1392,7 @@ public final class LightingJNI {
       private static final int RESULT_LIGHTS_PER_SQUARE = 6;
       // pzopt: lightingReadParallel. The array getSquareLighting fills is per thread: the per-level reads of a pass run on the
       // frame workers (pzopt.LightingBatch); the game thread keeps its own copy for the serial paths.
-      private static final ThreadLocal<int[]> pzoptLightInts = ThreadLocal.withInitial(() -> new int[49]);
+      private static final pzopt.Tl<int[]> pzoptLightInts = new pzopt.Tl<>(() -> new int[49]); // pzopt: pzopt.Tl (zombie redesign, f8-zomb2)
       private static final byte VIS_SEEN = 1;
       private static final byte VIS_CAN_SEE = 2;
       private static final byte VIS_COULD_SEE = 4;

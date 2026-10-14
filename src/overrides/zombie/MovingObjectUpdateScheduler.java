@@ -39,6 +39,10 @@ public final class MovingObjectUpdateScheduler {
       long pzoptT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
       try { // pzopt
          this.pzoptStartFrame(); // pzopt
+         if (this.pzoptSeparateBatch) { // pzopt: separateAsync (zombie redesign, f8-zomb2)
+            pzopt.SeparateBatch.dispatchAsync(); // pzopt: separateAsync -- the computes start on the workers now and are joined at the top of update()
+         } // pzopt: separateAsync
+         this.pzoptStartFrameEnd = pzopt.ZombTiming.begin(); // pzopt: zombie redesign timers, the cell's pre-phases (startFrame end -> update start)
       } finally { // pzopt
          pzopt.GtAb.end(pzopt.GtAb.S_START_FRAME, pzoptT); // pzopt
       } // pzopt
@@ -227,19 +231,42 @@ public final class MovingObjectUpdateScheduler {
       } // pzopt
    } // pzopt
 
+   private long pzoptStartFrameEnd; // pzopt: zombie redesign timers
+
    private void pzoptUpdate() { // pzopt: the stock body of update
+      pzopt.ZombTiming.end(pzopt.ZombTiming.X0, this.pzoptStartFrameEnd); // pzopt: zombie redesign timers, the runway of separateAsync
+      this.pzoptStartFrameEnd = 0L; // pzopt
       pzopt.FrameTick.next(); // pzopt: the frame stamp of the simulation memos (separateFast, allPlayersAsleep)
       boolean pzoptCombined = pzopt.UpdateBatch.latchFrameFromConfig(); // pzopt: entityUpdatePipeline -- the frame's shape, latched ONCE (a devPipelineAlternate flip then lands on a frame boundary instead of mixing one frame's buckets)
       if (this.pzoptSeparateBatch) {
          pzopt.SeparateBatch.run(); // pzopt: separateParallel, this frame's separations computed on the workers
       }
 
+      if (pzoptCombined) { // pzopt: entityUpdateStream, the frame's in-place entities (players, vehicles) and its entity total
+         int pzoptInPlace = 0; // pzopt
+         int pzoptTotal = 0; // pzopt
+         for (MovingObjectUpdateSchedulerUpdateBucket simulation : this.simulationLevels) { // pzopt
+            pzoptInPlace += simulation.pzoptInPlaceCount((int)this.frameCounter); // pzopt
+            pzoptTotal += simulation.getBucket((int)this.frameCounter).size(); // pzopt
+         } // pzopt
+         if (pzopt.UpdateBatch.hoistFrame()) { // pzopt: entityUpdateStreamHoist, the players and vehicles first, then the stream opens at once
+            long pzoptHt = pzopt.ZombTiming.begin(); // pzopt: zombie redesign timers
+            for (MovingObjectUpdateSchedulerUpdateBucket simulation : this.simulationLevels) { // pzopt
+               simulation.pzoptHoist((int)this.frameCounter); // pzopt
+            } // pzopt
+            pzopt.ZombTiming.end(pzopt.ZombTiming.HOIST, pzoptHt); // pzopt
+            pzoptInPlace = 0; // pzopt
+         } // pzopt
+         pzopt.UpdateBatch.beginStreamFrame(pzoptInPlace, pzoptTotal); // pzopt
+      } // pzopt: entityUpdateStream
       pzopt.ZombieStats.begin(); // pzopt: zombieStatsFold, the zombies' distance statistics accumulated through the loop
       try { // pzopt
       try { // pzopt: entityUpdatePipeline -- see the finally: nothing may leave this method with a flight airborne or with queued entities unrun
+         long pzoptCt = pzopt.ZombTiming.begin(); // pzopt: zombie redesign timers, the buckets' collection loop
          for (MovingObjectUpdateSchedulerUpdateBucket simulation : this.simulationLevels) {
             simulation.update((int)this.frameCounter);
          }
+         pzopt.ZombTiming.end(pzopt.ZombTiming.COLLECT, pzoptCt); // pzopt
       } finally { // pzopt: entityUpdatePipeline
          try { // pzopt: entityUpdatePipeline
             if (pzoptCombined) { // pzopt: entityUpdatePipeline (combined dispatch, spec 2026-09-27)

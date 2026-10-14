@@ -72,6 +72,7 @@ public final class GtAb {
                m |= 1L << i;
             }
          }
+         m |= ZombAb.bit(k); // zombie redesign (f8-zomb2): its keys on bits 40-47
       }
       return m;
    }
@@ -111,6 +112,7 @@ public final class GtAb {
          for (int i = 0; i < SECTIONS; i++) {
             LOG.append(' ').append(SECTION_NS[i]);
          }
+         ZombTiming.append(LOG); // zombie redesign (f8-zomb2): its own columns after the sections
          LOG.append('\n');
          if (++rows % 250 == 0) {
             flush();
@@ -139,7 +141,7 @@ public final class GtAb {
          if (out == null) {
             java.io.File f = new java.io.File(zombie.ZomboidFileSystem.instance.getCacheDir(), "pzopt-gtab.out");
             out = new java.io.BufferedWriter(new java.io.FileWriter(f));
-            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
+            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice" + ZombTiming.HEADER + "  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
                + Config.DEV_GT_ALTERNATE_KEYS + ")\n");
          }
          out.write(LOG.toString());
@@ -183,6 +185,15 @@ public final class GtAb {
    /** Game thread: add a count (or scaled ns) to a column of this frame. */
    public static void add(int section, long v) {
       SECTION_NS[section] += v;
+   }
+
+   /** pzopt.ZombAb (zombie redesign, f8-zomb2): the phase of each alternation group, for its own key mask. */
+   static boolean offPhase1() {
+      return off;
+   }
+
+   static boolean offPhase2() {
+      return off2;
    }
 
    /** False in the off half of an alternation for a listed key: the caller takes its old path this frame. */

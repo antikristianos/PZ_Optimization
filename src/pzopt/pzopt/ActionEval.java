@@ -163,7 +163,7 @@ public final class ActionEval {
 
    public static long guardedFallbacks; // evaluations left to the game thread because a guarded callback hit its side effect
 
-   private static final ThreadLocal<java.util.IdentityHashMap<Object, Object>> SNAPSHOT = new ThreadLocal<>();
+   private static final Tl<java.util.IdentityHashMap<Object, Object>> SNAPSHOT = new Tl<>(null);
 
    /** The snapshot of the context being evaluated on this thread, or null (read the variables directly). */
    public static java.util.IdentityHashMap<Object, Object> currentSnapshot() {
@@ -186,6 +186,184 @@ public final class ActionEval {
       generation++;
       count = 0;
       active = true;
+      streamState = 0; // postupdateFuse
+      streamAllowed = true; // PostupdateBatch.prepass narrows it for a small frame
+      if (stream.size() > 0) {
+         FrameBatch.join(); // the previous frame's stream is landed before its task list is dropped
+         stream.release();
+      }
+   }
+
+   private static volatile boolean streamOff; // a bounded wait gave up: no more early evaluations this session
+   private static boolean streamAllowed = true; // game thread: this frame has zombies enough for the stream (postupdateStreamMin)
+
+   /** PostupdateBatch.prepass: whether this frame's postupdate is big enough for the early-evaluation stream. */
+   static void allowStream(boolean allowed) {
+      streamAllowed = allowed;
+   }
+
+   /** AnimParallel's bounded waits: a task never came; the streams stop for the session (logged once). */
+   static void streamGaveUp(String what) {
+      if (!streamOff) {
+         streamOff = true;
+         Log.warn("postupdateFuse: " + what + "; early evaluations off for the session");
+      }
+   }
+
+   // ---- postupdateFuse (zombie redesign pass, 2026-10-13, f8-zomb2) ----
+   //
+   // The transition evaluations used to start after the postupdate loop, and the apply loop then waited for them and for
+   // the animators (~0.3 ms a frame on the Louisville horde) and ran every zombie's context update itself. A zombie with no
+   // target reads nothing the rest of the loop changes (its own variables and events, the static grid), so it is published
+   // to a stream batch right after its loop body (its snapshot taken), and the evaluation runs during the loop. When the
+   // evaluation changes no state, the same task consumes it (the context update of an unchanged container: its events
+   // cleared), arms the animator capture and runs the animator and model update, exactly the work apply() would hand a worker
+   // after its step 1; apply() skips such a zombie in step 1 and finishes it in step 3 in queue order as before. The
+   // evaluation-done mark is set after that decision, so the apply loop never sees a half-fused zombie.
+   private static final boolean FUSE = Config.POSTUPDATE_FUSE;
+   private static int streamState; // 0 not opened this frame, 1 open, 2 sealed by another batch user (no more publishing)
+   private static final StreamTasks<IsoZombie> stream = new StreamTasks<>(); // task j: its zombie (pzoptStreamGen = the generation it went out in), may it fuse
+   private static final Tl<boolean[]> DEFER = new Tl<>(() -> new boolean[1]);
+   public static long fuseEarly, fuseLate, fuseStreams, fuseDied;
+
+   // ---- postupdateClean (zombie redesign pass, 2026-10-13, f8-zomb2): a zombie whose whole postupdate ran on its movement task
+   // joins the queue here at its place in the bucket loop, without the loop touching it (pzopt.PostupdateBatch.cleanAt) ----
+
+   /** A frame worker (PostupdateBatch's task): submit()'s conditions for a zombie with no target, from worker-safe reads. */
+   public static boolean cleanSubmitOk(IsoZombie z) {
+      if (!active || callbackKeys == null || !HEAD_ON_WORKER || !GtAb.on(GtAb.HEAD_ON_WORKER) || GameClient.client || GameServer.server) {
+         return false;
+      }
+      ActionContext ctx = z.getActionContext();
+      return ctx != null && ctx.getGroup() != null && ctx.pzoptCleanSafe();
+   }
+
+   /** A frame worker, committed: what submit() does to the zombie itself (the empty snapshot, the head left to the task). */
+   public static void cleanPrepare(IsoZombie z) {
+      z.getActionContext().pzoptSnapshotClear();
+      z.pzoptHeadPending = true;
+   }
+
+   /** Game thread, the bucket loop at the zombie's place: submit()'s queueing of a clean zombie. */
+   public static void appendClean(IsoZombie zombie) {
+      if (count == queue.length) {
+         queue = java.util.Arrays.copyOf(queue, count * 2);
+      }
+      queue[count++] = zombie;
+      batched++;
+      cleanAppended++;
+      if (zombie.pzoptStreamGen != generation && FUSE && AnimParallel.pipelined() && ZombAb.on(ZombAb.PU_FUSE)) {
+         publishEarly(zombie); // postupdateFuse: no target (normally already out: publishCleanEarly)
+      }
+   }
+
+   /**
+    * Game thread, right after the movement batch and before the bucket loop (PostupdateBatch): a clean zombie that will join the
+    * queue in the loop has nothing left for the loop to change before its evaluation (no target, an empty snapshot), so its
+    * evaluation goes out now and the whole loop is its runway; appendClean then only queues it.
+    */
+   public static void publishCleanEarly(IsoZombie zombie) {
+      if (FUSE && AnimParallel.pipelined() && ZombAb.on(ZombAb.PU_FUSE)) {
+         cleanEarly++;
+         publishEarly(zombie);
+      }
+   }
+
+   public static long cleanEarly;
+
+   public static long cleanAppended;
+
+   /** ActionContext.pzoptEvaluate: true inside a stream task, which marks the evaluation done itself after its fused tail. */
+   public static boolean deferEvalDone() {
+      return FUSE && DEFER.get()[0];
+   }
+
+   private static void publish(IsoZombie z, boolean fuse) {
+      z.pzoptStreamGen = generation;
+      PuStream.publishEvals(stream.add(z, fuse));
+   }
+
+   /** Game thread, submit(): a target-less zombie's evaluation goes to the workers now. */
+   private static void publishEarly(IsoZombie z) {
+      if (streamState == 2 || streamOff || !streamAllowed) {
+         return;
+      }
+      if (streamState == 0) {
+         if (!PuStream.isOpen()) {
+            if (FrameBatch.hasPending()) {
+               return; // some batch is still out: this zombie waits for the flush like before
+            }
+            PuStream.open(0);
+         }
+         AnimParallel.setBaseInterpolate(zombie.core.PerformanceSettings.interpolateAnims);
+         streamState = 1;
+         fuseStreams++;
+      } else if (!PuStream.isOpen()) {
+         streamState = 2; // another batch user joined it: the rest waits for the flush
+         fuseDied++;
+         return;
+      }
+      fuseEarly++;
+      publish(z, true);
+   }
+
+   static void streamTask(int j) {
+      IsoZombie z = stream.item(j);
+      if (!stream.flag(j)) {
+         z.pzoptEvalTask();
+         return;
+      }
+      boolean[] defer = DEFER.get();
+      defer[0] = true;
+      UpdateBatch.pomSet(1.0F); // the perObjectMultiplier the flush-time evaluation sees (the buckets reset it to 1)
+      try {
+         z.pzoptEvalTask();
+         defer[0] = false;
+         fusedTail(z);
+      } finally {
+         defer[0] = false;
+         UpdateBatch.pomClear();
+         z.getActionContext().pzoptMarkEvalDone();
+      }
+   }
+
+   private static void fusedTail(IsoZombie z) {
+      if (z.pzoptHeadOnGame || z.pzoptHeadPending || !AnimParallel.eligibleOnWorker(z) || !z.getActionContext().pzoptUpdateNoChange()) {
+         return;
+      }
+      UpdateBatch.pomSet(Config.DEV_ACTION_EVAL_UNIT_MULTIPLIER ? 1.0F : (float) z.getCurrentSimulationLevel().getFrameMod()); // useMultiplier's value
+      AnimCapture c = z.pzoptCapture();
+      c.arm(z.getAnimationTimeDelta());
+      c.fusedGen = generation;
+      z.pzoptRestWorker();
+   }
+
+   /** Game thread, flush: every queued zombie the stream did not take, then the seal. False: no stream this frame. */
+   private static boolean sealStream() {
+      if (streamState == 0) {
+         return false;
+      }
+      if (streamState == 1 && PuStream.isOpen()) {
+         for (int i = 0; i < count; i++) {
+            if (queue[i].pzoptStreamGen != generation) {
+               fuseLate++;
+               publish(queue[i], false);
+            }
+         }
+         PuStream.seal(); // streamZ stays until begin(): the tasks read it until the stream is joined (a fill here lost evaluations: zomb2-all1 hung)
+         return true;
+      }
+      // sealed early by another batch user: the rest as a plain evaluation batch
+      int n = 0;
+      IsoZombie[] rest = new IsoZombie[count];
+      for (int i = 0; i < count; i++) {
+         if (queue[i].pzoptStreamGen != generation) {
+            rest[n++] = queue[i];
+         }
+      }
+      final IsoZombie[] r = rest;
+      FrameBatch.runAsync(n, j -> r[j].pzoptEvalTask(), ActionEval::evalDone);
+      return true;
    }
 
    /** The generation of the batch being evaluated / applied; a context's evaluation is only applied in the same one. */
@@ -232,17 +410,27 @@ public final class ActionEval {
          return false;
       }
       context.pzoptSnapshot(); // the side-effect callbacks, here and now like stock
+      boolean pzoptEarly = FUSE && zombie.getTarget() == null && AnimParallel.pipelined() && ZombAb.on(ZombAb.PU_FUSE); // postupdateFuse
+      if (ZombTiming.ON && !context.pzoptSnapshotEmpty()) {
+         ZombTiming.add(ZombTiming.X1, 1L); // zombie redesign census: zombies whose snapshot read a side-effecting callback
+      }
       zombie.pzoptHeadPending = headPending;
       if (count == queue.length) {
          queue = java.util.Arrays.copyOf(queue, count * 2);
       }
       queue[count++] = zombie;
       batched++;
+      if (pzoptEarly) {
+         publishEarly(zombie); // postupdateFuse
+      }
       return true;
    }
 
    /** Game thread, after the postupdate loop: evaluate the queued contexts on the workers, then finish the queued zombies in order. */
    public static void flush() {
+      if (streamState == 0 && PuStream.isOpen()) {
+         PuStream.close(); // postupdateMoveStream opened it and no evaluation joined: sealed here, joined by the next batch
+      }
       if (!active) {
          return;
       }
@@ -257,7 +445,9 @@ public final class ActionEval {
       if (AnimParallel.pipelined()) {
          // animatorPipeline: the evaluations run on the workers alone; the apply loop takes each zombie as soon as its
          // evaluation is done (AnimParallel.apply step 1) instead of this thread evaluating a share and then applying
-         FrameBatch.runAsync(count, i -> queue[i].pzoptEvalTask(), ActionEval::evalDone);
+         if (!sealStream()) { // postupdateFuse: the stream already holds the early ones; the rest join it here
+            FrameBatch.runAsync(count, i -> queue[i].pzoptEvalTask(), ActionEval::evalDone);
+         }
          applying = true;
          GameTime pipelineTime = GameTime.getInstance();
          float pipelineMultiplier = pipelineTime.perObjectMultiplier;
@@ -325,7 +515,7 @@ public final class ActionEval {
    public static String describe() {
       return "action eval: frames=" + frames + " batched=" + batched + " inline=" + inline + " max=" + maxBatch
             + " work ms=" + (workNanos / 1_000_000L) + " wait ms=" + (waitNanos / 1_000_000L)
-            + " guardedFallbacks=" + guardedFallbacks
+            + " guardedFallbacks=" + guardedFallbacks + " cleanAppended=" + cleanAppended + " cleanEarly=" + cleanEarly + (FUSE ? " fuseStreams=" + fuseStreams + " fuseEarly=" + fuseEarly + " fuseLate=" + fuseLate + " fuseDied=" + fuseDied : "")
             + (Config.DEV_ACTION_EVAL_CHECK ? " checked=" + checks + " mismatches=" + mismatches + " filterMisses=" + filterMisses : "") + (failed ? " FAILED" : "");
    }
 }

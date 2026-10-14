@@ -18,7 +18,7 @@ public final class LightingDefer {
    private LightingDefer() {
    }
 
-   private static final ThreadLocal<ArrayList<Runnable>> SINK = new ThreadLocal<>();
+   private static final Tl<ArrayList<Runnable>> SINK = new Tl<>(null);
    private static ArrayList<Runnable>[] lists = newLists(256);
    public static long deferred;
 
