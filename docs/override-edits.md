@@ -7370,3 +7370,69 @@ Test: `tests/pzopt/PostupdateCleanSkipTest` drives the real bucket override's lo
 constructor) and probe entities that remove themselves, the entries ahead of them (also more than the look-ahead, the guard path)
 or one behind them, and a model of stock's loop over the same list: after `finish` exactly the zombies the model ran keep their
 movement task's postupdate and every other one is back to its state before the movement batch (4 fixed shapes, 3,000 random lists).
+
+## The horde's 3D model draws in batches (2026-10-13, worktree `f8-horde`): hordeBatch, zombie LOD boundary
+
+Goal-120 pass on the Louisville horde: in the seconds with ~450 zombies drawn as 3D models the frame was GPU and
+render-thread bound (`moving` GPU section 7-10 ms). Measured with the dev rig `devHordeModes` (per-frame cost modes, GPU
+section `moving.m<d>`, run horde-diag1, ~450 characters, 1,810 mesh draws, 1.95 M indices a frame): stock 7.6 ms GPU;
+without the draw calls (everything else issued) 3.7 ms; one extra attribute push / pop pair per character +0.4 ms;
+without the character draws 0.2 ms. Most of the cost was per-draw state and uniform traffic, not vertex or pixel work.
+
+- `ModelSlotRenderData` (new override, Vineflower of the 42.21 jar, no fix needed): four helpers for `pzopt.HordeBatch`,
+  nothing else changed. `pzoptBatchBegin` is `renderCharacter`'s prelude for a batched character (the texture checks of
+  `checkReady`, the camera's depth mask, the instance list `performRenderCharacter` would draw, or null when it would draw
+  nothing); `pzoptBatchEnd` sets the rendered flag as the stock method does; `pzoptHasOutline` / `pzoptHasDebugDraw` read
+  two private fields; `pzoptRendersTexture` says whether `checkReady` would render a texture now (the clothes' composite
+  or an item texture), so the batch draws what is pending before that render, as the stock order does. In `init` the
+  alpha is multiplied by the zombie's crossfade share (`zombieLodFadeMs`; 1 unless the LOD option is on).
+- `Model`: static helpers for the batch: whether a mesh's vertex buffer is drawable, its handle / buffer names / index
+  count (package-private fields), and `pzoptMeshPointers`, `VertexBufferObject.BeginDraw`'s buffer bindings, pointers and
+  enables (the same switch over the format's element types) issued into the vertex array object the batch has bound; the
+  vertex format is read by reflection once per mesh. `DrawSolid`: the dev rig's counters and modes 1 / 2.
+- `TextureDraw`: in the DrawModel dispatch, after the init future and the car-occupant capture, `HordeBatch.offer` may
+  take a zombie's draw (then nothing else of the stock dispatch runs for it); the dev rig wraps the drawer's render. At the
+  head of `run`, while batch draws are pending, `HordeBatch.beforeOp` decides whether this command ends the run (before
+  foliage sway's draw-buffer switch). The dev counters count other commands.
+- `SpriteRenderer`: before a sprite batch of the ring buffer is drawn, an exact run of zombie draws is drawn first; the
+  dev counter counts the batch.
+- `FBORenderCell`: around `renderMovingObjects` the batch's pass markers (its last batch drawn inside the `moving` GPU
+  section) and the dev rig's per-frame mode marker; the section name carries the dev mode.
+- `IOpenGLState`: `pzoptCurrent()`, the cached value `restore()` would issue (the batch reads the depth-mask, blend and
+  scissor caches that stock's per-instance `GLStateRenderThread.restore()` puts back before the second instance).
+- pzopt only: `pzopt.HordeBatch`, `pzopt.HordeDraw`, `GpuSections.isMarker`, `OccludedOutline.isActive`,
+  `EntityShadow.modelShaderPatched`; build.sh generates `pzopt_horde.vert/.frag` and `pzopt_horde_static.vert` from the
+  game's `basicEffect.vert/.frag` and `basicEffect_static.vert`: the main bodies verbatim, every per-draw uniform a global
+  filled from a draw record in a shader storage buffer, the bone palette (or the static transform) read from a second
+  one, the draw index an instanced attribute advanced by the draw's base instance, and the stock draw's fixed-function alpha
+  test (GREATER 0.01) as a discard (the driver does not apply it to a 4.30 program: fading zombies wrote depth there).
+- What the batch does (key `hordeBatch`, off by default; `exact` = a run ends at anything drawn between two zombies,
+  so the order of everything drawn is stock's; `defer` = the moving pass's zombies drawn at its end in their stock
+  order among themselves, the same picture as a frame whose object set listed them after the other moving objects): the
+  render thread computes, with the stock Java code paths copied (`Core.DoPushIsoStuff`'s camera, the target depth,
+  `Shader.setLight`, ambient / tint / hue / alpha / UV scale, the palette floats, the static transform), the values the
+  stock path would give the shader, writes them into persistent mapped buffers (four sets in turn behind fences;
+  `hordeBatchUpload=subdata` sends them with glBufferSubData), and draws the run with one attribute push / pop, the
+  stock per-draw fixed-function states (first instance of a character with the depth mask on, later ones with the
+  cached states), a vertex array object per mesh, one texture bind and one draw call per instance. Stock path for
+  anything else: non-zombies, debug builds, outlines, imposter cards, zombies in vehicles, an instance whose program is
+  not the plain basicEffect, and frames where an Enhancement hooks the model draws (entity shadows, occluded outlines,
+  object motion, mirrors, sun / lamp shadow casters, foliage sway's MRT). GL 4.3 needed (4.4 for the mappings).
+- Exactness rig `devHordeCheck=N`: every N-th frame one run is drawn by the batch, read back (colour and depth), the
+  framebuffer saved before it is put back, the same characters are drawn by the stock code, read back and compared pixel
+  by pixel; `devHordeCheckVariants` rotates bisect variants; a mismatch logs its box, the per-character state and which
+  stock / batch draws touch the first differing pixel. Run horde-chk13 (exact and defer): 39 runs, 368,535 drawn pixels,
+  0 colour / 0 depth differences.
+
+### Zombie LOD boundary (`zombieLodHysteresis`, `zombieLodFadeMs`; part of the `zombieLodDynamic` option, off by default)
+
+The maintainer approved (2026-10-13) the dynamic zombie LOD as an option for the 120 target. Two additions make its
+boundary stable:
+- `IsoWorld.sceneCullZombies`: with the option on, a zombie drawn in 3D right now keeps its model while it ranks within
+  `zombieLodHysteresis` (default 16) places past the 3D cap; a sprite needs a place inside the cap (a score bonus was
+  tried first: the relevance score's +100 / +300 / +1000 steps for sight and distance swamp any small bonus).
+- `IsoWorld.sceneCullZombies`: a zombie that loses its 3D slot keeps its model for `zombieLodFadeMs` (default 300) while
+  the model fades out over the flat sprite (`pzopt.ZombieLod.keepFading`); one that gets a slot back after being a
+  sprite fades its model in (`ZombieLod.won`); `lost` clears the state. `IsoZombie`: four fields for the fade state and
+  this frame's model / sprite shares; `pzoptRenderFlat` draws the sprite under a fading model; the atlas sprite's alpha is
+  multiplied by its share (1 otherwise).

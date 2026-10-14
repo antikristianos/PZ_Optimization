@@ -1429,6 +1429,8 @@ public final class SpriteRenderer {
 
                   this.ops.clear();
                } else {
+                  if (pzopt.HordeDraw.LOG) pzopt.HordeDraw.other(); // pzopt: horde model draws, dev: a sprite batch between character draws
+                  if (pzopt.HordeBatch.pending != 0) pzopt.HordeBatch.beforeSprites(); // pzopt: hordeBatch, an exact run of zombie draws ends before a sprite batch
                   if (this.style != RingBuffer.this.lastRenderedStyle) {
                      if (RingBuffer.this.lastRenderedStyle != null
                         && (

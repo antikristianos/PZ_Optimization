@@ -232,6 +232,11 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    private IsoMovingObject pzoptSepContact;
    private IsoMovingObject[] pzoptSepCollide;
    private int pzoptSepCollideCount;
+   public byte pzoptLodFade; // pzopt: zombieLodFadeMs (pzopt.ZombieLod), 0 none, 1 model -> sprite, 2 sprite -> model
+   public long pzoptLodFadeStartNs; // pzopt: when that fade started
+   public float pzoptLodModelAlpha = 1.0F; // pzopt: this frame's share of the model (ModelSlotRenderData.init multiplies its alpha)
+   public float pzoptLodSpriteAlpha; // pzopt: this frame's share of the flat sprite drawn under it (0: none)
+   public float pzoptLodSpriteScale = 1.0F; // pzopt: renderTextureInsteadOfModel's alpha factor (the sprite share while a crossfade draws it under the model)
    public IsoGridSquare pzoptOutlineSquare; // pzopt: occluded outlines, the square the occluder test ran for (OccludedOutline.classify)
    public long pzoptOutlineNs; // pzopt: occluded outlines, when it ran
    public byte pzoptOutlineClass; // pzopt: occluded outlines, its result
@@ -1801,7 +1806,8 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
                - 1.0F;
          }
 
-         tex.render(x, y, this.getZ(), sx, sy, 0.0F, 0.0F, 0.0F, this.getAlpha(playerIndex));
+         float pzoptLit = pzopt.ZombieLod.spriteLight(); // pzopt: zombieLodSpriteLight, the flat sprite in the square's light instead of black (0 = stock)
+         tex.render(x, y, this.getZ(), sx, sy, pzoptLit > 0.0F ? inf.r * pzoptLit : 0.0F, pzoptLit > 0.0F ? inf.g * pzoptLit : 0.0F, pzoptLit > 0.0F ? inf.b * pzoptLit : 0.0F, this.getAlpha(playerIndex) * this.pzoptLodSpriteScale); // pzopt: zombieLodFadeMs, the sprite's share during a crossfade (1 otherwise)
       }
 
       if (DebugOptions.instance.character.debug.render.angle.getValue()) {
@@ -1896,6 +1902,11 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
                   cameraRenderData.init(zombie.core.opengl.CharacterModelCamera.instance, modelSlot);
                }
 
+               if (this.pzoptLodSpriteAlpha > 0.0F) { // pzopt: zombieLodFadeMs, the flat sprite under the fading model
+                  this.pzoptLodSpriteScale = this.pzoptLodSpriteAlpha; // pzopt
+                  this.renderTextureInsteadOfModel(x, y); // pzopt
+                  this.pzoptLodSpriteScale = 1.0F; // pzopt
+               } // pzopt
                zombie.core.SpriteRenderer.instance.drawGeneric(cameraRenderData);
                zombie.core.SpriteRenderer.instance.drawModel(modelSlot);
             }

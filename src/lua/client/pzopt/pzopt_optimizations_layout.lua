@@ -61,8 +61,9 @@ PzoptSettingsLayout = {
                     "zombieSpotFast", "zombieAtlasFast", "renderLastFast", "separateFast", "edgeTestFast", "separateEdgeCache", "postupdateNoopSkip", "luaSilentSkip", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",
                     "emitterParamSkip", "profilerThreadMemo" } },
+                { title = "Drawing the horde", keys = { "hordeBatch", "hordeBatchUpload" } },
                 { title = "Detail by distance", keys = { "zombieLodDynamic", "zombieSimLodTiles", "zombieSimLodSteps", "zombieCheckSpread",
-                    "zombieLodMin3d", "zombieLodMinBlend", "zombieLodUncappedFps" } },
+                    "zombieLodMin3d", "zombieLodMinBlend", "zombieLodUncappedFps", "zombieLodFixed3d", "zombieLodHysteresis", "zombieLodFadeMs", "zombieLodSpriteLight" } },
               } },
             { id = "load", title = "Boot and loading", blurb = "From launch to the menu, and from Continue to the world.",
               subs = {

@@ -283,6 +283,85 @@ public final class Model extends Asset {
       return true;
    }
 
+   // pzopt: hordeBatch (pzopt.HordeBatch). A mesh's vertex buffer as the batch needs it: VertexBufferObject's handle and
+   // vertex format are package-private / private, so the batch reads them through these helpers (the format once per mesh).
+   private static java.lang.reflect.Field pzoptFormatField; // pzopt
+
+   /** pzopt: hordeBatch, whether the stock Draw would draw this buffer (a handle with vertex data). */
+   public static boolean pzoptMeshDrawable(VertexBufferObject vb) { // pzopt
+      VertexBufferObject.Vbo h = vb.handle; // pzopt
+      return h != null && !h.faceDataOnly && h.vboId > 0 && h.eboId > 0 && h.numElements > 0; // pzopt
+   } // pzopt
+
+   /** pzopt: hordeBatch, the identity the batch keys a mesh's vertex array object on. */
+   public static Object pzoptMeshHandle(VertexBufferObject vb) { // pzopt
+      return vb.handle; // pzopt
+   } // pzopt
+
+   public static int pzoptMeshVbo(VertexBufferObject vb) { // pzopt
+      return vb.handle.vboId; // pzopt
+   } // pzopt
+
+   public static int pzoptMeshEbo(VertexBufferObject vb) { // pzopt
+      return vb.handle.eboId; // pzopt
+   } // pzopt
+
+   public static int pzoptMeshElements(VertexBufferObject vb) { // pzopt
+      return vb.handle.numElements; // pzopt
+   } // pzopt
+
+   /**
+    * pzopt: hordeBatch. VertexBufferObject.BeginDraw's buffer bindings, pointers and enables for a triangle draw, issued
+    * into the vertex array object the caller has bound (the same switch over the format's element types).
+    */
+   public static void pzoptMeshPointers(VertexBufferObject vb) { // pzopt
+      VertexBufferObject.VertexFormat vertexFormat; // pzopt
+      try { // pzopt
+         if (pzoptFormatField == null) { // pzopt
+            java.lang.reflect.Field f = VertexBufferObject.class.getDeclaredField("vertexFormat"); // pzopt
+            f.setAccessible(true); // pzopt
+            pzoptFormatField = f; // pzopt
+         } // pzopt
+         vertexFormat = (VertexBufferObject.VertexFormat)pzoptFormatField.get(vb); // pzopt
+      } catch (ReflectiveOperationException e) { // pzopt
+         throw new IllegalStateException(e); // pzopt
+      } // pzopt
+      VertexBufferObject.Vbo handle = vb.handle; // pzopt
+      int textureNumber = 33984; // pzopt
+      org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, handle.vboId); // pzopt
+      for (int i = 0; i < vertexFormat.elements.length; i++) { // pzopt
+         VertexBufferObject.VertexElement element = vertexFormat.elements[i]; // pzopt
+         switch (element.type.ordinal()) { // pzopt
+            case 0: // pzopt
+               org.lwjgl.opengl.GL20.glVertexAttribPointer(i, 3, 5126, false, handle.vertexStride, element.byteOffset); // pzopt
+               org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+               break; // pzopt
+            case 1: // pzopt
+               org.lwjgl.opengl.GL20.glVertexAttribPointer(i, 3, 5126, true, handle.vertexStride, element.byteOffset); // pzopt
+               org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+               break; // pzopt
+            case 2: // pzopt
+               org.lwjgl.opengl.GL20.glVertexAttribPointer(i, 3, 5121, true, handle.vertexStride, element.byteOffset); // pzopt
+               org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+               break; // pzopt
+            case 4: // pzopt
+               GL13.glActiveTexture(textureNumber); // pzopt
+               org.lwjgl.opengl.GL20.glVertexAttribPointer(i, 2, 5126, false, handle.vertexStride, element.byteOffset); // pzopt
+               org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+               textureNumber++; // pzopt
+               break; // pzopt
+            case 6: // pzopt
+            case 7: // pzopt
+               org.lwjgl.opengl.GL20.glVertexAttribPointer(i, 4, 5126, false, handle.vertexStride, element.byteOffset); // pzopt
+               org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+               break; // pzopt
+            default: // pzopt
+               break; // pzopt
+         } // pzopt
+      } // pzopt
+      org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, handle.eboId); // pzopt
+   } // pzopt
+
    public void EnsureEffect() {
       if (this.effect == null) {
          this.CreateShader("basicEffect");
@@ -316,9 +395,10 @@ public final class Model extends Asset {
             effect.startCharacter(slotData, instData);
             effect.setScale(slotData.finalScale);
             pzopt.EntityShadow.bind(effect, slotData, instData); // pzopt: entity shadows, the draw's shade uniforms
+            if (pzopt.HordeDraw.extraPalette()) effect.setMatrixPalette(instData.matrixPalette); // pzopt: horde model draws, dev mode 2 (the palette twice)
          }
 
-         if (!DebugOptions.instance.debugDrawSkipDrawNonSkinnedModel.getValue()) {
+         if (!DebugOptions.instance.debugDrawSkipDrawNonSkinnedModel.getValue() && pzopt.HordeDraw.meshDraw(this.mesh.vb != null && this.mesh.vb.handle != null ? this.mesh.vb.handle.numElements : 0, instData.matrixPalette)) { // pzopt: horde model draws, dev counters / mode 1 (no draw call)
             ProfileArea mvp = GameProfiler.getInstance().profile("Mesh.Draw.Call");
 
             try {

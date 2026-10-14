@@ -2669,9 +2669,11 @@ public final class IsoWorld {
       // pzopt: zombieLodDynamic, the model / blend counts follow the frame cap (pzopt.ZombieLod). Stock never read
       // tcountMax; both 510 literals stay so a mod that rewrites them (ZBBetterFPS' cull cap) still caps below ours.
       int pzoptBlended = PerformanceSettings.numberZombiesBlended; // pzopt
+      int pzoptLodKeep = 0; // pzopt: zombieLodHysteresis (places past the cap a zombie already in 3D keeps its model in)
       if (pzopt.ZombieLod.active()) { // pzopt
          pzopt.ZombieLod.update(); // pzopt
          tcountMax = Math.min(tcountMax, pzopt.ZombieLod.max3d()); // pzopt
+         pzoptLodKeep = pzopt.Config.ZOMBIE_LOD_HYSTERESIS; // pzopt
          pzoptBlended = pzopt.ZombieLod.blended(pzoptBlended); // pzopt
       } // pzopt
       PerformanceSettings.animationSkip = 0;
@@ -2684,7 +2686,7 @@ public final class IsoWorld {
 
       for (int n = 0; n < this.zombieWithModel.size(); n++) {
          IsoZombie z = (IsoZombie)this.zombieWithModel.get(n);
-         if (tcount < 510 && tcount < tcountMax) { // pzopt: zombieLodDynamic's cap (510 without it)
+         if (tcount < 510 && (tcount < tcountMax || pzoptLodKeep > 0 && tcount < tcountMax + pzoptLodKeep && pzopt.ZombieLod.drawnIn3d(z))) { // pzopt: zombieLodDynamic's cap (510 without it); zombieLodHysteresis, a zombie drawn in 3D keeps its model within that many places past the cap
             if (pzoptAddBudget && !z.ghost && !z.hasActiveModel()) { // pzopt: zombieModelAddBudgetUs, a zombie that would get its model now
                if (pzoptAdds > 0 && System.nanoTime() - pzoptAddT0 > pzopt.Config.ZOMBIE_MODEL_ADD_BUDGET_US * 1000L) { // pzopt: past the frame's budget
                   z.setSceneCulled(true); // pzopt: stays a flat sprite this frame, as past the cap below
@@ -2702,6 +2704,7 @@ public final class IsoWorld {
             if (!z.ghost) {
                count++;
                tcount++;
+               if (pzopt.ZombieLod.active()) pzopt.ZombieLod.won(z); // pzopt: zombieLodFadeMs, a zombie getting its model back fades it in
                z.setSceneCulled(false);
                if (z.legsSprite != null && z.legsSprite.modelSlot != null) {
                   if (count > PerformanceSettings.zombieAnimationSpeedFalloffCount) {
@@ -2728,7 +2731,13 @@ public final class IsoWorld {
                   }
                }
             }
+         } else if (pzopt.ZombieLod.active() && pzopt.ZombieLod.keepFading(z)) { // pzopt: zombieLodFadeMs, the model stays while it fades out over the sprite
+            z.setSceneCulled(false); // pzopt
+            if (z.hasAnimationPlayer()) { // pzopt
+               z.getAnimationPlayer().doBlending = false; // pzopt
+            } // pzopt
          } else {
+            if (pzopt.ZombieLod.active()) pzopt.ZombieLod.lost(z); // pzopt: zombieLodFadeMs, no fade (or done)
             z.setSceneCulled(true);
             if (z.hasAnimationPlayer()) {
                z.getAnimationPlayer().doBlending = false;

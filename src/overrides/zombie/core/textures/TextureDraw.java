@@ -491,7 +491,9 @@ public final class TextureDraw {
 
    public void run() {
       if (pzopt.UniformCache.ON && this.type != TextureDraw.Type.StartShader) pzopt.UniformCache.reset(); // pzopt: uniformCache, any other command may touch uniforms
+      if (pzopt.HordeBatch.pending != 0) pzopt.HordeBatch.beforeOp(this); // pzopt: hordeBatch, a run of zombie draws ends here unless this is one of them
       if (pzopt.Sway.mrt) pzopt.Sway.beforeOp(this); // pzopt: foliage sway, a model / generic drawer binds its own program: one draw buffer again
+      if (pzopt.HordeDraw.LOG && this.type != TextureDraw.Type.DrawModel) pzopt.HordeDraw.other(); // pzopt: horde model draws, dev: a command between character draws
       switch (this.type) {
          case glBuffer:
             if (Core.getInstance().supportsFBO()) {
@@ -672,13 +674,19 @@ public final class TextureDraw {
                if (pzoptMotionId == 0 && pzopt.Ssr.stencilMoving()) { // pzopt: reflections, the moving-object scatter reads only the pixels the models drew
                   pzoptMotionId = pzopt.ObjectMotion.MOVING_ID; // pzopt
                } // pzopt
+               if (pzopt.HordeBatch.offer(this, pzoptMotionId)) { // pzopt: hordeBatch, a zombie's model draws go into the batch
+                  break; // pzopt
+               } // pzopt
                if (pzoptMotionId > 0) {
                   pzopt.ObjectMotion.beginStencil(pzoptMotionId);
                }
                boolean pzoptOutline = pzopt.OccludedOutline.beginModel(this); // pzopt: occluded outlines, the stencil codes this model's meshes write
+               if (pzopt.HordeDraw.modelBegin(this.drawer)) { // pzopt: horde model draws, dev rig (counters, cost modes)
                synchronized (this.drawer) {
                   this.drawer.render(this);
                }
+               pzopt.HordeDraw.modelEnd(this.drawer); // pzopt: horde model draws, dev rig
+               } // pzopt
                if (pzoptOutline) pzopt.OccludedOutline.endModel(); // pzopt
                if (pzoptMotionId > 0) {
                   pzopt.ObjectMotion.endStencil();
