@@ -98,7 +98,7 @@ public final class HordeBatch {
    private static int mode() {
       if (!Config.DEV_HORDE_MODES.isEmpty()) {
          int d = HordeDraw.mode;
-         return d == 5 ? EXACT : d >= 6 && d <= 9 ? DEFER : OFF;
+         return d == 5 || d >= 10 && d <= 16 ? EXACT : d >= 6 && d <= 9 ? DEFER : OFF;
       }
       return CONFIG_MODE;
    }
@@ -134,6 +134,16 @@ public final class HordeBatch {
       }
    }
 
+   /** Render thread: the moving pass's number (pzopt.AtlasBatch's buffer segments turn with it). */
+   public static long passIndex() {
+      return statFrames;
+   }
+
+   /** Render thread: inside the world pass's moving objects (pzopt.AtlasBatch batches there only). */
+   public static boolean inPassNow() {
+      return inPass;
+   }
+
    /** Game thread, before the moving objects pass. */
    public static void beginPass() {
       if (wanted()) {
@@ -156,6 +166,13 @@ public final class HordeBatch {
    private static int locDraw = -1;
    private static int drawIdBuffer;
    private static int programStatic;
+   // hordeBatchUnits: the sampler-array programs (pzopt_hordeu), 0 = not in use
+   static final int UNITS = Math.max(0, Math.min(16, Config.HORDE_BATCH_UNITS));
+   private static int programU;
+   private static int programStaticU;
+   private static final boolean[] drawChunk = new boolean[MAX_DRAWS]; // a chunk of the run starts here: bind its textures
+   private static final IdentityHashMap<Texture, Integer> chunkUnits = new IdentityHashMap<>();
+   private static final Texture[] chunkTex = new Texture[16];
    private static int locDrawStatic = -1;
    private static boolean staticFailed;
    private static final int SETS = 3;
@@ -250,6 +267,7 @@ public final class HordeBatch {
       if (pending > 0) {
          flush();
       }
+      AtlasBatch.endPass();
       if (useMapped && frameDraws > 0 && mapFence[mset] == 0L) {
          mapFence[mset] = org.lwjgl.opengl.GL32.glFenceSync(org.lwjgl.opengl.GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
       }
@@ -258,7 +276,7 @@ public final class HordeBatch {
       if (now - lastLogNs > 10_000_000_000L) {
          lastLogNs = now;
          Log.info("horde batch: mode=" + Config.HORDE_BATCH + " frames=" + statFrames + " chars=" + statChars + " draws=" + statDraws + " flushes=" + statFlushes + " (texture renders " + statTexFlushes + ")"
-            + " stock=" + statStock + " mapped=" + mappedOk + " fenceWaits=" + fenceWaits + " skipped=" + skippedDraws + " rejects:" + rejects() + " instance:" + java.util.Arrays.toString(INSTANCE_REJECT) + (Config.DEV_HORDE_CHECK > 0 ? " check: runs=" + checkRuns + " vacuous=" + checkVacuous + " drawnPixels=" + checkDrawn + " pixels=" + checkPixels + " colourDiff=" + checkColour + " depthDiff=" + checkDepth + " maxDelta=" + checkMaxDelta + " lastMs=" + checkLastMs + (Config.DEV_HORDE_CHECK_VARIANTS ? " variants runs/diff " + java.util.Arrays.toString(VAR_RUNS) + "/" + java.util.Arrays.toString(VAR_DIFF) : "") : ""));
+            + " stock=" + statStock + (statWindows > 0 ? orderStats() : "") + (programU != 0 ? " units: checks=" + unitsChecks + " notRestored=" + unitsMismatch : "") + " mapped=" + mappedOk + " fenceWaits=" + fenceWaits + " skipped=" + skippedDraws + " rejects:" + rejects() + " instance:" + java.util.Arrays.toString(INSTANCE_REJECT) + (Config.DEV_HORDE_CHECK > 0 ? " check: runs=" + checkRuns + " vacuous=" + checkVacuous + " drawnPixels=" + checkDrawn + " pixels=" + checkPixels + " colourDiff=" + checkColour + " depthDiff=" + checkDepth + " maxDelta=" + checkMaxDelta + " lastMs=" + checkLastMs + (Config.DEV_HORDE_CHECK_VARIANTS ? " variants runs/diff " + java.util.Arrays.toString(VAR_RUNS) + "/" + java.util.Arrays.toString(VAR_DIFF) : "") : ""));
       }
    }
 
@@ -276,10 +294,16 @@ public final class HordeBatch {
          if (d instanceof ModelSlotRenderData || d instanceof zombie.core.skinnedmodel.ModelCameraRenderData || d instanceof Marker || isNeutralGeneric(d)) {
             return; // the offer decides for a model draw; camera records only set Java fields
          }
+         if (winFirst != 0 && zombie.core.skinnedmodel.DeadBodyAtlas.pzoptIsAtlasDrawer(d)) {
+            return; // hordeBatchOrder=window: AtlasBatch.offer decides
+         }
          if (pendingMode == EXACT) {
             flush();
          }
          return;
+      }
+      if (winFirst != 0 && t == TextureDraw.Type.StartShader && texd.a == 0 && texd.drawer == null) {
+         return; // hordeBatchOrder=window: program 0 for the next atlas quad (AtlasBatch)
       }
       if (pendingMode == EXACT) {
          flush();
@@ -334,7 +358,7 @@ public final class HordeBatch {
    public static boolean offer(TextureDraw texd, int motionId) {
       int m = inPass ? mode() : OFF;
       if (m == OFF || failed) {
-         if (pending > 0) {
+         if (pending > 0 || winFirst != 0) {
             flush();
          }
          return false;
@@ -343,7 +367,7 @@ public final class HordeBatch {
          return false; // a generic drawer: beforeOp has decided (camera records and markers stay inside a run)
       }
       if (!batchable(texd, slot, motionId) || !initGl() && reject(9)) {
-         if (pending > 0 && (pendingMode == EXACT || slot.character != null)) {
+         if (pending > 0 && (pendingMode == EXACT || slot.character != null) || winFirst != 0) {
             flush(); // a deferred pass lets vehicles through (drawn now, the zombies at the end: another object order)
          }
          statStock++;
@@ -355,23 +379,41 @@ public final class HordeBatch {
       if (pending == 0) {
          pendingMode = m;
       }
-      if (pending > 0 && slot.pzoptRendersTexture()) {
+      if ((pending > 0 || winFirst != 0) && slot.pzoptRendersTexture()) {
          flush(); // its texture render goes after the earlier characters' draws, as in the stock order
          statTexFlushes++;
       }
+      if (MovingProf.active) {
+         boolean tr = slot.pzoptRendersTexture();
+         if (tr) {
+            MovingProf.composite(slot.character);
+         }
+         MovingProf.enter(tr ? MovingProf.BEGIN_TEX : MovingProf.BEGIN); // (dev rig: the stock checkReady, texture renders apart)
+      }
       ModelInstanceRenderDataList list = slot.pzoptBatchBegin();
+      MovingProf.exit();
       if (list == null) {
          return true; // stock: checkReady said not ready and nothing ready from before: nothing drawn
       }
       int n = list.size();
       if ((frameDraws + n > MAX_DRAWS || framePalette + n * 64 * 16 > MAX_PALETTE_FLOATS) && !reject(10)) {
-         if (pending > 0) {
+         if (pending > 0 || winFirst != 0) {
             flush();
          }
          statStock++;
          return false; // the stock path (its checkReady again is a no-op now)
       }
+      if (m == EXACT && windowNow()) {
+         placeZombie(slot);
+      }
+      MovingProf.enter(MovingProf.RECORD);
       record(slot, list);
+      MovingProf.exit();
+      if (winCheck) {
+         winItems.add(texd);
+         ModelCamera wc = ModelCamera.instance;
+         winCams.add(new float[]{wc.x, wc.y, wc.z, wc.useAngle, wc.useWorldIso ? 1.0F : 0.0F, wc.inVehicle ? 1.0F : 0.0F});
+      }
       slot.pzoptBatchEnd();
       statChars++;
       if (checkFrame) {
@@ -503,13 +545,24 @@ public final class HordeBatch {
       y -= cam.YToIso(-tox - rcx, -toy - rcy, 0.0F);
       x += defx;
       y += defy;
-      double screenWidth = cam.offscreenWidth / 1920.0F;
-      double screenHeight = cam.offscreenHeight / 1920.0F;
-      P.setOrtho(-((float)screenWidth) / 2.0F, (float)screenWidth / 2.0F, -((float)screenHeight) / 2.0F, (float)screenHeight / 2.0F, -10.0F, 10.0F);
-      MV.scaling(Core.scale);
-      MV.scale(Core.tileScale / 2.0F);
-      MV.rotate((float) (Math.PI / 6), 1.0F, 0.0F, 0.0F);
-      MV.rotate((float) (Math.PI * 3.0 / 4.0), 0.0F, 1.0F, 0.0F);
+      // the projection and the model-view's first steps depend only on the screen size and the scales: made once and
+      // copied (the same float operations on the same values, then the same steps on the copy)
+      if (cam.offscreenWidth != baseW || cam.offscreenHeight != baseH || Core.scale != baseScale || Core.tileScale != baseTile || !baseOk) {
+         baseW = cam.offscreenWidth;
+         baseH = cam.offscreenHeight;
+         baseScale = Core.scale;
+         baseTile = Core.tileScale;
+         baseOk = true;
+         double screenWidth = cam.offscreenWidth / 1920.0F;
+         double screenHeight = cam.offscreenHeight / 1920.0F;
+         P_BASE.setOrtho(-((float)screenWidth) / 2.0F, (float)screenWidth / 2.0F, -((float)screenHeight) / 2.0F, (float)screenHeight / 2.0F, -10.0F, 10.0F);
+         MV_BASE.scaling(Core.scale);
+         MV_BASE.scale(Core.tileScale / 2.0F);
+         MV_BASE.rotate((float) (Math.PI / 6), 1.0F, 0.0F, 0.0F);
+         MV_BASE.rotate((float) (Math.PI * 3.0 / 4.0), 0.0F, 1.0F, 0.0F);
+      }
+      P.set(P_BASE);
+      MV.set(MV_BASE);
       double difX = ox - x;
       double difY = oy - y;
       MV.translate(-((float)difX), (float)(oz - z) * 2.44949F, -((float)difY));
@@ -523,6 +576,16 @@ public final class HordeBatch {
          MV.translate(0.0F, -0.48F, 0.0F);
       }
    }
+
+   private static final Matrix4f P_BASE = new Matrix4f();
+   private static final Matrix4f MV_BASE = new Matrix4f();
+   private static int baseW;
+   private static int baseH;
+   private static float baseScale;
+   private static int baseTile;
+   private static boolean baseOk;
+   /** zombieRect computed P / MV for the zombie the next record is for (hordeBatchOrder=window): record reuses them. */
+   private static boolean camReady;
 
    /** Shader.setLight's direction and colour (dir xyz, col rgb) for one effect light. */
    private static void light(ModelInstance.EffectLight el, float animPlayerAngle, float offsetX, float offsetY, float offsetZ, IsoMovingObject instObject) {
@@ -597,7 +660,10 @@ public final class HordeBatch {
       if (checkFrame) {
          runCams.add(new float[]{c.x, c.y, c.z, c.useAngle, c.useWorldIso ? 1.0F : 0.0F, c.inVehicle ? 1.0F : 0.0F});
       }
-      camera(c.x, c.y, c.z, c.useAngle, c.inVehicle);
+      if (!camReady) {
+         camera(c.x, c.y, c.z, c.useAngle, c.inVehicle);
+      }
+      camReady = false;
       // VertexBufferObject.getDepthValueAt(0, 0, 0)
       P.mul(MV, DEPTH_MVP);
       POS.set(0.0F, 0.0F, 0.0F);
@@ -634,6 +700,7 @@ public final class HordeBatch {
          int k = frameDraws;
          int f = k * FLOATS;
          // palette: the instance's floats, shared with an identical earlier palette of the same character
+         MovingProf.enter(MovingProf.REC_PALETTE);
          int base;
          if (model.isStatic) {
             base = framePalette;
@@ -657,10 +724,12 @@ public final class HordeBatch {
             }
          }
          }
+         MovingProf.exit();
          // the record, built in a Java array (the per-character parts once) and sent in one bulk copy: the mapped
          // buffer is write-combined memory, where many small writes cost more than one
          float[] r = REC;
          if (!charPartsDone) {
+            MovingProf.enter(MovingProf.REC_LIGHTS);
             MVP.get(r, 0);
             for (int li = 0; li < 5; li++) {
                // Shader.setLights' values depend on the character only: computed once, written for each instance
@@ -685,6 +754,7 @@ public final class HordeBatch {
             r[34] = 0.0F;
             r[35] = 0.0F;
             charPartsDone = true;
+            MovingProf.exit();
          }
          r[16] = data.tintR;
          r[17] = data.tintG;
@@ -731,6 +801,36 @@ public final class HordeBatch {
    private static final int[] palLens = new int[64];
    private static int palCount;
 
+   /**
+    * Whether two float ranges hold the same bits: eight bytes at a time over direct buffers (the palettes are; a body and
+    * its clothes compare equal over all 960 floats, so this ran to the end ~3 times a zombie), else float by float.
+    */
+   private static boolean sameBits(FloatBuffer a, int ia, FloatBuffer b, int ib, int len) {
+      if (a.isDirect() && b.isDirect()) {
+         long pa = org.lwjgl.system.MemoryUtil.memAddress0(a) + (long)ia * 4L;
+         long pb = org.lwjgl.system.MemoryUtil.memAddress0(b) + (long)ib * 4L;
+         long bytes = (long)len * 4L;
+         long t = 0L;
+         for (; t + 8L <= bytes; t += 8L) {
+            if (org.lwjgl.system.MemoryUtil.memGetLong(pa + t) != org.lwjgl.system.MemoryUtil.memGetLong(pb + t)) {
+               return false;
+            }
+         }
+         for (; t < bytes; t += 4L) {
+            if (org.lwjgl.system.MemoryUtil.memGetInt(pa + t) != org.lwjgl.system.MemoryUtil.memGetInt(pb + t)) {
+               return false;
+            }
+         }
+         return true;
+      }
+      for (int t = 0; t < len; t++) {
+         if (Float.floatToRawIntBits(a.get(ia + t)) != Float.floatToRawIntBits(b.get(ib + t))) {
+            return false;
+         }
+      }
+      return true;
+   }
+
    /** An earlier palette of this character with the same floats (clothes skinned to the body share it). */
    private static int findPalette(FloatBuffer pal, int p0, int len) {
       for (int j = 0; j < palCount; j++) {
@@ -739,14 +839,10 @@ public final class HordeBatch {
          }
          FloatBuffer o = palSrc[j];
          int op = palSrcPos[j];
-         boolean same = true;
-         for (int t = 0; t < len; t++) {
-            if (Float.floatToRawIntBits(o.get(op + t)) != Float.floatToRawIntBits(pal.get(p0 + t))) {
-               same = false;
-               break;
-            }
+         if (o == pal && op == p0) {
+            return palStarts[j];
          }
-         if (same) {
+         if (sameBits(o, op, pal, p0, len)) {
             return palStarts[j];
          }
       }
@@ -768,11 +864,14 @@ public final class HordeBatch {
          return e[0];
       }
       if (VAOS.size() > 4096) {
+         MovingProf.enter(MovingProf.VAO_CLEAR);
          for (int[] old : VAOS.values()) {
             GL30.glDeleteVertexArrays(old[0]);
          }
          VAOS.clear();
+         MovingProf.exit();
       }
+      MovingProf.enter(e == null ? MovingProf.VAO_NEW : MovingProf.VAO_REBUILD); // (dev rig: a new mesh, or a mesh whose buffers changed)
       int id = vaoName();
       GL30.glBindVertexArray(id);
       Model.pzoptMeshPointers(vb); // VertexBufferObject.BeginDraw's pointers and enables, into this array object
@@ -785,7 +884,280 @@ public final class HordeBatch {
       GL30.glBindVertexArray(0);
       GL13.glActiveTexture(GL13.GL_TEXTURE0); // BeginDraw selects a unit per texture-coordinate set; the binds stay on unit 0
       VAOS.put(h, new int[]{id, vbo, ebo});
+      MovingProf.exit();
       return id;
+   }
+
+   // ---- hordeBatchOrder=window (horde round 2) ----
+   // The zombie draws and the atlas quads between two other commands form a window drawn as two groups, each in the stock
+   // order: the kind that came first in the window first. A zombie or quad of the second kind goes after every item of
+   // the first kind, including later ones: a later first-kind item jumps over it. So an arriving first-kind item must not
+   // overlap any earlier second-kind item (rectangles on a coarse screen grid, conservative): if it does, the window is
+   // drawn and the item opens a new one. Draws that do not overlap commute: the same pixels. The first item of each group
+   // meets the state it met in stock (the window's opening state for the first group, the first group's tail for the
+   // second: in stock an item of the second kind always followed one of the first).
+   static final boolean ORDER_WINDOW = "window".equals(Config.HORDE_BATCH_ORDER);
+   /** 0 no window, 1 zombies first, 2 atlas quads first. */
+   static int winFirst;
+   private static final int GX = 192;
+   private static final int GY = 96;
+   private static final int GW = GX / 64;
+   private static final long[] gridZ = new long[GY * GW];
+   private static final long[] gridA = new long[GY * GW];
+   private static boolean gridDirty;
+   private static final int[] RECT = new int[4];
+   private static long statWindows;
+   private static long statConflicts;
+   private static long statWinZ;
+   private static long statWinA;
+   // dev check
+   private static boolean winCheck;
+   private static long winIndex;
+   static final ArrayList<Object> winItems = new ArrayList<>();
+   private static final ArrayList<float[]> winCams = new ArrayList<>();
+   private static long ordRuns;
+   private static long ordVacuous;
+   private static long ordDrawn;
+   private static long ordColour;
+   private static long ordDepth;
+   private static long ordLastMs;
+   private static boolean ordOff;
+
+   /** Whether this frame orders by windows (devHordeModes e = 14 forces it, with atlasBatch). */
+   static boolean windowNow() {
+      return Config.DEV_HORDE_MODES.isEmpty() ? ORDER_WINDOW && AtlasBatch.ON : HordeDraw.mode >= 14 && HordeDraw.mode <= 16;
+   }
+
+   private static void openWindow(int first) {
+      winFirst = first;
+      statWindows++;
+      winCheck = Config.DEV_HORDE_ORDER_CHECK > 0 && !ordOff && ++winIndex % Config.DEV_HORDE_ORDER_CHECK == 0;
+      winItems.clear();
+      winCams.clear();
+   }
+
+   /** Draws the window: both groups in the window's order. */
+   public static void windowFlush() {
+      int first = winFirst;
+      winFirst = 0;
+      if (gridDirty) {
+         java.util.Arrays.fill(gridZ, 0L);
+         java.util.Arrays.fill(gridA, 0L);
+         gridDirty = false;
+      }
+      boolean check = winCheck && pending > 0 && AtlasBatch.pending > 0 && FbCheck.save();
+      winCheck = false;
+      if (first == 1) {
+         flushZ();
+         AtlasBatch.flushRun();
+      } else {
+         AtlasBatch.flushRun();
+         flushZ();
+      }
+      if (check) {
+         orderCompare();
+      }
+      winItems.clear();
+      winCams.clear();
+   }
+
+   /** A zombie about to be recorded into the window: a new window if it would jump over an earlier quad it overlaps. */
+   private static void placeZombie(ModelSlotRenderData slot) {
+      zombieRect(slot);
+      if (winFirst == 1 && AtlasBatch.pending > 0 && test(gridA)) {
+         statConflicts++;
+         windowFlush();
+      }
+      if (winFirst == 0) {
+         openWindow(1);
+      }
+      mark(gridZ);
+      statWinZ++;
+   }
+
+   /** An atlas quad (NDC rectangle) about to join the window (pzopt.AtlasBatch.offer): false = the window was drawn first. */
+   static void placeQuad(float x0, float y0, float x1, float y1) {
+      cells(x0, y0, x1, y1);
+      if (winFirst == 2 && pending > 0 && test(gridZ)) {
+         statConflicts++;
+         windowFlush();
+      }
+      if (winFirst == 0) {
+         openWindow(2);
+      }
+      mark(gridA);
+      statWinA++;
+   }
+
+   /** The zombie's bounds box (model units) through its model-view-projection, as cells of the screen grid. */
+   private static void zombieRect(ModelSlotRenderData slot) {
+      ModelCamera c = ModelCamera.instance;
+      camera(c.x, c.y, c.z, c.useAngle, c.inVehicle);
+      camReady = true; // the record that follows uses this P / MV
+      MVP.set(P).mul(MV);
+      float sc = Math.max(1.0F, Math.abs(slot.finalScale)); // the shader scales the model by finalScale
+      float bx = Config.HORDE_ORDER_BOX_XZ * sc, y0 = Config.HORDE_ORDER_BOX_Y0 * sc, y1 = Config.HORDE_ORDER_BOX_Y1 * sc;
+      float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+      for (int i = 0; i < 8; i++) {
+         float px = (i & 1) == 0 ? -bx : bx;
+         float py = (i & 2) == 0 ? y0 : y1;
+         float pz = (i & 4) == 0 ? -bx : bx;
+         float cx = MVP.m00() * px + MVP.m10() * py + MVP.m20() * pz + MVP.m30();
+         float cy = MVP.m01() * px + MVP.m11() * py + MVP.m21() * pz + MVP.m31();
+         float cw = MVP.m03() * px + MVP.m13() * py + MVP.m23() * pz + MVP.m33();
+         if (cw <= 0.0F) {
+            minX = minY = -2.0F; // never behind an orthographic camera; whole screen if so
+            maxX = maxY = 2.0F;
+            break;
+         }
+         float nx = cx / cw, ny = cy / cw;
+         minX = Math.min(minX, nx);
+         maxX = Math.max(maxX, nx);
+         minY = Math.min(minY, ny);
+         maxY = Math.max(maxY, ny);
+      }
+      cells(minX, minY, maxX, maxY);
+   }
+
+   /** NDC rectangle -> grid cells, one cell of margin. */
+   private static void cells(float x0, float y0, float x1, float y1) {
+      int cx0 = (int)Math.floor((x0 + 1.0F) * 0.5F * GX) - 1;
+      int cx1 = (int)Math.floor((x1 + 1.0F) * 0.5F * GX) + 1;
+      int cy0 = (int)Math.floor((y0 + 1.0F) * 0.5F * GY) - 1;
+      int cy1 = (int)Math.floor((y1 + 1.0F) * 0.5F * GY) + 1;
+      RECT[0] = Math.max(0, Math.min(GX - 1, cx0));
+      RECT[1] = Math.max(0, Math.min(GY - 1, cy0));
+      RECT[2] = Math.max(0, Math.min(GX - 1, cx1));
+      RECT[3] = Math.max(0, Math.min(GY - 1, cy1));
+      if (Float.isNaN(x0) || Float.isNaN(y0) || Float.isNaN(x1) || Float.isNaN(y1)) {
+         RECT[0] = 0;
+         RECT[1] = 0;
+         RECT[2] = GX - 1;
+         RECT[3] = GY - 1;
+      }
+   }
+
+   private static void mark(long[] g) {
+      gridDirty = true;
+      for (int y = RECT[1]; y <= RECT[3]; y++) {
+         for (int x = RECT[0]; x <= RECT[2]; x++) {
+            g[y * GW + (x >> 6)] |= 1L << (x & 63);
+         }
+      }
+   }
+
+   private static boolean test(long[] g) {
+      for (int y = RECT[1]; y <= RECT[3]; y++) {
+         for (int x = RECT[0]; x <= RECT[2]; x++) {
+            if ((g[y * GW + (x >> 6)] & 1L << (x & 63)) != 0L) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
+   static void windowAddQuad(Object drawer) {
+      if (winCheck) {
+         winItems.add(drawer);
+         winCams.add(null);
+      }
+   }
+
+   /** Dev check: the window's picture against every zombie and quad drawn the stock way in the stock order. */
+   private static void orderCompare() {
+      long t0 = System.nanoTime();
+      long[] r = FbCheck.compareWith(() -> {
+         ModelCamera prevCamera = ModelCamera.instance;
+         ModelCamera cam = CharacterModelCamera.instance;
+         float sx = cam.x, sy = cam.y, sz = cam.z, sa = cam.useAngle;
+         boolean sw = cam.useWorldIso, sv = cam.inVehicle;
+         for (int i = 0; i < winItems.size(); i++) {
+            Object o = winItems.get(i);
+            float[] c = winCams.get(i);
+            if (c == null) {
+               zombie.core.skinnedmodel.DeadBodyAtlas.pzoptAtlasRender(o);
+               continue;
+            }
+            ModelCamera.instance = cam;
+            cam.x = c[0];
+            cam.y = c[1];
+            cam.z = c[2];
+            cam.useAngle = c[3];
+            cam.useWorldIso = c[4] != 0.0F;
+            cam.inVehicle = c[5] != 0.0F;
+            TextureDraw t = (TextureDraw)o;
+            synchronized (t.drawer) {
+               t.drawer.render(t);
+            }
+         }
+         cam.x = sx;
+         cam.y = sy;
+         cam.z = sz;
+         cam.useAngle = sa;
+         cam.useWorldIso = sw;
+         cam.inVehicle = sv;
+         ModelCamera.instance = prevCamera;
+      });
+      ordRuns++;
+      if (r[0] == 0L) {
+         ordVacuous++;
+      }
+      ordDrawn += r[0];
+      ordColour += r[1];
+      ordDepth += r[2];
+      if (r[1] != 0L || r[2] != 0L) {
+         Log.info("horde order check: window of " + winItems.size() + " items: " + r[1] + " colour / " + r[2] + " depth pixels differ, box " + r[3] + "," + r[4] + "-" + r[5] + "," + r[6]);
+      }
+      ordLastMs = (System.nanoTime() - t0) / 1_000_000L;
+      if (ordLastMs > 1000L) {
+         ordOff = true;
+         Log.info("horde order check: " + ordLastMs + " ms, the check is off");
+      }
+   }
+
+   static String orderStats() {
+      return " order: windows=" + statWindows + " conflicts=" + statConflicts + " zombies=" + statWinZ + " quads=" + statWinA
+         + (Config.DEV_HORDE_ORDER_CHECK > 0 ? " check: runs=" + ordRuns + " vacuous=" + ordVacuous + " drawnPixels=" + ordDrawn + " colourDiff=" + ordColour + " depthDiff=" + ordDepth + " lastMs=" + ordLastMs : "");
+   }
+
+   // hordeBatchVao=format: one vertex array object per vertex layout (separate attribute format, GL 4.3), the mesh's
+   // buffers bound per draw; a new mesh then needs no new object (creating one per mesh waited ~1 ms on the threaded
+   // driver: devMovingProf flush.vao.new, 248 in the Louisville route)
+   static final boolean VAO_FORMAT = "format".equals(Config.HORDE_BATCH_VAO);
+   private static final java.util.HashMap<String, Integer> FORMAT_VAOS = new java.util.HashMap<>();
+   private static final IdentityHashMap<Object, Integer> FORMAT_BY_MESH = new IdentityHashMap<>();
+
+   private static int formatVao(VertexBufferObject vb) {
+      Object h = Model.pzoptMeshHandle(vb);
+      Integer v = FORMAT_BY_MESH.get(h);
+      if (v != null) {
+         return v;
+      }
+      if (FORMAT_BY_MESH.size() > 8192) {
+         FORMAT_BY_MESH.clear(); // a lookup cache only (no GL objects behind it)
+      }
+      String key = Model.pzoptMeshLayout(vb);
+      v = FORMAT_VAOS.get(key);
+      if (v == null) {
+         MovingProf.enter(MovingProf.VAO_NEW);
+         int id = vaoName();
+         GL30.glBindVertexArray(id);
+         Model.pzoptMeshFormat(vb);
+         org.lwjgl.opengl.GL43.glVertexAttribIFormat(15, 1, GL11.GL_INT, 0);
+         org.lwjgl.opengl.GL43.glVertexAttribBinding(15, 1);
+         GL20.glEnableVertexAttribArray(15);
+         org.lwjgl.opengl.GL43.glVertexBindingDivisor(1, 1);
+         org.lwjgl.opengl.GL43.glBindVertexBuffer(1, drawIdBuffer, 0L, 4);
+         GL30.glBindVertexArray(0);
+         GL13.glActiveTexture(GL13.GL_TEXTURE0);
+         FORMAT_VAOS.put(key, id);
+         v = id;
+         MovingProf.exit();
+         Log.info("horde batch: vertex layout " + key + " -> vertex array " + id + " (" + FORMAT_VAOS.size() + " layouts)");
+      }
+      FORMAT_BY_MESH.put(h, v);
+      return v;
    }
 
    // vertex array names come from a pool filled a thousand at a time: glGenVertexArrays returns a name, which on a
@@ -799,6 +1171,51 @@ public final class HordeBatch {
          vaoPoolLeft = VAO_POOL.length;
       }
       return VAO_POOL[--vaoPoolLeft];
+   }
+
+   private static final int[] unitsBefore = new int[16];
+   private static long unitsChecks;
+   private static long unitsMismatch;
+
+   /** Dev check (devHordeCheck frames): the texture bound on each unit the chunks use, before the run's attribute push. */
+   private static void unitsSave() {
+      int active = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+      for (int u = 0; u < UNITS; u++) {
+         GL13.glActiveTexture(GL13.GL_TEXTURE0 + u);
+         unitsBefore[u] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+      }
+      GL13.glActiveTexture(active);
+   }
+
+   /** Dev check: after the pop every unit must hold its texture again (the attribute stack restores them all). */
+   private static void unitsCompare() {
+      int active = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+      for (int u = 0; u < UNITS; u++) {
+         GL13.glActiveTexture(GL13.GL_TEXTURE0 + u);
+         if (GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D) != unitsBefore[u]) {
+            unitsMismatch++;
+            Log.info("horde batch: texture unit " + u + " not restored by the pop (" + unitsBefore[u] + " -> " + GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D) + ")");
+         }
+      }
+      GL13.glActiveTexture(active);
+      unitsChecks++;
+   }
+
+   private static int unitsProgram(boolean isStatic) {
+      Shader sh = ShaderManager.instance.getOrCreateShader("pzopt_hordeu", isStatic, false);
+      if (sh == null || sh.getShaderProgram() == null || !sh.getShaderProgram().isCompiled()) {
+         return 0;
+      }
+      int id = sh.getShaderProgram().getShaderID();
+      ShaderHelper.glUseProgramObjectARB(id);
+      for (int u = 0; u < 16; u++) {
+         int loc = GL20.glGetUniformLocation(id, "pzoptTex[" + u + "]");
+         if (loc >= 0) {
+            GL20.glUniform1i(loc, u);
+         }
+      }
+      ShaderHelper.glUseProgramObjectARB(SceneShaderStore.defaultShaderId);
+      return id;
    }
 
    private static boolean initGl() {
@@ -841,6 +1258,17 @@ public final class HordeBatch {
             programStatic = 0;
             staticFailed = true;
             Log.warn("horde batch: pzopt_horde_static did not compile; zombies with attached items stay stock");
+         }
+         if (UNITS > 0) {
+            programU = unitsProgram(false);
+            programStaticU = programStatic != 0 ? unitsProgram(true) : 0;
+            if (programU == 0 || programStatic != 0 && programStaticU == 0) {
+               programU = 0;
+               programStaticU = 0;
+               Log.warn("horde batch: pzopt_hordeu did not compile; one texture bind a draw stays");
+            } else {
+               Log.info("horde batch: texture units " + UNITS + " a chunk, programs " + programU + "/" + programStaticU);
+            }
          }
          int locTex = GL20.glGetUniformLocation(program, "Texture");
          for (int b = 0; b < SETS; b++) {
@@ -910,6 +1338,27 @@ public final class HordeBatch {
 
    /** Render thread: draw the pending run. */
    public static void flush() {
+      if (winFirst != 0) {
+         windowFlush();
+         return;
+      }
+      flushZ();
+   }
+
+   private static void flushZ() {
+      if (MovingProf.active) {
+         MovingProf.enter(MovingProf.FLUSH);
+         try {
+            flush0();
+         } finally {
+            MovingProf.exit();
+         }
+         return;
+      }
+      flush0();
+   }
+
+   private static void flush0() {
       int n = pending;
       if (n == 0) {
          return;
@@ -921,6 +1370,29 @@ public final class HordeBatch {
       // frame's start: a record's index is its draw index, a palette base counts matrices from the frame's palette start
       int ssboDraws = useMapped ? mapDrawIds[mset] : ssboDrawSets[set];
       int ssboPalette = useMapped ? mapPalIds[mset] : ssboPaletteSets[set];
+      boolean units = programU != 0 && (Config.DEV_HORDE_MODES.isEmpty() || HordeDraw.mode == 16); // (devHordeModes g: window + units)
+      if (units) {
+         // the run's textures in chunks of up to UNITS distinct ones, each draw's record told its unit (before the upload)
+         chunkUnits.clear();
+         for (int k = first; k < first + n; k++) {
+            Texture t = drawTex[k];
+            Integer u = chunkUnits.get(t);
+            drawChunk[k] = false;
+            if (u == null) {
+               if (chunkUnits.size() == UNITS) {
+                  chunkUnits.clear();
+               }
+               if (chunkUnits.isEmpty()) {
+                  drawChunk[k] = true;
+               }
+               u = chunkUnits.size();
+               chunkUnits.put(t, u);
+            }
+            drawFloats.put(k * FLOATS + 33, Float.intBitsToFloat(u));
+         }
+         drawChunk[first] = true;
+         chunkUnits.clear();
+      }
       if (!useMapped) {
       GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, ssboDraws);
       drawBytes.limit((first + n) * RECORD_BYTES).position(first * RECORD_BYTES);
@@ -943,6 +1415,9 @@ public final class HordeBatch {
          checkPalSet = ssboPalette;
       }
       GpuSections.markNow("horde.batch", false); // (gpuSections: the batch's own GPU time, nested in moving)
+      if (units && check) {
+         unitsSave(); // dev check: the units' bindings, compared after the pop
+      }
       GL11.glPushClientAttrib(-1);
       GL11.glPushAttrib(1048575);
       GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 12, ssboDraws);
@@ -965,6 +1440,7 @@ public final class HordeBatch {
       GL11.glEnable(GL11.GL_TEXTURE_2D);
       Texture.lastTextureID = -1; // what unit 0 holds is not known here: the first bind is a real one (stock: the previous character's tail did this)
       int vaoBound = -1;
+      Object meshBound = null;
       for (int k = first; k < first + n; k++) {
          byte st = drawState[k];
          boolean wdm = (st & 1) != 0, wbl = (st & 2) != 0, wsc = (st & 4) != 0;
@@ -1004,6 +1480,7 @@ public final class HordeBatch {
             cull = -2;
             progBound = -1;
             vaoBound = -1;
+            meshBound = null;
             Texture.lastTextureID = -1;
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
          }
@@ -1017,8 +1494,34 @@ public final class HordeBatch {
             }
             cull = cf;
          }
-         if (HordeDraw.mode != 8 || k == first) {
+         if (units) {
+            if (drawChunk[k]) {
+               // this chunk's textures, each on its unit (the records' unit fields were set from the same scan)
+               MovingProf.enter(MovingProf.BIND);
+               int cu = 0;
+               for (int j = k; j < first + n; j++) {
+                  if (j > k && drawChunk[j]) {
+                     break;
+                  }
+                  Texture t = drawTex[j];
+                  if (chunkUnits.containsKey(t)) {
+                     continue;
+                  }
+                  chunkUnits.put(t, cu);
+                  GL13.glActiveTexture(GL13.GL_TEXTURE0 + cu);
+                  Texture.lastTextureID = -1;
+                  t.bind();
+                  cu++;
+               }
+               chunkUnits.clear();
+               GL13.glActiveTexture(GL13.GL_TEXTURE0);
+               Texture.lastTextureID = -1;
+               MovingProf.exit();
+            }
+         } else if (HordeDraw.mode != 8 && HordeDraw.mode != 15 || k == first) { // (dev mode f: window order with one texture a run, the binds' cost)
+            MovingProf.enter(MovingProf.BIND);
             drawTex[k].bind(); // (dev mode 8: one texture for the whole run, the cost of the binds)
+            MovingProf.exit();
          }
          if (!checkFrame) {
             drawTex[k] = null;
@@ -1034,17 +1537,24 @@ public final class HordeBatch {
             skippedDraws++; // its buffers went away since the offer (the stock draw would have skipped it too)
             continue;
          }
-         int v = vao(vbk);
+         MovingProf.enter(MovingProf.VAO);
+         int v = VAO_FORMAT ? formatVao(vbk) : vao(vbk);
          if (v != vaoBound) {
             GL30.glBindVertexArray(v);
             vaoBound = v;
+            meshBound = null;
          }
-         int prog = drawStatic[k] ? programStatic : program;
+         if (VAO_FORMAT && Model.pzoptMeshHandle(vbk) != meshBound) {
+            Model.pzoptMeshBind(vbk);
+            meshBound = Model.pzoptMeshHandle(vbk);
+         }
+         MovingProf.exit();
+         int prog = units ? (drawStatic[k] ? programStaticU : programU) : drawStatic[k] ? programStatic : program;
          if (prog != progBound) {
             ShaderHelper.glUseProgramObjectARB(prog);
             progBound = prog;
          }
-         if (HordeDraw.mode != 7) {
+         if (HordeDraw.mode != 7 && HordeDraw.mode != 11 && HordeDraw.mode != 12) {
             org.lwjgl.opengl.GL42.glDrawElementsInstancedBaseInstance(GL11.GL_TRIANGLES, Model.pzoptMeshElements(vbk), GL11.GL_UNSIGNED_INT, 0L, 1, k); // (dev mode 7: no draw call, the cost of the rest)
          }
       }
@@ -1055,6 +1565,9 @@ public final class HordeBatch {
       GL11.glDepthRange(0.0, 1.0);
       GL11.glPopAttrib();
       GL11.glPopClientAttrib();
+      if (units && check) {
+         unitsCompare();
+      }
       // performRenderCharacter's tail
       Texture.lastTextureID = -1;
       GL11.glEnable(3553);
@@ -1307,7 +1820,12 @@ public final class HordeBatch {
          GL13.glActiveTexture(GL13.GL_TEXTURE0);
          Texture.lastTextureID = -1;
          drawTex[k].bind();
-         GL30.glBindVertexArray(vao(drawVb[k]));
+         if (VAO_FORMAT) {
+            GL30.glBindVertexArray(formatVao(drawVb[k]));
+            Model.pzoptMeshBind(drawVb[k]);
+         } else {
+            GL30.glBindVertexArray(vao(drawVb[k]));
+         }
          org.lwjgl.opengl.GL42.glDrawElementsInstancedBaseInstance(GL11.GL_TRIANGLES, drawCount[k], GL11.GL_UNSIGNED_INT, 0L, 1, k);
          GL30.glBindVertexArray(0);
          ShaderHelper.glUseProgramObjectARB(SceneShaderStore.defaultShaderId);

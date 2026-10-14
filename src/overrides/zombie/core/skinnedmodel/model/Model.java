@@ -362,6 +362,67 @@ public final class Model extends Asset {
       org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, handle.eboId); // pzopt
    } // pzopt
 
+   /**
+    * pzopt: hordeBatch (hordeBatchVao=format), the identity of a mesh's vertex layout: the stride and each element's type
+    * and offset (meshes with the same layout share one vertex array object, the buffers bound per mesh).
+    */
+   public static String pzoptMeshLayout(VertexBufferObject vb) { // pzopt
+      VertexBufferObject.VertexFormat vertexFormat = pzoptFormat(vb); // pzopt
+      StringBuilder sb = new StringBuilder().append(vb.handle.vertexStride); // pzopt
+      for (int i = 0; i < vertexFormat.elements.length; i++) { // pzopt
+         VertexBufferObject.VertexElement element = vertexFormat.elements[i]; // pzopt
+         sb.append(';').append(element.type.ordinal()).append('@').append(element.byteOffset); // pzopt
+      } // pzopt
+      return sb.toString(); // pzopt
+   } // pzopt
+
+   private static VertexBufferObject.VertexFormat pzoptFormat(VertexBufferObject vb) { // pzopt
+      try { // pzopt
+         if (pzoptFormatField == null) { // pzopt
+            java.lang.reflect.Field f = VertexBufferObject.class.getDeclaredField("vertexFormat"); // pzopt
+            f.setAccessible(true); // pzopt
+            pzoptFormatField = f; // pzopt
+         } // pzopt
+         return (VertexBufferObject.VertexFormat)pzoptFormatField.get(vb); // pzopt
+      } catch (ReflectiveOperationException e) { // pzopt
+         throw new IllegalStateException(e); // pzopt
+      } // pzopt
+   } // pzopt
+
+   /**
+    * pzopt: hordeBatch (hordeBatchVao=format). pzoptMeshPointers' attributes as a separate format (GL 4.3 vertex attribute
+    * binding) on buffer binding 0, into the vertex array object the caller has bound: the same sizes, types,
+    * normalisation and offsets; the stride and buffers come with pzoptMeshBind.
+    */
+   public static void pzoptMeshFormat(VertexBufferObject vb) { // pzopt
+      VertexBufferObject.VertexFormat vertexFormat = pzoptFormat(vb); // pzopt
+      for (int i = 0; i < vertexFormat.elements.length; i++) { // pzopt
+         VertexBufferObject.VertexElement element = vertexFormat.elements[i]; // pzopt
+         int size; // pzopt
+         int type = 5126; // pzopt
+         boolean normalized = false; // pzopt
+         switch (element.type.ordinal()) { // pzopt
+            case 0: size = 3; break; // pzopt
+            case 1: size = 3; normalized = true; break; // pzopt
+            case 2: size = 3; type = 5121; normalized = true; break; // pzopt
+            case 4: size = 2; break; // pzopt
+            case 6: // pzopt
+            case 7: size = 4; break; // pzopt
+            default: continue; // pzopt
+         } // pzopt
+         org.lwjgl.opengl.GL43.glVertexAttribFormat(i, size, type, normalized, element.byteOffset); // pzopt
+         org.lwjgl.opengl.GL43.glVertexAttribBinding(i, 0); // pzopt
+         org.lwjgl.opengl.GL20.glEnableVertexAttribArray(i); // pzopt
+      } // pzopt
+   } // pzopt
+
+   /** pzopt: hordeBatch (hordeBatchVao=format), a mesh's buffers into the bound format vertex array object. */
+   public static void pzoptMeshBind(VertexBufferObject vb) { // pzopt
+      VertexBufferObject.Vbo handle = vb.handle; // pzopt
+      org.lwjgl.opengl.GL43.glBindVertexBuffer(0, handle.vboId, 0L, handle.vertexStride); // pzopt
+      org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, handle.eboId); // pzopt
+   } // pzopt
+
    public void EnsureEffect() {
       if (this.effect == null) {
          this.CreateShader("basicEffect");

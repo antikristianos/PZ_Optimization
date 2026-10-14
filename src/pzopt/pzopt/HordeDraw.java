@@ -19,7 +19,10 @@ import zombie.core.textures.TextureDraw;
  * <li>4 the character model draws skipped entirely (vehicles still drawn): what is left of the pass;</li>
  * <li>5 / 6 hordeBatch exact / defer for the frame (pzopt.HordeBatch), whatever the key says; 7 defer without the draw
  * calls, 8 defer with one texture and one mesh for the whole run (no state change between draws: what multi-draw could reach) (the costs of the vertex work and of the binds), 9 defer with the records sent
- * by glBufferSubData instead of the persistent mapping.</li>
+ * by glBufferSubData instead of the persistent mapping;</li>
+ * <li>letters (horde round 2): a = 10 exact with the atlas zombies' sprites (DeadBodyAtlas$BodyTextureDepthDrawer) not
+ * drawn, b = 11 exact without the batch's draw calls, c = 12 exact with neither the atlas sprites, the batch's draw calls
+ * nor any stock character model draw (the pass's floor), d = 13 exact + atlasBatch (pzopt.AtlasBatch), e = 14 exact + atlasBatch + hordeBatchOrder=window, f = 15 as e with one texture a batch run (wrong picture: the texture binds' cost), g = 16 as e with hordeBatchUnits' texture chunks (needs hordeBatchUnits > 0).</li>
  * </ul>
  * {@code devHordeLog}: one line per frame in {@code pzopt-horde.out} (render thread): mode, characters, mesh draws,
  * indices, palette floats, render-thread ns inside the character draws.
@@ -38,16 +41,17 @@ public final class HordeDraw {
 
    /** Game thread, before the moving objects' GPU section begins: picks this frame's mode and queues it in stream order. */
    public static void beginMoving() {
-      if (!(ON || LOG) || !Overrides.enabled()) {
+      if (!(ON || LOG || MovingProf.ON) || !Overrides.enabled()) {
          return;
       }
-      gtMode = ON ? MODES.charAt(Math.floorMod(gtFrame++, MODES.length())) - '0' : 0;
+      char ch = ON ? MODES.charAt(Math.floorMod(gtFrame++, MODES.length())) : '0';
+      gtMode = ch >= 'a' && ch <= 'z' ? 10 + (ch - 'a') : ch - '0';
       SpriteRenderer.instance.drawGeneric(Setter.get(gtMode, false));
    }
 
    /** Game thread, after the moving objects' GPU section ends. */
    public static void endMoving() {
-      if (!(ON || LOG) || !Overrides.enabled()) {
+      if (!(ON || LOG || MovingProf.ON) || !Overrides.enabled()) {
          return;
       }
       SpriteRenderer.instance.drawGeneric(Setter.get(0, true));
@@ -106,11 +110,13 @@ public final class HordeDraw {
       @Override
       public void render() {
          if (this.end) {
+            MovingProf.frameEnd();
             flushFrame();
             mode = 0;
          } else {
             mode = this.value;
             frameMode = this.value;
+            MovingProf.frameBegin();
             chars = 0;
             draws = 0;
             indices = 0L;
@@ -142,7 +148,7 @@ public final class HordeDraw {
       }
       if (!(drawer instanceof ModelSlotRenderData slot) || slot.character == null) {
          other();
-         return true;
+         return !((mode == 10 || mode == 12) && isAtlasDrawer(drawer)); // modes a / c: the atlas zombies' sprites not drawn
       }
       chars++;
       if (otherSince) {
@@ -155,7 +161,7 @@ public final class HordeDraw {
       if (curRun > maxRun) {
          maxRun = curRun;
       }
-      if (mode == 4) {
+      if (mode == 4 || mode == 12) {
          return false;
       }
       if (mode == 3) {
@@ -169,6 +175,19 @@ public final class HordeDraw {
    }
 
    private static long t0;
+   private static Class<?> atlasDrawerClass;
+
+   private static boolean isAtlasDrawer(Object d) {
+      Class<?> c = d.getClass();
+      if (c == atlasDrawerClass) {
+         return true;
+      }
+      if (atlasDrawerClass == null && c.getName().equals("zombie.core.skinnedmodel.DeadBodyAtlas$BodyTextureDepthDrawer")) {
+         atlasDrawerClass = c;
+         return true;
+      }
+      return false;
+   }
 
    /** Render thread, after the drawer rendered (paired with a true {@link #modelBegin}). */
    public static void modelEnd(TextureDraw.GenericDrawer drawer) {

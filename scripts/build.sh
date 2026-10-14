@@ -259,6 +259,18 @@ sv = convert(ssrc, SFILL, set(), ("#version 330", "#version 430"), vhead, ("pzop
 open(out + "/pzopt_horde_static.vert", "w").write(sv)
 open(out + "/pzopt_horde.vert", "w").write(v)
 open(out + "/pzopt_horde.frag", "w").write(f)
+# hordeBatchUnits (horde round 2, 2026-10-14): the same programs with the character texture taken from a sampler array,
+# the draw record's unit (ibase.y) picking the element: a batch run binds its textures in chunks of up to 16 units
+# instead of one bind before every draw (the index is dynamically uniform: one record a draw)
+if f.count("uniform sampler2D Texture;") != 1:
+    raise SystemExit("basicEffect.frag's Texture sampler changed")
+fu = f.replace("uniform sampler2D Texture;", "uniform sampler2D pzoptTex[16]; // pzopt: hordeBatchUnits, the run's textures by unit\nint pzoptUnit; // pzopt: hordeBatchUnits, from the draw record\n#define Texture pzoptTex[pzoptUnit]")
+fu = fu.replace("\tPzoptHordeDraw d = pzoptDraws[pzoptDraw];\n", "\tPzoptHordeDraw d = pzoptDraws[pzoptDraw];\n\tpzoptUnit = d.ibase.y;\n", 1)
+if "pzoptUnit = d.ibase.y" not in fu:
+    raise SystemExit("hordeBatchUnits: pzoptLoad not found")
+open(out + "/pzopt_hordeu_static.vert", "w").write(sv)
+open(out + "/pzopt_hordeu.vert", "w").write(v)
+open(out + "/pzopt_hordeu.frag", "w").write(fu)
 PY
 else
   echo "basicEffect shaders not found next to the jar; the hordeBatch shaders are not generated" >&2

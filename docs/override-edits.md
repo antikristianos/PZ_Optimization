@@ -7645,3 +7645,48 @@ spins the last `limiterSpinUs`. So `SlackWork.frame()` advanced once per pass, n
 than one forced job could run per step. The `slack` total was also summed per pass: integ3-cap2 logged 199 s of slack in
 about 44 s of play. Now only the first call of a game step (keyed by `Pacing.stepStartNs()`) counts a frame and runs jobs.
 A later pass of the same step has less time left than the first had, so nothing that would have fitted is lost.
+
+## The horde's moving pass outside the batched models (2026-10-14, worktree `f8-horde2`): atlas runs, window order, vertex layouts, texture units
+
+Goal-120 round 2 on the Louisville horde seconds (s2, s10, s20-21, s24). Rig `devMovingProf` split the render thread's
+moving pass per command category and measured the pass's GPU time per frame; `devHordeModes` letters alternate variants
+per frame. Findings: the flat atlas zombies' quads (~200-500 a frame, one VBORenderer run each) ~1.3 ms of GPU; the
+batch's runs were short (an atlas quad between most pairs of zombies: ~245 flushes a frame, each an attribute push / pop);
+one texture bind before every model draw ~0.9 ms of GPU; a new mesh's vertex array object waited ~1 ms on the threaded
+driver (248 a route, the 5-26 ms render-thread spikes when the horde comes into view in s2 / s20). All new keys are off by
+default.
+
+- `TextureDraw.run`: at its head the dev rig's category hook (`MovingProf.op`, inert unless devMovingProf) and, while atlas
+  quads are pending, `AtlasBatch.beforeOp` (a run of quads ends at anything but another quad or a `StartShader(0)`; with
+  `hordeBatchOrder=window` a zombie's camera record / model draw does not end it either). In the DrawModel dispatch, after
+  the init future, `AtlasBatch.offer` may take a `DeadBodyAtlas$BodyTextureDepthDrawer` (then nothing else of the stock
+  dispatch runs for it). The dev rig times the init-future wait and the stock drawer render.
+- `SpriteRenderer` (ring buffer sprite batch): the dev rig's category hook (texture of the batch, index count) and, while
+  quads are pending, `AtlasBatch.beforeSprites` (the run is drawn first).
+- `DeadBodyAtlas`: static helpers, nothing of the stock code changed. `pzoptAtlasQuad` computes what
+  `BodyTextureDepthDrawer.render` would draw with its own lines (rectangle, UVs, colour, the two depths from
+  `IsoDepthHelper`, the atlas page and its depth texture) or says it draws nothing / is left to the stock render (an
+  occluded-outline draw, the shader not created yet); `pzoptAtlasRender` (the dev check's stock replay), `pzoptAtlasProgram`,
+  `pzoptIsAtlasDrawer`.
+- `VBORenderer`: `pzoptIdle` (nothing queued: the batch only takes quads then, else the stock render, which would flush that
+  too) and the vertex offset `addQuad` adds (`pzoptDx/Dy/Dz`).
+- `Model`: `pzoptMeshLayout` (a mesh's vertex layout as a key: stride, element types and offsets), `pzoptMeshFormat`
+  (`pzoptMeshPointers`' attributes as GL 4.3 separate attribute formats on buffer binding 0: same sizes, types,
+  normalisation, offsets), `pzoptMeshBind` (the mesh's vertex buffer with its stride and its element buffer).
+- build.sh: `pzopt_hordeu.vert/.frag` + `pzopt_hordeu_static.vert`, the horde programs with the character texture taken
+  from `uniform sampler2D pzoptTex[16]`, indexed by the draw record's unit (ibase.y; dynamically uniform, one record a draw).
+- pzopt only: `pzopt.AtlasBatch` (`atlasBatch`): a run of atlas quads drawn at its end in the stock order from a persistent
+  mapped vertex ring: the first quad under its stock preamble, one `GLStateRenderThread.restore()` then its own depth state
+  for the rest (what every later quad meets in stock after the previous quad's tail), per quad the textures on a page
+  change, the two depth uniforms and `glDrawArrays(GL_QUADS)` with the same four vertices in the same order; the stock tails
+  at the end. `pzopt.HordeBatch`: `hordeBatchVao=format` (one vertex array object per layout, 2 in the route, the mesh's
+  buffers bound per draw), `hordeBatchOrder=window` (the zombies and atlas quads between two other commands drawn as two
+  groups in stock order, the first-come kind first; an arriving item of the first kind may not overlap, on a 192x96 screen
+  grid, an earlier item of the second kind it would jump over (zombie bounds: a model-space box through its MVP,
+  `hordeOrderBox*`), else the window is drawn first; draws that do not overlap commute), `hordeBatchUnits=N` (a run's
+  textures bound in chunks of up to N units), the palette comparison 8 bytes at a time, the camera's projection and fixed
+  model-view steps made once and copied. Dev: `devMovingProf`, `devAtlasCheck`, `devHordeOrderCheck`, `pzopt.FbCheck`,
+  `devHordeModes` a-g, `harness/movingprof.py`.
+- Proof (all 0 colour / 0 depth differences): horde2-vaofmt-chk devHordeCheck 41 runs / 106,722 px; horde2-atlas-chk
+  devAtlasCheck 346 runs / 212,646 px (+ devHordeCheck 22 runs); horde2-order-chk2 devHordeOrderCheck 59 windows /
+  272,005 px (2,960 overlaps that split a window); horde2-rec-chk devHordeCheck 63 runs / 100,109 px (camera caching).
