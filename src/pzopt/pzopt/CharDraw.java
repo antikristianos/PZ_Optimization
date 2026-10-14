@@ -220,6 +220,7 @@ public final class CharDraw {
       ExecutorService exec = pool();
       int chunkStart = 0;
       pending.set(0);
+      boolean sight = FirstSight.active() && FirstSight.anyPending(candidates); // zombieFirstSightSprite, a zombie waits for its first composite: every zombie tested first, the composites granted, then the tasks (else the tasks overlap the tests as before)
       for (int i = 0; i < candidates.size(); i++) {
          IsoZombie zombie = candidates.get(i);
          IsoGridSquare square = zombie.getCurrentSquare();
@@ -239,7 +240,7 @@ public final class CharDraw {
 
             batch.add(zombie);
          }
-         if (batch.size() - chunkStart >= chunk || i == candidates.size() - 1) {
+         if (!sight && (batch.size() - chunkStart >= chunk || i == candidates.size() - 1)) {
             if (batch.size() > chunkStart) {
                final int from = chunkStart;
                final int to = batch.size();
@@ -247,6 +248,15 @@ public final class CharDraw {
                exec.execute(() -> buildRange(from, to));
                chunkStart = to;
             }
+         }
+      }
+      if (sight) {
+         FirstSight.grant(batch);
+         for (int from = 0; from < batch.size(); from += chunk) {
+            final int f = from;
+            final int to = Math.min(batch.size(), from + chunk);
+            pending.incrementAndGet();
+            exec.execute(() -> buildRange(f, to));
          }
       }
       candidates.clear();

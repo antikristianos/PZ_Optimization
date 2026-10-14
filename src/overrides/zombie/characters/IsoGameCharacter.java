@@ -13562,6 +13562,10 @@ public abstract class IsoGameCharacter
       return this.textureCreator;
    }
 
+   public boolean pzoptUpdateModelTextures() { // pzopt: zombieFirstSightSprite, a texture creator is made at the next render (pzopt.FirstSight)
+      return this.updateModelTextures; // pzopt
+   } // pzopt
+
    public void setTextureCreator(ModelInstanceTextureCreator textureCreator) {
       this.textureCreator = textureCreator;
    }

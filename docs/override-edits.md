@@ -7803,3 +7803,42 @@ Edits:
   of a draw on a square the recording asked for and the native did not answer, while the re-run's refresh read it (same Java
   update counter), is counted as `late-light` and not as a mismatch. `devDrawListTrace` (dev): `pzopt.LightTrace` explains
   every difference. `GtAb` bit 48 `frameQueue` (`devGtAlternateKeys=frameQueue`) alternates frameQueue within a run.
+
+## f8-sight pass (2026-10-14): the horde's first sight on Louisville (`renderPrewarm` on, `zombieFirstSightSprite` off)
+
+Maintainer's decisions (2026-10-14, integration round 5): `renderPrewarm` is on by default (exact: the same GL objects,
+made at the first frame of the world instead of at the first 3D zombie; tab "Zombies and hordes" > "Drawing the horde",
+"Prepare the horde's drawing while the world loads"). `zombieFirstSightSprite` (+ `zombieCompositeBudgetUs`) stays off by
+default, a player option next to the zombie level-of-detail entries ("Detail by distance"): it changes what is drawn for a
+moment (a waiting zombie is its lit sprite). The pass's `compositeCache` (released composites parked under the exact key of
+their combine) was dropped before the merge: 0.8-1.3 % hits even with 1 GB, since a zombie's blood / dirt per body part
+makes its composite inputs differ every time.
+
+- `ModelSlotRenderData` (`zombieFirstSightSprite`, `pzopt.FirstSight`): `init` sets `pzoptSkipTexture` when the character's
+  first clothing composite waits this frame; `checkReady` then does not call the texture creator's `render()` (not ready,
+  as stock while the creator's textures load; a first composite has nothing ready from before, so nothing is drawn) and
+  times the renders it does (the budget's cost estimate); `pzoptRendersTexture` says no for a waiting one.
+- `IsoWorld.sceneCullZombies`: `FirstSight.beginCull` once a frame (the budget from the cost estimate) and the zombie's
+  nearest-first place (`FirstSight.won`); a zombie that waited last frame and loses its slot skips the LOD fade-out (it is
+  the sprite already). `pzopt.CharDraw.start` (game thread, before the draw-data tasks): while a drawn zombie waits for its first
+  composite, every zombie is tested first, then `FirstSight.grant` gives the frame's first composites to the nearest waiting
+  zombies (cull rank) and holds every waiting one at the start of the LOD's sprite -> model crossfade (sprite alone, model
+  alpha 0); the ones past the count skip the composite (`pzoptSkipTexture`), the granted ones may still wait one more frame
+  when the render thread's composites this frame passed `zombieCompositeBudgetUs` (`pzoptSightEligible`,
+  `FirstSight.overBudget`, at least one a frame). Without a waiting zombie the tasks overlap the tests as before.
+- `IsoZombie`: `pzoptSightRank`, `pzoptSightPend`, `pzoptSightDefer` fields. `IsoGameCharacter`: `pzoptUpdateModelTextures()` (a texture
+  creator is made at the next render).
+- `RenderThread`: `pzopt.FirstSight.afterSwap()` after the swap (census, `renderPrewarm`).
+- pzopt only (`renderPrewarm`): once the world exists, `HordeBatch.initGl` (its four programs and buffers, made at the first
+  batched zombie: a 27 ms render-thread frame at the route's first sight), `AtlasBatch.init`, `CombinerPool.budgetBytes` (a VRAM query), the composite shaders (`SmartTexture`'s first
+  `add`) and, with combinerPool, `TextureCombiner.pzoptPrewarm`: one composite of each size seen on the route (32..512 squares,
+  64x128, 32x64, 32x128, 256x64, 128x64, 512x256) made and released the stock way, so the framebuffer exists and the reserve
+  fills it before the first zombie (the session's first composite made 11 new textures and a framebuffer: 12-17 ms).
+- Dev `devPrewarmParts` (bits, default all): 1 the horde batch's programs / buffers, 2 the atlas batch buffer, 4 the combiner pool's
+  VRAM query + composite sizes, 8 the composite shaders (drive bisection, HANDOFF-sight.md: a palette-compare JIT warm-up was dropped).
+- Dev census (`devFirstSightCensus`): `TextureCombiner` counts combines, new composites and new framebuffers (and logs a new
+  framebuffer's size), `ModelSlotRenderData.checkReady` brackets the creator's render (`FirstSight.composing` / `composed`).
+- Measured (HANDOFF-sight.md, Louisville LOD 128 cap 120): the first sight's 27 ms render-thread frame and its 12-17 ms first
+  composite are gone with `renderPrewarm` (first composite 2.1-3.3 ms); with `zombieFirstSightSprite` too, the composites a
+  frame drop from 29-34 (13-17 ms render thread) to 9-10 (2.7-3.7 ms), max frame 17.7-25.1 ms vs 21.8-39.1 off. Drive bench
+  (drive-120-south) with both keys 233.7-233.8 fps / 99.2-99.3 % <= 9 ms vs 233.8-234.7 / 99.2-99.4 % off.

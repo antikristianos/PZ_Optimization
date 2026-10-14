@@ -151,6 +151,8 @@ public final class TextureCombiner {
          tex = new Texture(width, height, 16);
          combinerFBO.fbo = new TextureFBO(tex);
          this.fboPool.add(combinerFBO);
+         pzopt.FirstSight.newFbo++; // pzopt: devFirstSightCensus, what a slow composite did
+         if (pzopt.FirstSight.CENSUS) pzopt.Log.info("first sight: new composite framebuffer " + width + "x" + height); // pzopt
          if (pzopt.CombinerPool.CENSUS) { // pzopt: devCombinerCensus
             pzopt.CombinerPool.onRequest(width, false); // pzopt
          } // pzopt
@@ -160,6 +162,7 @@ public final class TextureCombiner {
          pzopt.CombinerPool.lastReuse = pzoptReuse; // pzopt
          pzopt.GlNames.combinerScope = pzopt.CombinerPool.ON; // pzopt: combinerPool, a new composite takes a pooled GL name (no driver round trip)
          tex = !pzoptReuse ? new Texture(width, height, 16) : combinerFBO.textures.pop(); // pzopt: was combinerFBO.textures.isEmpty() ? new : pop
+         if (!pzoptReuse) pzopt.FirstSight.newTex++; // pzopt: devFirstSightCensus
          pzopt.GlNames.combinerScope = false; // pzopt
          if (pzopt.CombinerPool.ON && pzoptReuse) { // pzopt: combinerPool, the free bytes
             pzopt.CombinerPool.pooledBytes -= pzoptBytes(tex); // pzopt
@@ -261,11 +264,30 @@ public final class TextureCombiner {
       } // pzopt
    } // pzopt
 
+   /**
+    * pzopt: renderPrewarm (f8-sight), render thread once the world exists: the composite framebuffers of the common sizes
+    * made now (one composite of each size made and released the stock way), so combinerPool's reserve fills them before the
+    * first zombie is drawn (the session's first composite made 11 new textures and a framebuffer: 6.6-14.4 ms).
+    */
+   /** pzopt: the composite sizes seen on the Louisville route (squares and the clothing / decal sizes made mid-route), width / height pairs */
+   private static final int[] PZOPT_PREWARM_SIZES = {32, 32, 64, 64, 128, 128, 256, 256, 512, 512, 64, 128, 32, 64, 32, 128, 256, 64, 128, 64, 512, 256}; // pzopt
+
+   public void pzoptPrewarm() { // pzopt
+      for (int i = 0; i < PZOPT_PREWARM_SIZES.length; i += 2) { // pzopt
+         int w = PZOPT_PREWARM_SIZES[i]; // pzopt
+         int h = PZOPT_PREWARM_SIZES[i + 1]; // pzopt
+         if (this.getFBO(w, h) == null) { // pzopt
+            this.releaseTexture(this.createTexture(w, h)); // pzopt
+         } // pzopt
+      } // pzopt
+   } // pzopt
+
    public Texture combine(ArrayList<TextureCombinerCommand> cmdList) throws Exception, OpenGLException {
       PZGLUtil.checkGLErrorThrow("Enter", new Object[0]);
       int width = getResultingWidth(cmdList);
       int height = getResultingHeight(cmdList);
       long pzoptT0 = pzopt.CombinerPool.CENSUS ? System.nanoTime() : 0L; // pzopt: devCombinerCensus
+      pzopt.FirstSight.combines++; // pzopt: devFirstSightCensus
       Texture tex3 = this.createTexture(width, height);
       GL11.glPushAttrib(24576);
       GL11.glDisable(3089);

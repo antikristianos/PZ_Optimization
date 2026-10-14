@@ -1218,6 +1218,18 @@ public final class HordeBatch {
       return id;
    }
 
+   /**
+    * renderPrewarm (f8-sight): render thread right after a swap once the world exists: the programs and buffers made at the
+    * first batched zombie (a ~27 ms render-thread frame at the horde's first sight on Louisville) made now. Nothing the game
+    * draws changes. (A JIT warm-up of the palette compare on scratch buffers was tried and dropped: no gain at the first
+    * sight, and the drive bench lost ~4 fps with it, the compare compiled from an all-equal profile.)
+    */
+   public static void prewarm() {
+      if (wanted()) {
+         initGl();
+      }
+   }
+
    private static boolean initGl() {
       if (program != 0) {
          return true;

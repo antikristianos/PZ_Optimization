@@ -236,6 +236,9 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    public long pzoptLodFadeStartNs; // pzopt: when that fade started
    public float pzoptLodModelAlpha = 1.0F; // pzopt: this frame's share of the model (ModelSlotRenderData.init multiplies its alpha)
    public float pzoptLodSpriteAlpha; // pzopt: this frame's share of the flat sprite drawn under it (0: none)
+   public int pzoptSightRank; // pzopt: zombieFirstSightSprite, this zombie's place in the cull loop's nearest-first order
+   public int pzoptSightPend = -1; // pzopt: zombieFirstSightSprite, the cull pass in which this zombie waited for its first composite (drawn as its sprite)
+   public int pzoptSightDefer = -1; // pzopt: zombieFirstSightSprite, the cull pass (pzopt.FirstSight.frame) in which this zombie's first clothing composite waits (drawn as its sprite)
    public float pzoptLodSpriteScale = 1.0F; // pzopt: renderTextureInsteadOfModel's alpha factor (the sprite share while a crossfade draws it under the model)
    public IsoGridSquare pzoptOutlineSquare; // pzopt: occluded outlines, the square the occluder test ran for (OccludedOutline.classify)
    public long pzoptOutlineNs; // pzopt: occluded outlines, when it ran

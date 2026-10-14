@@ -84,6 +84,13 @@ public final class AtlasBatch {
    private static int runFirst; // the pending run's first quad, in the current segment
    private static long fenceWaits;
 
+   /** renderPrewarm (f8-sight): the persistent vertex buffer made once the world exists instead of at the first atlas zombie. */
+   public static void prewarm() {
+      if (ON && Overrides.enabled()) {
+         init();
+      }
+   }
+
    private static boolean init() {
       if (vao != 0) {
          return true;

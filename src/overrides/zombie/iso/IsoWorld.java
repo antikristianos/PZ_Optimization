@@ -2672,6 +2672,7 @@ public final class IsoWorld {
       int pzoptLodKeep = 0; // pzopt: zombieLodHysteresis (places past the cap a zombie already in 3D keeps its model in)
       if (pzopt.ZombieLod.active()) { // pzopt
          pzopt.ZombieLod.update(); // pzopt
+         pzopt.FirstSight.beginCull(); // pzopt: zombieFirstSightSprite, this frame's composite grants
          tcountMax = Math.min(tcountMax, pzopt.ZombieLod.max3d()); // pzopt
          pzoptLodKeep = pzopt.Config.ZOMBIE_LOD_HYSTERESIS; // pzopt
          pzoptBlended = pzopt.ZombieLod.blended(pzoptBlended); // pzopt
@@ -2706,6 +2707,7 @@ public final class IsoWorld {
                tcount++;
                if (pzopt.ZombieLod.active()) pzopt.ZombieLod.won(z); // pzopt: zombieLodFadeMs, a zombie getting its model back fades it in
                z.setSceneCulled(false);
+               if (pzopt.FirstSight.ON && pzopt.ZombieLod.active()) pzopt.FirstSight.won(z, tcount); // pzopt: zombieFirstSightSprite, its place in the nearest-first order of first composites
                if (z.legsSprite != null && z.legsSprite.modelSlot != null) {
                   if (count > PerformanceSettings.zombieAnimationSpeedFalloffCount) {
                      c++;
@@ -2731,7 +2733,7 @@ public final class IsoWorld {
                   }
                }
             }
-         } else if (pzopt.ZombieLod.active() && pzopt.ZombieLod.keepFading(z)) { // pzopt: zombieLodFadeMs, the model stays while it fades out over the sprite
+         } else if (pzopt.ZombieLod.active() && !pzopt.FirstSight.waiting(z) && pzopt.ZombieLod.keepFading(z)) { // pzopt: zombieLodFadeMs, the model stays while it fades out over the sprite (zombieFirstSightSprite: not a model that never drew, it is the sprite already)
             z.setSceneCulled(false); // pzopt
             if (z.hasAnimationPlayer()) { // pzopt
                z.getAnimationPlayer().doBlending = false; // pzopt

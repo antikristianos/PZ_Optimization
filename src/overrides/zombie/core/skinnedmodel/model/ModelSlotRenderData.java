@@ -87,7 +87,7 @@ public final class ModelSlotRenderData extends GenericDrawer {
     * pooled combiner texture can be one an earlier character still has to draw with).
     */
    public boolean pzoptRendersTexture() { // pzopt
-      if (this.textureCreator != null && !this.textureCreator.isRendered()) { // pzopt
+      if (this.textureCreator != null && !this.textureCreator.isRendered() && !this.pzoptSkipTexture) { // pzopt (zombieFirstSightSprite: a waiting composite renders nothing)
          return true; // pzopt
       } // pzopt
       for (int i = 0; i < this.modelData.size(); i++) { // pzopt
@@ -128,6 +128,8 @@ public final class ModelSlotRenderData extends GenericDrawer {
    public final ModelInstanceRenderDataList modelData = new ModelInstanceRenderDataList();
    private final ModelInstanceRenderDataList readyModelData = new ModelInstanceRenderDataList();
    public ModelInstanceTextureCreator textureCreator;
+   public boolean pzoptSightEligible; // pzopt: zombieFirstSightSprite, a first composite the render thread's budget may hold a frame (the zombie is drawn as its sprite)
+   public boolean pzoptSkipTexture; // pzopt: zombieFirstSightSprite, this frame the character's first clothing composite waits (pzopt.FirstSight): checkReady does not make it
    public AnimationPlayer animPlayer;
    public float animPlayerAngle;
    public float x;
@@ -231,6 +233,8 @@ public final class ModelSlotRenderData extends GenericDrawer {
 
          this.characterOutline = this.character.isOutlineHighlight(playerIndex);
       }
+      this.pzoptSkipTexture = this.textureCreator != null && pzopt.FirstSight.deferred(this.character); // pzopt: zombieFirstSightSprite
+      this.pzoptSightEligible = this.textureCreator != null && pzopt.FirstSight.eligible(this.character); // pzopt
 
       if (this.character != null && (this.textureCreator != null || bHasTextureCreators)) {
          assert this.readyModelData.isEmpty();
@@ -768,10 +772,19 @@ public final class ModelSlotRenderData extends GenericDrawer {
    public boolean checkReady() {
       this.ready = true;
       if (this.textureCreator != null && !this.textureCreator.isRendered()) {
+         if (this.pzoptSkipTexture || this.pzoptSightEligible && pzopt.FirstSight.overBudget()) { // pzopt: zombieFirstSightSprite, the composite waits (the zombie is drawn as its sprite)
+            this.ready = false; // pzopt
+         } else { // pzopt
+         long pzoptT0 = pzopt.FirstSight.TIMING ? System.nanoTime() : 0L; // pzopt: the composite's render-thread cost (pzopt.FirstSight)
+         pzopt.FirstSight.composing(); // pzopt
          this.textureCreator.render();
+         if (pzopt.FirstSight.TIMING) { // pzopt
+            pzopt.FirstSight.composed(System.nanoTime() - pzoptT0, this.textureCreator.isRendered()); // pzopt
+         } // pzopt
          if (!this.textureCreator.isRendered()) {
             this.ready = false;
          }
+         } // pzopt
       }
 
       for (int i = 0; i < this.modelData.size(); i++) {

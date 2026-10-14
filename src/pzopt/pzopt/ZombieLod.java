@@ -61,6 +61,11 @@ public final class ZombieLod {
    // ---- the boundary (2026-10-13): hysteresis and a crossfade between the 3D model and the flat sprite ----
    private static long frameNs;
 
+   /** this frame's cull-pass time (the crossfades' clock) */
+   public static long frameNs() {
+      return frameNs;
+   }
+
    /** zombieLodSpriteLight: the factor on the square's light the flat sprite is drawn in (0 = stock: black). */
    public static float spriteLight() {
       return Config.ZOMBIE_LOD_SPRITE_LIGHT > 0 && active() ? Config.ZOMBIE_LOD_SPRITE_LIGHT / 100.0F : 0.0F;
