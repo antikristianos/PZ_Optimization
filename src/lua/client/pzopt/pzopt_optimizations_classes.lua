@@ -468,6 +468,7 @@ PzoptOptionClasses = {
     frameThreads = { "pzopt.FrameBatch" },
     frameThreadsAlt = { "pzopt.FrameBatch" },
     gcG1Cores = { "pzopt.GcChoice" },
+    gcG1Tuned = { "pzopt.GcChoice" },
     gcHeap = { "pzopt.GcChoice" },
     gcHeapAutoMb = { "pzopt.GcChoice" },
     gcHeapAutoMods = { "pzopt.GcChoice" },

@@ -7712,3 +7712,52 @@ default.
 - Proof (all 0 colour / 0 depth differences): horde2-vaofmt-chk devHordeCheck 41 runs / 106,722 px; horde2-atlas-chk
   devAtlasCheck 346 runs / 212,646 px (+ devHordeCheck 22 runs); horde2-order-chk2 devHordeOrderCheck 59 windows /
   272,005 px (2,960 overlaps that split a window); horde2-rec-chk devHordeCheck 63 runs / 100,109 px (camera caching).
+
+## Maintainer defaults (2026-10-14, integration round 4): horde round 2 keys, gcSlack and players' G1 settings
+
+The maintainer turned these on by default (Config / launcher defaults; no override code changed, the bytecode audit is
+unaffected):
+- Horde round 2 (section above): `hordeBatchVao` = `format` (was `mesh`), `atlasBatch` = on, `hordeBatchOrder` = `window`
+  (was `stock`), `hordeBatchUnits` = 16 (was 0). All four are pixel-exact by their rigs (devHordeCheck, devAtlasCheck,
+  devHordeOrderCheck: 0 colour / 0 depth differences). Where they cannot run the stock path stays: the model batches (and
+  with them the vertex-layout objects, the texture units and the window order) need GL 4.3 storage buffers and never run
+  on a GL 2.1 context or macOS's legacy / core-shim contexts (`HordeBatch.initGl`); the atlas runs need GL 4.4 persistent
+  buffers (`AtlasBatch.init`) and the batch's pass markers, which are not queued once the batch has failed. The units
+  programs only add a `sampler2D` array to a program whose one sampler is a `sampler2D`, so the game's glValidateProgram
+  (every sampler on unit 0) has no type clash on Mesa or AMD; if `pzopt_hordeu` does not compile the batch binds one
+  texture a draw. Tab: Zombies and hordes > "Drawing the horde", beside hordeBatch.
+- `gcSlack` = on, with `gcSlackEarlyPct` = 40 (was 60): at a frame cap the G1 young collection that is due within a few
+  frames runs at the end of a step with slack (eden filled with short-lived filler arrays until the collector runs) instead
+  of mid-step; timing only, no game state. 40 % because the Eden pool's numbers in the game read up to ~180 MB above the
+  eden G1 actually collects at (G1 resizes eden at every collection; the JMX estimate stays 96-112 MB while the GC log shows
+  40-80 MB), so a 60 % trigger came after the natural collection; all the GC pass's validation runs used 40. Inert
+  uncapped and with any collector but G1 (no "G1 Eden Space" pool: `gc slack: off`). The filler is uninitialised through
+  `jdk.internal.misc.Unsafe.allocateUninitializedArray`, which every launcher JSON of the game exports
+  (`--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED`, Linux and Windows; the harness's g1 / stock JSONs too); on a
+  JVM without the export the lookup throws, `GcSlack.uninit()` returns null and the filler is plain `new byte[]` (zeroed,
+  ~0.12 instead of ~0.035 ns a byte, its cost learned per byte like the other); a failed call mid-fill switches to zeroed
+  arrays for good. Tab: "Java memory and garbage collector", entry "Garbage collection in the frame cap's spare time".
+- Players' G1 (`pzopt.GcChoice`, `gcMode=g1`, the default): new key `gcG1Tuned` (default on) writes the GC pass's tuned
+  set for the game's own heap size (HANDOFF-gc "fin4" without `-Xms` / pre-touch; `gcHeap` / `gcHeapFixed` /
+  `gcPreTouch` are unchanged) into the vmArgs array where it switched ZGC to G1: `-XX:+IgnoreUnrecognizedVMOptions
+  -XX:+UnlockExperimentalVMOptions -XX:G1NewSizePercent=2 -XX:G1MaxNewSizePercent=4 -XX:MaxTenuringThreshold=0
+  -XX:ReservedCodeCacheSize=512m -XX:SweeperThreshold=50 -XX:-G1UseAdaptiveIHOP -XX:InitiatingHeapOccupancyPercent=70
+  -XX:G1MixedGCCountTarget=24 -XX:G1MixedGCLiveThresholdPercent=50 -XX:G1HeapWastePercent=10` + the marker
+  `-Dpzopt.gctune=g1[,ignore][,unlock]` (which of the two shared flags were added), and `gcPauseMs` = 0 now means 5 ms
+  with the tuned set (`-XX:MaxGCPauseMillis=5` under the existing `-Dpzopt.gc=g1,pause` marker, so older uninstallers still
+  remove it) and G1's own 200 ms without it; an explicit gcPauseMs wins. `gcMode=auto` (G1 on small machines) and `stock`
+  get no tuned set. Checked on the game's JRE (Zulu 25.0.1, `jre64/bin/java -XX:+PrintFlagsFinal`): every flag exists, none
+  obsolete (`SweeperThreshold` is still a product flag in 25: it sets the code-cache GC threshold since the sweeper went);
+  the experimental three need the unlock before them (HotSpot refuses the launch otherwise: the unlock is written first),
+  and `G1MaxNewSizePercent=4` alone fails against the default `G1NewSizePercent` 5, so the set is all or nothing. An
+  unknown -XX flag stops the JVM before any of our code runs (no boot repair could help), so: the set is written only when
+  the running Java is feature release 25 and the running JVM knows each product flag (HotSpotDiagnosticMXBean; a locked
+  experimental flag is not listed before the unlock); a JSON that already sets one of the flags (a player tuning G1) gets the
+  plain switch; and `-XX:+IgnoreUnrecognizedVMOptions` (read before all other options) keeps a launch alive if a later
+  game update brings a Java that dropped one of them. Windows: the same Zulu 25 JRE, the set goes into the per-version
+  section that holds `-XX:+UseZGC` (`forEachVmArgsDeep`). macOS: GcChoice does not edit the app bundle, unchanged. Every
+  undo removes exactly what was added: `GcChoice.toStock` (in-game uninstall, boot repair) through `tuneToStock`, and
+  `reset_gc` in scripts/pzopt.sh / install.sh and `Reset-Gc` in install.ps1 (a player's own unlock stays). The boot log
+  now prints `gc: this launch's JVM flags: ...` (the running JVM's -XX / -Xm arguments and our markers), in harness runs
+  too. Tab: "Java memory and garbage collector", entry "G1 tuned for steady frames"; gcPauseMs gained 5 and 10 ms choices.
+  Tests: GcChoiceTest (order after the unlock, idempotent, exact undo, a player's unlock / tuning, the Windows section).

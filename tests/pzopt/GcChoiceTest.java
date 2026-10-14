@@ -100,6 +100,34 @@ public class GcChoiceTest {
       } catch (java.io.IOException e) {
          throw new AssertionError(e);
       }
+      // gcG1Tuned (2026-10-14): the tuned set after the unlock, the 5 ms target, undone exactly; a player's own unlock /
+      // tuning stays; the Windows per-version section gets it where its ZGC was
+      JSONObject t = new JSONObject(STOCK);
+      check(GcChoice.toG1(t, GcChoice.TUNE_PAUSE_MS, true), "tuned: switches");
+      java.util.List<Object> ta = t.getJSONArray("vmArgs").toList();
+      int unlockAt = ta.indexOf(GcChoice.UNLOCK);
+      check(unlockAt >= 0 && ta.contains(GcChoice.IGNORE) && ta.contains("-XX:MaxGCPauseMillis=5") && ta.contains(GcChoice.MARKER_PAUSE)
+            && ta.contains(GcChoice.TUNE_MARKER + "g1,ignore,unlock"), "tuned: unlock, ignore, pause, markers: " + ta);
+      for (String f : GcChoice.TUNE_FLAGS) {
+         check(ta.indexOf(f) > unlockAt, "tuned flag after the unlock: " + f);
+      }
+      check(!GcChoice.toG1(t, GcChoice.TUNE_PAUSE_MS, true), "tuned: second switch is a no-op");
+      check(GcChoice.toStock(t) && t.similar(stock), "tuned: undo gives the stock JSON back: " + t);
+      JSONObject tu = new JSONObject(STOCK.replace("\"-XX:-OmitStackTraceInFastThrow\"", "\"-XX:+UnlockExperimentalVMOptions\",\"-XX:-OmitStackTraceInFastThrow\""));
+      JSONObject tuStock = new JSONObject(tu.toString());
+      GcChoice.toG1(tu, GcChoice.TUNE_PAUSE_MS, true);
+      check(tu.getJSONArray("vmArgs").toList().contains(GcChoice.TUNE_MARKER + "g1,ignore"), "a player's own unlock is not added twice: " + tu);
+      GcChoice.toStock(tu);
+      check(tu.similar(tuStock), "undo keeps the player's own unlock: " + tu);
+      check(!GcChoice.playerTunes(new JSONObject(STOCK)) && GcChoice.playerTunes(new JSONObject(STOCK.replace("\"-Xmx3072m\",\"-XX:+UseZGC\",\"-XX:-Omit",
+            "\"-Xmx3072m\",\"-XX:+UseZGC\",\"-XX:G1HeapWastePercent=7\",\"-XX:-Omit"))), "a player's own G1 tuning is seen");
+      check(GcChoice.flagName("-XX:+UnlockExperimentalVMOptions").equals("UnlockExperimentalVMOptions") && GcChoice.flagName("-XX:G1NewSizePercent=2").equals("G1NewSizePercent")
+            && GcChoice.flagName("-Xmx3g") == null, "flag names");
+      JSONObject tw = new JSONObject(win);
+      GcChoice.toG1(tw, GcChoice.TUNE_PAUSE_MS, true);
+      check(tw.getJSONObject("windows").getJSONObject("10.0.17134").getJSONArray("vmArgs").toList().contains("-XX:G1NewSizePercent=2")
+            && !tw.getJSONArray("vmArgs").toList().contains("-XX:G1NewSizePercent=2"), "windows: the tuned set in the version section: " + tw);
+      check(GcChoice.toStock(tw) && tw.similar(new JSONObject(win)), "windows: tuned undo: " + tw);
       System.out.println("GcChoiceTest ok");
    }
 
