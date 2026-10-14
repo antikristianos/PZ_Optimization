@@ -567,3 +567,5 @@ included; player console.txt files are the only Windows evidence so far.
 
 The general first-test checklist (sections 1-6 above) was last run on 2026-09-19; a fresh pass of it on the current
 release belongs with item 1.
+
+2026-10-14 release from `f703c810` (UI latency pass: windows checked every frame against what their drawing read and redrawn the frame anything changed; hover, drags, wheel scrolling and tooltips at the display rate within the frame's spare time; passive changes such as renamed items, XP or the clock no longer up to a second late; a hidden inventory no longer makes the UI redraw every frame; Windows: open the inventory with a large stack, hover, drag an item and a window, scroll, check nothing lags or shows stale rows and the frame rate holds): tag `b42.21-20261014-0542-f703c810`, 1130 manifest entries, sha256 `93b9a774ee58bc653f8b3911f9c55130d14a72e29cd7bad46a053f8003717a2a`.
