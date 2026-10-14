@@ -105,6 +105,7 @@ public final class FrameBatch {
             }
             if (serve) {
                LuaGate.service();
+               gtTaskDepth++; // f8-streamfix: the game thread inside a task (ActionEval.settle must not wait from here)
             }
             try {
                this.runner.run(i);
@@ -113,6 +114,9 @@ public final class FrameBatch {
                   this.failure = t;
                }
             } finally {
+               if (serve) {
+                  gtTaskDepth--;
+               }
                this.finished.incrementAndGet();
             }
          }
@@ -179,8 +183,20 @@ public final class FrameBatch {
    // published tasks at once, claim an index past the count and wait for it to be published (or for the seal to drop it).
    public static long streams, streamSealedByJoin;
 
-   /** Game thread: start an empty stream on the workers only (joined like runAsync's batch, after {@link #seal}). */
-   public static void runStream(Runner r, Completion done) {
+   private static int gtTaskDepth; // the game thread (or another non-worker caller) inside a batch task it runs itself (work / helpOne)
+
+   /** Game thread: true while it runs a batch task itself (a join or a help); a hook there must not wait for another task. */
+   public static boolean gameThreadInTask() {
+      return gtTaskDepth > 0;
+   }
+
+   /**
+    * Game thread: start an empty stream on the workers only (joined like runAsync's batch, after {@link #seal}). Returns the
+    * stream's token: {@link #publish(Object, int)} / {@link #seal(Object, int)} / {@link #streamOpen(Object)} act on that stream
+    * only (f8-streamfix: the untokened calls act on whatever batch is pending, so a user whose stream another user had joined and
+    * replaced with its own stream would have published into that one).
+    */
+   public static Object runStream(Runner r, Completion done) {
       landEntityFlight();
       join();
       if (running) {
@@ -200,6 +216,26 @@ public final class FrameBatch {
          generation++;
          gate.notifyAll();
       }
+      return batch;
+   }
+
+   /** Game thread: tasks 0..count-1 of the stream {@code token} may run, if it is still the pending, unsealed batch. */
+   public static void publish(Object token, int count) {
+      if (token != null && token == pending) {
+         publish(count);
+      }
+   }
+
+   /** Game thread: the final task count of the stream {@code token}, if it is still pending (a join already sealed it otherwise). */
+   public static void seal(Object token, int count) {
+      if (token != null && token == pending) {
+         seal(count);
+      }
+   }
+
+   /** Game thread: true while the stream {@code token} is pending and unsealed. */
+   public static boolean streamOpen(Object token) {
+      return token != null && token == pending && !((Batch) token).sealed;
    }
 
    /** Game thread: tasks 0..count-1 of the pending stream may run (count only grows). */
@@ -280,6 +316,7 @@ public final class FrameBatch {
          return false;
       }
       helped++;
+      gtTaskDepth++;
       try {
          batch.runner.run(i);
       } catch (Throwable t) {
@@ -287,6 +324,7 @@ public final class FrameBatch {
             batch.failure = t;
          }
       } finally {
+         gtTaskDepth--;
          batch.finished.incrementAndGet();
       }
       return true;

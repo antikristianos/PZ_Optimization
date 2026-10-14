@@ -33,6 +33,7 @@ public final class StateMachine {
    }
 
    public void changeState(State newState, Iterable<State> subStates, boolean restart) {
+      pzopt.ActionEval.settle(this.owner, pzopt.ActionEval.S_STATE); // pzopt: f8-streamfix, a zombie's state changes after its evaluation task (stock order)
       if (this.isLocked) {
          DebugType.Action.warn("StateMachine is locked. Cannot change state to: %s", new Object[]{newState});
       } else {

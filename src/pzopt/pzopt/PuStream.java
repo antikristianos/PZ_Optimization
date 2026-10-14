@@ -11,6 +11,7 @@ public final class PuStream {
    }
 
    private static boolean open; // game thread: this frame's stream is on the workers
+   private static Object token; // f8-streamfix: this frame's stream batch; publish / seal / isOpen act on it alone
    private static int moves;
    private static int evals;
 
@@ -18,15 +19,16 @@ public final class PuStream {
    static void open(int moveCount) {
       moves = moveCount;
       evals = 0;
-      FrameBatch.runStream(PuStream::task, PuStream::done);
+      token = FrameBatch.runStream(PuStream::task, PuStream::done);
       open = true;
-      FrameBatch.publish(moves);
+      FrameBatch.publish(token, moves);
    }
 
    /** Game thread: true while this frame's stream takes tasks. */
    static boolean isOpen() {
-      if (open && !FrameBatch.streamOpen()) {
-         open = false; // another batch user's join sealed it
+      if (open && !FrameBatch.streamOpen(token)) {
+         open = false; // another batch user's join sealed it (f8-streamfix: this stream, not whichever batch is pending now)
+         token = null;
       }
       return open;
    }
@@ -34,14 +36,15 @@ public final class PuStream {
    /** Game thread: ActionEval's evaluation count published so far. */
    static void publishEvals(int count) {
       evals = count;
-      FrameBatch.publish(moves + count);
+      FrameBatch.publish(token, moves + count);
    }
 
    /** Game thread: the final size; the stream stays pending until the next FrameBatch join. */
    static void seal() {
       if (open) {
-         FrameBatch.seal(moves + evals);
+         FrameBatch.seal(token, moves + evals);
          open = false;
+         token = null;
       }
    }
 
@@ -56,9 +59,18 @@ public final class PuStream {
       ActionEval.streamTask(j - moves);
    }
 
+   private static int failuresLogged;
+
    private static void done(Throwable t) {
       if (t != null) {
          Log.warn("postupdate stream: a task failed: " + t);
+         if (failuresLogged++ < 3) { // f8-streamfix: the stack, so a failure names its place
+            StringBuilder b = new StringBuilder("postupdate stream: stack of the failure:");
+            for (StackTraceElement e : t.getStackTrace()) {
+               b.append("\n    at ").append(e);
+            }
+            Log.warn(b.toString());
+         }
       }
    }
 }

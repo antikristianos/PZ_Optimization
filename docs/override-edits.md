@@ -7257,3 +7257,58 @@ pzopt-gtab.out with `devFrameSections`, asprof / JFR samples, gc.log, the bake /
   results into a persistently mapped GL_QUERY_BUFFER (GL 4.4 / ARB_query_buffer_object) and reads them from client memory
   instead of polling `glGetQueryObject(GL_QUERY_RESULT_AVAILABLE)` every frame (a threaded-driver sync; 9.4 ms render-thread
   stall in run t2-cc-on).
+
+## The postupdate stream's task failures (2026-10-13, worktree f8-streamfix): no game-thread write beside a zombie's own evaluation task
+
+Round 2's postupdate stream (postupdateFuse / postupdateClean, `pzopt.PuStream`, `StreamTasks`) logged "postupdate stream: a task
+failed" in 5 runs: a null task item (zomb2-br-on4, 07:37) and `ActionStateContainer.currentState` null in an evaluation (z3-ld2,
+z3-prof1, z3-anim3, z3-all2, all four with round 3's `zombieLateApply` + `zombieDrawLate`).
+
+- **The null item** was the bug the zomb2-all1 hang (08:19) found: ActionEval released the task list at the seal while tasks had not
+  started; zomb2-br-on4 ran that build (an NPE on the null zombie, then the `finally`'s `z.getActionContext()`, the logged one). No
+  run since the release moved after the join logged it (round 3's skip-and-log of a null item never fired).
+- **currentState null.** A zombie publishes its evaluation in its `postUpdateAnimating` and goes on with its postupdate; when its
+  move left it off the loaded grid, the end of its own `IsoZombie.postUpdateInternal` (`this.current == null` ->
+  `removeFromWorld()`) removes it from the world while its evaluation task may be running. With `zombieLateApply` that zombie stays
+  held (its apply waits for FinishAnimation, and nothing joins the stream before), and UpdateStuff resets it for reuse in the same
+  window (`VirtualZombieManager.update` / `ReuseSpread.drain` or `resetOne` -> `reuseZombie` -> `IsoZombie.resetForReuse` ->
+  `ActionContext.setGroup` -> `setCurrentState` -> `nextActionStateContainer.clear()`), the container the worker is evaluating:
+  the worker reads `this.currentState` between the clear and the new state (the NPE), or evaluates a half-written container. Round
+  3's guards finished the held apply only later in the reset (`OnAnimDataChanged` reaches the AnimationPlayer guard: the "anim"
+  touches of those runs), so the held apply then ran on a half-reset zombie. Without the late apply the flush waits for every
+  queued evaluation before UpdateStuff, so only the in-loop part of the race was left: the removal itself (path, target, group
+  writes) beside the evaluation reading them. Run sfz3-diag1 (round-3 copy + this fix, both late keys on): 168 removals of a zombie
+  whose evaluation was still running, every one from that `postUpdateInternal` line, 142 held zombies reset for reuse in the window.
+
+The fix (no catch-and-skip; every stream task runs as before):
+
+- `ActionEval.settle(ctx, reason)`: before a game-thread write into a zombie whose evaluation task of this generation is out
+  (`ActionContext.pzoptTaskGen`, stamped by `ActionEval.publish` and the flush's asynchronous evaluation batches) and not done
+  (`pzoptEvalDone`), the evaluation is finished first. Every evaluation task claims its context for the generation with one
+  atomic swap (`ActionContext.pzoptTaskClaim`, `ActionEval.claim`); settle claims too: when no worker has started the evaluation,
+  the game thread runs it right there (as an unfused one: the apply loop finishes the zombie as before) and the task that reaches
+  it later skips it; when a worker is running it, the game thread waits for that one task (bounded at 200 ms, then the stream keys
+  go off for the session as for the other bounded waits). A first version only waited: ~1 ms a removal behind the stream's
+  backlog (runs sf-cap1 / sf-cap2: 100-151 waits, ~100 ms a run). Free when nothing is out (two int compares); never on a frame
+  worker or while the game thread runs a batch task itself (`FrameBatch.gameThreadInTask()`, a task depth counter in `work` /
+  `helpOne`). Callers
+  (pzopt markers): ActionContext `update`, `setCurrentState`, `setPlaybackStateSnapshot`, `reportEvent`, `clearActionContextEvents`;
+  IsoZombie `removeFromWorld`, `resetForReuse`, `Hit`; StateMachine `changeState` (a zombie owner). Stock evaluates a zombie in its
+  own loop slot, before any later write; settle restores that order for every write that reaches it.
+- `ActionEval.begin` lands the previous frame's stream before it moves the generation (a task finishing after the increment
+  stamped its zombie done / evaluated in the new generation, so that frame's apply would take a stale evaluation).
+- `FrameBatch.runStream` returns a token and PuStream publishes, seals and tests only its own stream
+  (`publish(token, n)` / `seal(token, n)` / `streamOpen(token)`); the untokened calls act on whatever batch is pending, so a stream
+  joined and replaced by another user's stream would have been grown past its own task list (a null item).
+- PuStream logs the stack of the first three task failures.
+- Round 3 (f8-zomb3) adds, with the same settle: `IsoZombie.resetForReuse` finishes a held apply first (`ZombieLate.R_REUSE`), and
+  `settle` finishes the held apply of a held zombie before any context write (`R_OTHER`), so the held apply never runs after a
+  write stock would have ordered after it.
+
+Test: `tests/pzopt/ActionEvalSettleTest` (real ActionContext / ActionStateContainer, a proxy owner, FrameBatch streams): (1) a
+worker parked inside a transition condition while the game thread clears the context reproduces the runs' NPE deterministically
+without the guard (`ActionEval.settleOff`) and is clean with it (the write lands after the evaluation); (2) 64 contexts streamed
+while the game thread writes random published ones with every guarded writer: 16-17 failed frames in 150 unguarded, 0 in 400
+guarded (~3,000 settles); (2b) a published evaluation behind tasks that hold every worker: the write runs it on the writing
+thread at once, the task that reaches it skips it (evaluated once); (3) a stream joined and replaced by another stream: the first owner's late publish / seal no longer
+reaches the second (the untokened publish ran its tasks past their list).

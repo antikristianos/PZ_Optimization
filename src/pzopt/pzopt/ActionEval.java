@@ -183,15 +183,18 @@ public final class ActionEval {
       if (!ENABLED || failed) {
          return;
       }
+      if (stream.size() > 0) {
+         // the previous frame's stream is landed before its task list is dropped, and before the generation moves on
+         // (f8-streamfix: a task still running after the increment stamped its zombie done / evaluated in the NEW
+         // generation, so this frame's apply would have taken that stale evaluation without waiting for the new one)
+         FrameBatch.join();
+         stream.release();
+      }
       generation++;
       count = 0;
       active = true;
       streamState = 0; // postupdateFuse
       streamAllowed = true; // PostupdateBatch.prepass narrows it for a small frame
-      if (stream.size() > 0) {
-         FrameBatch.join(); // the previous frame's stream is landed before its task list is dropped
-         stream.release();
-      }
    }
 
    private static volatile boolean streamOff; // a bounded wait gave up: no more early evaluations this session
@@ -280,7 +283,138 @@ public final class ActionEval {
 
    private static void publish(IsoZombie z, boolean fuse) {
       z.pzoptStreamGen = generation;
+      z.getActionContext().pzoptTaskGen = generation; // f8-streamfix: its evaluation task is out (settle)
       PuStream.publishEvals(stream.add(z, fuse));
+   }
+
+   // ---- f8-streamfix: the game thread never writes into a zombie whose evaluation task may still be running ----
+   //
+   // A published zombie's task (the transition evaluation into the context's next container, and with postupdateFuse its
+   // context update and animator) runs on a frame worker while the game thread goes on: through the rest of the bucket loop
+   // and, until a FrameBatch join lands the stream, beyond it. A game-thread write into that zombie's action context or state
+   // in that window raced with the task: ActionContext.setGroup -> setCurrentState clears the next container the worker is
+   // evaluating (an NPE "this.currentState is null" in ActionStateContainer when the worker read it in between, otherwise an
+   // evaluation of a half-written container), reportEvent / changeState / removeFromWorld / resetForReuse change what it
+   // reads (stock evaluates a zombie in its own loop slot, before any later write). Every such write first waits here for the
+   // task to finish, which is stock's order.
+   static boolean settleOff; // tests only: the unguarded behaviour, to show the race (ActionEvalSettleTest)
+   public static long settleWaits, settleRuns, settleWaitNanos, settleTimeouts;
+
+   // Each evaluation task claims its context for the generation first (one atomic swap): the task and settle() never both run
+   // it, and a write that meets a published evaluation no worker has started yet runs it right there instead of waiting behind
+   // the stream's backlog (~1 ms a removal in run sf-cap1 when settle only waited).
+   private static final java.lang.invoke.VarHandle CLAIM;
+
+   static {
+      try {
+         CLAIM = java.lang.invoke.MethodHandles.lookup().findVarHandle(zombie.characters.action.ActionContext.class, "pzoptTaskClaim", int.class);
+      } catch (ReflectiveOperationException e) {
+         throw new ExceptionInInitializerError(e);
+      }
+   }
+
+   /** Any thread: take this generation's evaluation of the context; false when another thread took it already. */
+   static boolean claim(zombie.characters.action.ActionContext ctx) {
+      int gen = generation;
+      return (int) CLAIM.getAndSet(ctx, gen) != gen;
+   }
+
+   /** The evaluation task of an asynchronous evaluation batch (not the stream's): run unless settle() took it. */
+   static void evalTask(zombie.characters.action.ActionContext ctx) {
+      if (claim(ctx)) {
+         evalBody(ctx);
+      }
+   }
+
+   /** The evaluation itself: a character's (its head on the worker first, headOnWorker), else the context's alone (tests). */
+   private static void evalBody(zombie.characters.action.ActionContext ctx) {
+      if (ctx.getOwner() instanceof IsoGameCharacter c) {
+         c.pzoptEvalTask();
+      } else {
+         ctx.pzoptEvaluate();
+      }
+   }
+   private static int settleLogged;
+
+   /** Settle reasons, for the log. */
+   public static final int S_CONTEXT = 0, S_EVENT = 1, S_STATE = 2, S_REMOVE = 3, S_REUSE = 4, S_HIT = 5;
+   private static final String[] S_NAMES = {"context", "event", "state", "remove", "reuse", "hit"};
+   private static final long[] settleBy = new long[S_NAMES.length];
+
+   /**
+    * Game thread, before it writes into the character this context belongs to: wait until the character's evaluation task of
+    * this generation (if one went out and has not finished) is done. Free when none is out (two int compares). A frame worker
+    * (a task writing its own zombie) and the game thread inside a batch task of its own never wait here.
+    */
+   public static void settle(zombie.characters.action.ActionContext ctx, int reason) {
+      int gen = generation;
+      if (ctx == null || ctx.pzoptTaskGen != gen || ctx.pzoptEvalDone == gen || settleOff) {
+         return;
+      }
+      if (Thread.currentThread() instanceof FrameBatch.Worker || FrameBatch.gameThreadInTask()) {
+         return;
+      }
+      long t0 = System.nanoTime();
+      if (claim(ctx)) {
+         // not started yet: the game thread runs the evaluation itself, now (stock's order: before the write), and the task
+         // that reaches it later finds it claimed. No fused tail here: the apply loop finishes this zombie as an unfused one.
+         settleRuns++;
+         settleBy[reason]++;
+         UpdateBatch.pomSet(1.0F); // the perObjectMultiplier the flush-time evaluation sees, as the stream task's
+         try {
+            evalBody(ctx);
+         } catch (Throwable t) {
+            Log.warn("postupdate stream: an evaluation run before a write failed: " + t); // a task's failure is logged the same way
+         } finally {
+            UpdateBatch.pomClear();
+            ctx.pzoptMarkEvalDone();
+         }
+         settleWaitNanos += System.nanoTime() - t0;
+         return;
+      }
+      settleWaits++;
+      settleBy[reason]++;
+      if (settleLogged < 5) {
+         settleLogged++;
+         StringBuilder b = new StringBuilder("postupdate stream: a write (" + S_NAMES[reason] + ") to " + ctx.getOwner() + " waited for its evaluation task; caller:");
+         StackTraceElement[] st = new Throwable().getStackTrace();
+         for (int i = 1; i < Math.min(st.length, 12); i++) {
+            b.append("\n    at ").append(st[i]);
+         }
+         Log.info(b.toString());
+      }
+      int spins = 0;
+      while (ctx.pzoptEvalDone != gen) {
+         if (FrameBatch.helpOne()) {
+            continue;
+         }
+         if (++spins < 500) {
+            Thread.onSpinWait();
+         } else {
+            ShortWait.pause(5_000L);
+            if (System.nanoTime() - t0 > 200_000_000L) {
+               settleTimeouts++;
+               streamGaveUp("a write to " + ctx.getOwner() + " waited 200 ms for its evaluation task (generation " + gen + ", done " + ctx.pzoptEvalDone + ")");
+               break;
+            }
+         }
+      }
+      settleWaitNanos += System.nanoTime() - t0;
+   }
+
+   /** settle() for a character (zombies only: no other character's evaluation goes to a task). */
+   public static void settle(IsoGameCharacter c, int reason) {
+      if (c instanceof IsoZombie) {
+         settle(c.getActionContext(), reason);
+      }
+   }
+
+   private static String settleCounts() {
+      StringBuilder b = new StringBuilder();
+      for (int i = 0; i < S_NAMES.length; i++) {
+         b.append(i == 0 ? "" : " ").append(S_NAMES[i]).append(' ').append(settleBy[i]);
+      }
+      return b.toString();
    }
 
    /** Game thread, submit(): a target-less zombie's evaluation goes to the workers now. */
@@ -309,6 +443,9 @@ public final class ActionEval {
 
    static void streamTask(int j) {
       IsoZombie z = stream.item(j);
+      if (!claim(z.getActionContext())) {
+         return; // f8-streamfix: settle() ran this evaluation on the game thread before a write into the zombie
+      }
       if (!stream.flag(j)) {
          z.pzoptEvalTask();
          return;
@@ -362,7 +499,10 @@ public final class ActionEval {
          }
       }
       final IsoZombie[] r = rest;
-      FrameBatch.runAsync(n, j -> r[j].pzoptEvalTask(), ActionEval::evalDone);
+      for (int i = 0; i < n; i++) {
+         r[i].getActionContext().pzoptTaskGen = generation; // f8-streamfix: its evaluation task is out (settle)
+      }
+      FrameBatch.runAsync(n, j -> evalTask(r[j].getActionContext()), ActionEval::evalDone);
       return true;
    }
 
@@ -446,7 +586,10 @@ public final class ActionEval {
          // animatorPipeline: the evaluations run on the workers alone; the apply loop takes each zombie as soon as its
          // evaluation is done (AnimParallel.apply step 1) instead of this thread evaluating a share and then applying
          if (!sealStream()) { // postupdateFuse: the stream already holds the early ones; the rest join it here
-            FrameBatch.runAsync(count, i -> queue[i].pzoptEvalTask(), ActionEval::evalDone);
+            for (int i = 0; i < count; i++) {
+               queue[i].getActionContext().pzoptTaskGen = generation; // f8-streamfix: its evaluation task is out (settle)
+            }
+            FrameBatch.runAsync(count, i -> evalTask(queue[i].getActionContext()), ActionEval::evalDone);
          }
          applying = true;
          GameTime pipelineTime = GameTime.getInstance();
@@ -516,6 +659,7 @@ public final class ActionEval {
       return "action eval: frames=" + frames + " batched=" + batched + " inline=" + inline + " max=" + maxBatch
             + " work ms=" + (workNanos / 1_000_000L) + " wait ms=" + (waitNanos / 1_000_000L)
             + " guardedFallbacks=" + guardedFallbacks + " cleanAppended=" + cleanAppended + " cleanEarly=" + cleanEarly + (FUSE ? " fuseStreams=" + fuseStreams + " fuseEarly=" + fuseEarly + " fuseLate=" + fuseLate + " fuseDied=" + fuseDied : "")
+            + " settle runs=" + settleRuns + " waits=" + settleWaits + " (" + settleCounts() + ") settle ms=" + (settleWaitNanos / 1_000_000L) + " settle timeouts=" + settleTimeouts
             + (Config.DEV_ACTION_EVAL_CHECK ? " checked=" + checks + " mismatches=" + mismatches + " filterMisses=" + filterMisses : "") + (failed ? " FAILED" : "");
    }
 }

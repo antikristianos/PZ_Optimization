@@ -39,6 +39,8 @@ public final class ActionContext {
 
    /** animatorPipeline: the generation whose evaluation has finished (stamped or not), set last by the evaluating thread. */
    public volatile int pzoptEvalDone;
+   public int pzoptTaskGen; // pzopt: f8-streamfix, the generation whose evaluation went to an asynchronous task (game thread; ActionEval.settle)
+   public volatile int pzoptTaskClaim; // pzopt: f8-streamfix, the generation whose evaluation a thread has taken (ActionEval.claim: the task or settle, never both)
 
    /** pzopt: headOnWorker, an evaluation task that left the zombie to the game thread: done, unstamped. */
    public void pzoptMarkEvalDone() {
@@ -344,6 +346,7 @@ public final class ActionContext {
    }
 
    public void update() {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_CONTEXT); // pzopt: f8-streamfix, never beside this context's own evaluation task
       AbstractPerformanceProfileProbe var1 = this.updateInternal.profile();
 
       try {
@@ -497,6 +500,7 @@ public final class ActionContext {
    }
 
    public void setPlaybackStateSnapshot(ActionStateSnapshot snapshot) {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_CONTEXT); // pzopt: f8-streamfix, the clear below raced with an evaluation task of this context
       this.nextActionStateContainer.clear();
       this.nextActionStateContainer.setPlaybackStateSnapshot(this, snapshot);
       this.transferActionState(this.nextActionStateContainer);
@@ -507,6 +511,7 @@ public final class ActionContext {
    }
 
    public void setCurrentState(ActionState nextState) {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_CONTEXT); // pzopt: f8-streamfix, the clear below raced with an evaluation task of this context (setGroup: resetForReuse)
       this.nextActionStateContainer.clear();
       this.nextActionStateContainer.setCurrentState(nextState, null);
       this.transferActionState(this.nextActionStateContainer);
@@ -543,6 +548,7 @@ public final class ActionContext {
    }
 
    public void clearActionContextEvents() {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_EVENT); // pzopt: f8-streamfix, the events an evaluation task of this context reads
       this.occurredAnimEvents.clear();
    }
 
@@ -564,6 +570,7 @@ public final class ActionContext {
    }
 
    public void reportEvent(String state, String event) {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_EVENT); // pzopt: f8-streamfix, the events an evaluation task of this context reads (and its fused update clears)
       this.occurredAnimEvents.add(event, state);
       if (state == null && GameClient.client && this.owner instanceof IsoPlayer player && player.isLocalPlayer()) {
          player.getNetworkCharacterAI().getState().reportEvent(state, event);

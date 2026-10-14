@@ -1601,6 +1601,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    }
 
    public float Hit(HandWeapon weapon, IsoGameCharacter wielder, float damageSplit, boolean bIgnoreDamage, float modDelta, boolean bRemote) {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_HIT); // pzopt: f8-streamfix, a hit lands after the evaluation stock ran in this zombie's loop slot
       if ((Core.tutorial || Core.debug) && this.immortalTutorialZombie) {
          return 0.0F;
       }
@@ -4822,6 +4823,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    }
 
    public void removeFromWorld() {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_REMOVE); // pzopt: f8-streamfix, its evaluation task (if one is out) finishes before it leaves the world
       this.getEmitter().stopOrTriggerSoundByName("BurningFlesh");
       this.clearAggroList();
       VirtualZombieManager.instance.RemoveZombie(this);
@@ -4866,6 +4868,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    }
 
    public void resetForReuse() {
+      pzopt.ActionEval.settle(this, pzopt.ActionEval.S_REUSE); // pzopt: f8-streamfix, its evaluation task (if one is out) finishes before the reset (setGroup cleared the container it evaluates)
       this.setCrawler(false);
       this.initializeStates();
       this.getActionContext().setGroup(pzoptGroup(false));
