@@ -237,6 +237,7 @@ public final class MovingObjectUpdateScheduler {
       pzopt.ZombTiming.end(pzopt.ZombTiming.X0, this.pzoptStartFrameEnd); // pzopt: zombie redesign timers, the runway of separateAsync
       this.pzoptStartFrameEnd = 0L; // pzopt
       pzopt.FrameTick.next(); // pzopt: the frame stamp of the simulation memos (separateFast, allPlayersAsleep)
+      pzopt.AnimalLosSkip.updateStart(); // pzopt: animalLosSkip (f8-zomb3), this frame's zombie positions (built at the first animal) before the collection
       boolean pzoptCombined = pzopt.UpdateBatch.latchFrameFromConfig(); // pzopt: entityUpdatePipeline -- the frame's shape, latched ONCE (a devPipelineAlternate flip then lands on a frame boundary instead of mixing one frame's buckets)
       if (this.pzoptSeparateBatch) {
          pzopt.SeparateBatch.run(); // pzopt: separateParallel, this frame's separations computed on the workers
@@ -278,6 +279,7 @@ public final class MovingObjectUpdateScheduler {
          } // pzopt: entityUpdatePipeline
       } // pzopt: entityUpdatePipeline
       } finally { // pzopt
+         pzopt.AnimalLosSkip.frameEnd(); // pzopt: animalLosSkip (f8-zomb3)
          pzopt.ZombieStats.end(); // pzopt: zombieStatsFold, written back after the batch landed, the achievement check once per statistic
       } // pzopt
    }
@@ -316,7 +318,9 @@ public final class MovingObjectUpdateScheduler {
             try {
                pzopt.ActionEval.flush();
             } finally {
-               pzopt.AnimBatch.flush();
+               if (!pzopt.ZombieLate.holdsBoneFlush()) { // pzopt: zombieLateApply (f8-zomb3), the bones start after the held apply
+                  pzopt.AnimBatch.flush();
+               } // pzopt
             }
          }
          pzopt.GtAb.end(pzopt.GtAb.S_PU_FLUSH, pzoptPu); // pzopt: Louisville 120 plan B census

@@ -463,6 +463,7 @@ public final class ModelManager {
    }
 
    public void Reset(IsoGameCharacter chr) {
+      if (pzopt.ZombieLate.held() && chr instanceof zombie.characters.IsoZombie pzoptZ) { pzopt.ZombieLate.touch(pzoptZ, pzopt.ZombieLate.R_MODEL); } // pzopt: zombieLateApply (f8-zomb3), a held zombie's model changes after its apply
       if (chr.legsSprite != null && chr.legsSprite.modelSlot != null) {
          ModelManager.ModelSlot modelSlot = chr.legsSprite.modelSlot;
          pzopt.ModelInitOrder.beforeReset(modelSlot); // pzopt: a draw init still queued reads slot.model: let it read the old one before the new goes in
@@ -493,6 +494,7 @@ public final class ModelManager {
    }
 
    public void Add(IsoGameCharacter chr) {
+      if (pzopt.ZombieLate.held() && chr instanceof zombie.characters.IsoZombie pzoptZ) { pzopt.ZombieLate.touch(pzoptZ, pzopt.ZombieLate.R_MODEL); } // pzopt: zombieLateApply (f8-zomb3), a held zombie's model changes after its apply
       if (this.created) {
          if (!chr.isAddedToModelManager()) {
             if (this.toRemove.contains(chr)) {
@@ -586,6 +588,7 @@ public final class ModelManager {
    }
 
    public void ResetCharacterEquippedHands(IsoGameCharacter chr) {
+      if (pzopt.ZombieLate.held() && chr instanceof zombie.characters.IsoZombie pzoptZ) { pzopt.ZombieLate.touch(pzoptZ, pzopt.ZombieLate.R_MODEL); } // pzopt: zombieLateApply (f8-zomb3), a held zombie's model changes after its apply
       if (chr != null && chr.legsSprite != null && chr.legsSprite.modelSlot != null) {
          this.DoCharacterModelEquipped(chr, chr.legsSprite.modelSlot);
       }
@@ -997,6 +1000,7 @@ public final class ModelManager {
    }
 
    private boolean DoRemove(IsoGameCharacter chr) {
+      if (pzopt.ZombieLate.held() && chr instanceof zombie.characters.IsoZombie pzoptZ) { pzopt.ZombieLate.touch(pzoptZ, pzopt.ZombieLate.R_MODEL); } // pzopt: zombieLateApply (f8-zomb3), a held zombie's model changes after its apply
       if (!this.contains.contains(chr)) {
          return false;
       }

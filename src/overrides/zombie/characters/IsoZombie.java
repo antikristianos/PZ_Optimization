@@ -3499,6 +3499,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
     * side-effecting condition variable (an empty snapshot).
     */
    public int pzoptStreamGen; // pzopt: postupdateFuse (f8-zomb2), the ActionEval generation this zombie's evaluation went to the stream in
+   public int pzoptLateGen; // pzopt: zombieLateApply (f8-zomb3), the ActionEval generation whose apply holds this zombie until FinishAnimation
 
    public byte pzoptCleanPostupdate() { // pzopt
       if (this.target != null || this.isReanimatedForGrappleOnly() || this.current == null || this.getReanimatedPlayer() != null || !this.pzoptCleanTailOk()) { // pzopt
@@ -4867,6 +4868,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    }
 
    public void removeFromWorld() {
+      pzopt.ZombieLate.touch(this, pzopt.ZombieLate.R_REMOVE); // pzopt: zombieLateApply (f8-zomb3), a held zombie is applied before it leaves the world
       pzopt.ActionEval.settle(this, pzopt.ActionEval.S_REMOVE); // pzopt: f8-streamfix, its evaluation task (if one is out) finishes before it leaves the world
       this.getEmitter().stopOrTriggerSoundByName("BurningFlesh");
       this.clearAggroList();
@@ -4912,6 +4914,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    }
 
    public void resetForReuse() {
+      pzopt.ZombieLate.touch(this, pzopt.ZombieLate.R_REUSE); // pzopt: f8-streamfix, a held zombie (left the world in the bucket loop) is applied before it is reset
       pzopt.ActionEval.settle(this, pzopt.ActionEval.S_REUSE); // pzopt: f8-streamfix, its evaluation task (if one is out) finishes before the reset (setGroup cleared the container it evaluates)
       this.setCrawler(false);
       this.initializeStates();

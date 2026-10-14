@@ -180,6 +180,9 @@ public final class ActionEval {
 
    /** Game thread: from here on eligible zombies stop their postUpdateAnimating after the turning flags and queue here. */
    public static void begin() {
+      if (lateHeld) {
+         ZombieLate.touch(ZombieLate.R_BEGIN); // zombieLateApply: a held apply never outlives its frame (FinishAnimation normally ran it)
+      }
       if (!ENABLED || failed) {
          return;
       }
@@ -228,6 +231,7 @@ public final class ActionEval {
    private static final StreamTasks<IsoZombie> stream = new StreamTasks<>(); // task j: its zombie (pzoptStreamGen = the generation it went out in), may it fuse
    private static final Tl<boolean[]> DEFER = new Tl<>(() -> new boolean[1]);
    public static long fuseEarly, fuseLate, fuseStreams, fuseDied;
+   static volatile long streamNullItems; // f8-zomb3: stream tasks that found no zombie (diagnosis open)
 
    // ---- postupdateClean (zombie redesign pass, 2026-10-13, f8-zomb2): a zombie whose whole postupdate ran on its movement task
    // joins the queue here at its place in the bucket loop, without the loop touching it (pzopt.PostupdateBatch.cleanAt) ----
@@ -347,6 +351,9 @@ public final class ActionEval {
     * (a task writing its own zombie) and the game thread inside a batch task of its own never wait here.
     */
    public static void settle(zombie.characters.action.ActionContext ctx, int reason) {
+      if (ZombieLate.held() && ctx != null && ctx.getOwner() instanceof IsoZombie lz) {
+         ZombieLate.touch(lz, ZombieLate.R_OTHER); // zombieLateApply: a held zombie's apply runs before any write into it (its events, state, context)
+      }
       int gen = generation;
       if (ctx == null || ctx.pzoptTaskGen != gen || ctx.pzoptEvalDone == gen || settleOff) {
          return;
@@ -443,6 +450,14 @@ public final class ActionEval {
 
    static void streamTask(int j) {
       IsoZombie z = stream.item(j);
+      if (z == null) { // zombie redesign round 3 (f8-zomb3): seen once a run in 3 of 22 runs with zombieLateApply, 1 of 71 without (an NPE here before); diagnosis open
+         streamNullItems++;
+         if (streamNullItems <= 5) {
+            Log.warn("postupdate stream: task " + j + " has no zombie (list size " + stream.size() + ", generation " + generation + ", stream state " + streamState
+                  + ", late held " + ZombieLate.held() + ", thread " + Thread.currentThread().getName() + ")");
+         }
+         return;
+      }
       if (!claim(z.getActionContext())) {
          return; // f8-streamfix: settle() ran this evaluation on the game thread before a write into the zombie
       }
@@ -591,19 +606,42 @@ public final class ActionEval {
             }
             FrameBatch.runAsync(count, i -> evalTask(queue[i].getActionContext()), ActionEval::evalDone);
          }
-         applying = true;
-         GameTime pipelineTime = GameTime.getInstance();
-         float pipelineMultiplier = pipelineTime.perObjectMultiplier;
-         try {
-            AnimParallel.apply(queue, count, true);
-         } finally {
-            pipelineTime.perObjectMultiplier = pipelineMultiplier; // see the multiplier note below
-            applying = false;
-            java.util.Arrays.fill(queue, 0, count, null);
-            count = 0;
+         if (ZombieLate.tryHold(queue, count, generation)) { // zombieLateApply (f8-zomb3): the apply waits for FinishAnimation
+            lateHeld = true;
+            return;
          }
+         applyPipelined();
          return;
       }
+      flushSerial();
+   }
+
+   private static boolean lateHeld; // zombieLateApply: the queue is held for finishLate
+
+   /** zombieLateApply (f8-zomb3), game thread: the held apply of this frame's queue (pzopt.ZombieLate.finish). */
+   static void finishLate() {
+      if (!lateHeld) {
+         return;
+      }
+      lateHeld = false;
+      applyPipelined();
+   }
+
+   private static void applyPipelined() {
+      applying = true;
+      GameTime pipelineTime = GameTime.getInstance();
+      float pipelineMultiplier = pipelineTime.perObjectMultiplier;
+      try {
+         AnimParallel.apply(queue, count, true);
+      } finally {
+         pipelineTime.perObjectMultiplier = pipelineMultiplier; // see the multiplier note below
+         applying = false;
+         java.util.Arrays.fill(queue, 0, count, null);
+         count = 0;
+      }
+   }
+
+   private static void flushSerial() {
       long w0 = FrameBatch.workNanos;
       long q0 = FrameBatch.waitNanos;
       Throwable t = FrameBatch.run(count, i -> queue[i].pzoptEvalTask());

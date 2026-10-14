@@ -3196,7 +3196,7 @@ public final class IsoWorld {
    }
 
    public void FinishAnimation() {
-      pzopt.AnimBatch.join(); // pzopt: animBatchAsync, the zombies' bone batch started at the end of the postupdate loop
+      pzopt.ZombieLate.finishAnimation(); // pzopt: animBatchAsync's join of the bone batch; zombieLateApply's held apply first, zombieDrawLate leaves the bones in flight (f8-zomb3)
       if (animationThread != null) {
          ProfileArea var1 = GameProfiler.getInstance().profile("Wait Animation");
 

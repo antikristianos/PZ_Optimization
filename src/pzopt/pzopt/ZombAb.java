@@ -11,7 +11,7 @@ public final class ZombAb {
    }
 
    private static final String[] NAMES = {"zombNoop", "separateAsync", "postupdateMoveStream", "entityUpdateStream", "separateEdgeCache",
-      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker"};
+      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "zombieLateApply", "zombieDrawLate", "randPerWorker", "animalLosSkip", "entityUpdateAnimalsInline"};
 
    public static final long NOOP = 1L; // zombNoop: no code reads it (an alternation of it turns the timers on, both halves alike)
    public static final long SEP_ASYNC = 1L << 1; // separateAsync
@@ -26,6 +26,11 @@ public final class ZombAb {
    public static final long CLEAN = 1L << 10; // postupdateClean
    public static final long EXTRA1 = 1L << 11; // postupdateEligibleOnWorker
    public static final long EXTRA2 = 1L << 12; // postupdateVehicleOnWorker
+   public static final long LATE_APPLY = 1L << 13; // zombieLateApply (f8-zomb3)
+   public static final long DRAW_LATE = 1L << 14; // zombieDrawLate (f8-zomb3)
+   public static final long RAND_WORKER = 1L << 15; // randPerWorker (f8-zomb3)
+   public static final long ANIMAL_LOS_SKIP = 1L << 16; // animalLosSkip (f8-zomb3)
+   public static final long ANIMALS_INLINE = 1L << 17; // entityUpdateAnimalsInline (f8-zomb3)
 
    /** GtAb.parse: a name of this pass shares GtAb bit 40 (timers on); 0 for any other name. */
    static long bit(String name) {

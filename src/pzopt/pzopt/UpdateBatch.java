@@ -1435,7 +1435,16 @@ public final class UpdateBatch {
    }
 
    public static boolean playerFirst(IsoMovingObject entity) {
-      return Config.ENTITY_UPDATE_PLAYER_FIRST && (entity instanceof IsoPlayer || entity instanceof zombie.vehicles.BaseVehicle) && GtAb.on(GtAb.PLAYER_FIRST);
+      return Config.ENTITY_UPDATE_PLAYER_FIRST && (entity instanceof IsoPlayer && !animalInline(entity) || entity instanceof zombie.vehicles.BaseVehicle) && GtAb.on(GtAb.PLAYER_FIRST);
+   }
+
+   /**
+    * entityUpdateAnimalsInline (zombie redesign round 3, f8-zomb3): IsoAnimal extends IsoPlayer, so entityUpdatePlayerFirst moved
+    * the animals before the flight with the players; with the key they go back to the inline phase under the flight (the
+    * semantics entityUpdatePipeline shipped with for them: the batched zombies' positions read as dispatched), as runway.
+    */
+   private static boolean animalInline(IsoMovingObject entity) {
+      return Config.ENTITY_UPDATE_ANIMALS_INLINE && entity instanceof IsoAnimal && ZombAb.on(ZombAb.ANIMALS_INLINE);
    }
 
    // luaSilentSkip (zombie redesign pass, 2026-10-13, f8-zomb2): every batched zombie's update fires OnZombieUpdate, which

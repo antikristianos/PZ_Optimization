@@ -5877,6 +5877,7 @@ public final class FBORenderCell {
       sb.append(" | ").append(pzopt.AnimBatch.describe()); // pzopt: the zombies' bone-math batch
       sb.append(" | ").append(pzopt.ActionEval.describe()); // pzopt: the zombies' transition-evaluation batch
       sb.append(" | ").append(pzopt.AnimParallel.describe()); // pzopt: animatorParallel
+      sb.append(" | ").append(pzopt.ZombieLate.describe()); // pzopt: zombieLateApply / zombieDrawLate (f8-zomb3)
       sb.append(" | ").append(pzopt.TileRecord.describe()); // pzopt: tileRecordParallel
       sb.append(pzopt.BakeRecord.describe()); // pzopt: bakeRecordParallel
       sb.append(" | ").append(pzopt.CharDraw.describe()); // pzopt: charDrawPrep, the characters draw pre-pass

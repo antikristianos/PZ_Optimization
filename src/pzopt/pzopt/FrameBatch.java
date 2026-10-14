@@ -35,6 +35,8 @@ public final class FrameBatch {
       public Object drawRecorder; // tileRecordParallel: the DrawRecorder of the tile draw unit this thread is recording, or null
       public Object[] tl = new Object[64];
       int index; // frameThreadsAlt: this worker's number (a batch uses workers 0..limit-1) // pzopt.Tl: this worker's thread-local values (zombie redesign, f8-zomb2)
+      public java.util.Random rng; // randPerWorker (f8-zomb3): this worker's own generator (pzopt.WorkerRand)
+      public boolean bgTask; // zombieDrawLate (f8-zomb3): this worker is running a background-lane task
       public Object zCurrent; // entityUpdateParallel (zombie redesign, f8-zomb2): the entity this worker's flight task updates (UpdateBatch.CURRENT without the ThreadLocal lookup)
 
       Worker(Runnable r, String name) {
@@ -95,6 +97,28 @@ public final class FrameBatch {
          return true;
       }
 
+      /** zombieDrawLate (f8-zomb3), background lane: claim and run one task; false when none is left to claim. */
+      boolean workOne() {
+         int i = this.cursor.getAndIncrement();
+         if (i >= this.count) {
+            return false;
+         }
+         try {
+            this.runner.run(i);
+         } catch (Throwable t) {
+            if (this.failure == null) {
+               this.failure = t;
+            }
+         } finally {
+            this.finished.incrementAndGet();
+         }
+         return true;
+      }
+
+      boolean hasUnclaimed() {
+         return this.cursor.get() < this.count;
+      }
+
       void work() {
          boolean serve = !(Thread.currentThread() instanceof Worker); // the game thread runs the workers' Lua calls (LuaGate)
          int i;
@@ -105,7 +129,7 @@ public final class FrameBatch {
             }
             if (serve) {
                LuaGate.service();
-               gtTaskDepth++; // f8-streamfix: the game thread inside a task (ActionEval.settle must not wait from here)
+               gtTaskDepth++; // zombie round 3: the game thread inside a task (ZombieLate.touch must not apply from here)
             }
             try {
                this.runner.run(i);
@@ -176,19 +200,125 @@ public final class FrameBatch {
       }
    }
 
+   // ---- the background lane (zombieDrawLate, zombie redesign round 3, 2026-10-13, f8-zomb3) ----
+   // One batch beside the foreground one: the workers take its tasks one at a time whenever no foreground batch has work for
+   // them, and go back to the foreground after each task, so a render-time batch (tile records, render prep, the bakes' own
+   // batches) never waits for it nor joins it. Only its owner joins it (joinBackground); join() and the foreground's
+   // one-batch rule ignore it. The bone batch is its only user: it runs from FinishAnimation through the render.
+   private static volatile Batch background;
+   private static Completion backgroundDone;
+   private static boolean gtInBackground; // game thread: running a background task inside joinBackground
+   public static long backgrounds, backgroundJoinNanos, backgroundHelped;
+
+   /** Game thread: start a background batch (the previous one is joined first; a foreground batch in flight stays). */
+   public static void runBackground(int n, Runner r, Completion done) {
+      joinBackground();
+      if (n <= 0) {
+         done.done(null);
+         return;
+      }
+      if (workers == null) {
+         start();
+      }
+      batches++;
+      tasks += n;
+      backgrounds++;
+      backgroundDone = done;
+      background = new Batch(r, n);
+      synchronized (gate) {
+         gate.notifyAll(); // parked workers re-check: the background has work
+      }
+   }
+
+   /** True while a background batch has not been joined. */
+   public static boolean hasBackground() {
+      return background != null;
+   }
+
+   private static int gtTaskDepth; // game thread (or a non-worker caller): inside a batch task it runs itself (work / helpOne)
+
+   /** Game thread: inside a batch task it runs itself (a join or a help): a hook there must not start or join a batch. */
+   public static boolean gameThreadInTask() {
+      return gtTaskDepth > 0 || gtInBackground;
+   }
+
+   /** zombieDrawLate: the game thread is running a background task (the bone math reads the live arrays). */
+   public static boolean gameThreadInBackgroundTask() {
+      return gtInBackground;
+   }
+
+   private static boolean joiningBackground; // game thread: inside joinBackground (a task it runs may reach a guard: no nested join)
+   private static volatile boolean backgroundFailed; // a background join gave up waiting: the lane is off for the session
+   public static long backgroundTimeouts, backgroundNested;
+   private static final long BACKGROUND_WAIT_LIMIT_NANOS = 200_000_000L;
+
+   /** zombieDrawLate: false once a background join gave up (the bone batch is then joined like any async batch). */
+   public static boolean backgroundUsable() {
+      return !backgroundFailed;
+   }
+
+   /**
+    * Game thread: finish the background batch: take its unclaimed tasks here, wait for the rest, run its completion. A call
+    * from inside a task this thread runs for the join (a guard reached by the bone math) returns at once: the outer join
+    * finishes the batch. The wait for tasks running on workers is bounded: past 200 ms it is logged once, the lane is off for
+    * the session and the completion runs (the task that never ended is a lost one; one slow frame, not a hung game).
+    */
+   public static void joinBackground() {
+      Batch batch = background;
+      if (batch == null) {
+         return;
+      }
+      if (joiningBackground) {
+         backgroundNested++;
+         return;
+      }
+      joiningBackground = true;
+      try {
+         joinBackground(batch);
+      } finally {
+         joiningBackground = false;
+      }
+   }
+
+   private static void joinBackground(Batch batch) {
+      long t0 = System.nanoTime();
+      gtInBackground = true;
+      try {
+         while (batch.workOne()) {
+            backgroundHelped++;
+         }
+      } finally {
+         gtInBackground = false;
+      }
+      int spins = 0;
+      while (batch.finished.get() < batch.count) {
+         if (++spins < 200) {
+            Thread.onSpinWait();
+         } else {
+            ShortWait.pause(20_000L);
+            if (System.nanoTime() - t0 > BACKGROUND_WAIT_LIMIT_NANOS) {
+               backgroundTimeouts++;
+               if (!backgroundFailed) {
+                  backgroundFailed = true;
+                  Log.warn("frame batch: a background task did not finish in 200 ms (" + batch.finished.get() + " of " + batch.count + "); the background lane is off for the session");
+               }
+               break;
+            }
+         }
+      }
+      background = null;
+      Completion done = backgroundDone;
+      backgroundDone = null;
+      backgroundJoinNanos += System.nanoTime() - t0;
+      done.done(batch.failure);
+   }
+
    public static long helped; // tasks of an asynchronous batch the game thread ran while waiting for one (helpOne)
 
    // ---- entityUpdateStream (zombie redesign pass, 2026-10-13, f8-zomb2) ----
    // An asynchronous batch whose task count grows while the game thread still collects: workers start on the first
    // published tasks at once, claim an index past the count and wait for it to be published (or for the seal to drop it).
    public static long streams, streamSealedByJoin;
-
-   private static int gtTaskDepth; // the game thread (or another non-worker caller) inside a batch task it runs itself (work / helpOne)
-
-   /** Game thread: true while it runs a batch task itself (a join or a help); a hook there must not wait for another task. */
-   public static boolean gameThreadInTask() {
-      return gtTaskDepth > 0;
-   }
 
    /**
     * Game thread: start an empty stream on the workers only (joined like runAsync's batch, after {@link #seal}). Returns the
@@ -523,6 +653,7 @@ public final class FrameBatch {
 
    private static void workerLoop() {
       CorePlacement.background(); // macOS: utility QoS (E cores first)
+      Worker self = (Worker) Thread.currentThread();
       int seen = 0;
       while (true) {
          // frameSpinUs: the frame's batches come back to back (separation, transitions, animators, bones, lighting);
@@ -537,26 +668,38 @@ public final class FrameBatch {
          if (generation != seen) {
             seen = generation;
             Batch batch = current;
-            if (batch != null && ((Worker) Thread.currentThread()).index < batch.limit) {
+            if (batch != null && self.index < batch.limit) {
                batch.work();
                PoolStats.flush(); // poolStatsBatched: this worker's pool counts of the batch
             }
             continue;
          }
+         Batch bg = background; // zombieDrawLate (f8-zomb3): one background task, then the foreground is looked at again
+         if (bg != null && bg.hasUnclaimed()) {
+            self.bgTask = true;
+            boolean ran;
+            try {
+               ran = bg.workOne();
+            } finally {
+               self.bgTask = false;
+            }
+            if (!ran) {
+               PoolStats.flush();
+            }
+            continue;
+         }
          synchronized (gate) {
             while (generation == seen) {
+               Batch b2 = background;
+               if (b2 != null && b2.hasUnclaimed()) {
+                  break; // zombieDrawLate: background work arrived
+               }
                try {
                   gate.wait();
                } catch (InterruptedException e) {
                   return;
                }
             }
-            seen = generation;
-         }
-         Batch batch = current;
-         if (batch != null && ((Worker) Thread.currentThread()).index < batch.limit) {
-            batch.work();
-            PoolStats.flush(); // poolStatsBatched
          }
       }
    }

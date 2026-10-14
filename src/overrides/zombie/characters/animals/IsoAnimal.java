@@ -454,7 +454,9 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                   this.updateEmitter();
                   this.tryThump(null);
                   long pzoptLosT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
-                  this.updateLOS();
+                  if (!pzopt.AnimalLosSkip.skip(this)) { // pzopt: animalLosSkip (f8-zomb3), an idle animal's walk that would change nothing is skipped
+                     this.updateLOS();
+                  } // pzopt
                   pzopt.GtAb.end(pzopt.GtAb.S_ANIMAL_LOS, pzoptLosT); // pzopt
                   if (this.vehicle4testCollision != null) {
                      this.setVehicleCollision(this.testCollideWithVehicles(this.vehicle4testCollision, null));

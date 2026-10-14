@@ -7258,6 +7258,154 @@ pzopt-gtab.out with `devFrameSections`, asprof / JFR samples, gc.log, the bake /
   instead of polling `glGetQueryObject(GL_QUERY_RESULT_AVAILABLE)` every frame (a threaded-driver sync; 9.4 ms render-thread
   stall in run t2-cc-on).
 
+## Zombie redesign round 3 (2026-10-13, worktree f8-zomb3): late apply, zombies drawn one frame late, per-worker random streams
+
+Goal (Louisville 120 lock, maintainer): the zombie work the game thread waits on at most 0.5 ms a frame. After round 2 about
+1 ms of it was waits on synchronous worker batches with nothing independent to do: the separation (0.15 ms), the entity
+flight's join (0.37-0.48), the postupdate's movement batch (0.20-0.24), the transition evaluations the apply loop waited
+for (~0.15, `evalWait` in the animator-parallel log line) and the bone join at FinishAnimation (0.06). The maintainer
+approved two behaviour changes for this round (each behind its own key, off until the checks are seen): the late apply
+and drawing zombies one frame late.
+
+### The apply at FinishAnimation (`zombieLateApply`, off: behaviour difference, approved, pzopt.ZombieLate)
+
+`ActionEval.flush` at the end of the postupdate now only seals the postupdate stream (the queued zombies the stream did not
+take join it) and, with the key, holds the queue: the apply (AnimParallel.apply: the state changes and the arming in queue
+order, the animators of the zombies that changed state on the workers, the anim events and the finish in queue order) and
+the bone batch's start run in `IsoWorld.FinishAnimation` (the game's own animation join point before the render, where
+stock's `threadAnimation` debug option joins its whole postupdate). The workers' evaluations and fused animators then
+overlap the rest of the frame's logic. What sees a different order: every game-thread step between the postupdate and
+FinishAnimation (IsoWorld.updateThread, GameEntityManager, AnimalController, the radio, UpdateStuff with the population
+manager, virtual zombies, fire, world sounds, `OnTick` and the `Every*` events, FMOD ambience, ModelManager.update, the
+UI update) sees a queued zombie before this frame's action-state change, its anim events (footsteps and vocal sounds, the
+attack's collision check that marks its target hit, thump strikes on doors / windows / vehicles, the state's anim-event
+hooks) and its animator step. No vanilla Lua event is fired from inside the apply except through those hooks (a hit target's
+damage lands in its own next update; `OnZombieDead` / `OnCharacterDeath` only when an anim event kills). Writes that would
+collide finish the held apply first (counted as touches by reason): the zombie's state machine changing state (death, hit
+reaction, Lua `changeState`; StateMachine.changeState), its removal from the world (IsoZombie.removeFromWorld), ModelManager
+adding, resetting or removing its model, and any game-thread call of its AnimationPlayer's accessors (its player carries
+the in-flight flag while held, AnimBatch.guard). A touch from inside a batch task the game thread runs is only counted (the
+apply cannot start batches there; FinishAnimation runs it). Unguarded reads (Lua reading a variable or the current action
+state) see the pre-apply value and may race with a worker's evaluation or fused animator of that zombie, the exposure stock's
+threadAnimation option has. The frame workers read the frame's `fpsMultiplier` latched at the hold (GameTime: getMultiplier,
+getUnmoddedMultiplier, getRealworldSecondsSinceLastUpdate) instead of the field, which AnimatedModel / IsoDeadBody set to
+100 around their own poses on the game thread. ActionEval.begin finishes a held apply that FinishAnimation missed.
+
+### Zombies drawn one frame late (`zombieDrawLate`, off: behaviour difference, approved, pzopt.ZombieLate / AnimBatch / FrameBatch)
+
+The bone batch (AnimBatch: the bone math, the skin palettes, the shadow pair) is no longer joined at FinishAnimation: it runs
+on a new background lane of the frame workers (`FrameBatch.runBackground` / `joinBackground`: a worker takes one background
+task at a time when no foreground batch has work for it and looks at the foreground again after each, so the render-time
+batches never wait for it or join it; only its owner joins it) through the render, and is joined at the top of the next
+frame (`ZombieLate.frameStart`, GameWindow.frameStep before the logic). The render draws each zombie whose bones are in flight
+with the pose of its previous bone update: `AnimationPlayer.pzoptDrawSnapshot` copies the render outputs (the model
+transforms, every skin palette the last update stored, the angle, the shadow pair) when its bone math is queued, before a
+worker writes the live arrays, and from FinishAnimation to the next frame's start the accessors the render reads serve the
+copy on every thread but the bone task itself (getRenderedAngle, getAngle, pzoptSkinPalette, getSkinTransforms (the copy's
+transforms through the set's bone map when no palette was stored), getModelTransformAt / Count, pzoptShadowParams; the
+bone-index cache is bypassed). A game-thread call of any other guarded accessor joins the batch (logged with its stack, first
+ten). Everything else the render reads of a zombie (position, alpha, outline, model slot, lighting, the cull) was final at
+FinishAnimation: only the bone math runs during the render. The copy is written only while the player is not in flight and
+read only while it is. So a zombie is drawn at its current position with the previous step's pose and facing (at most one
+frame of animation, ~8 ms at 120 fps).
+
+The first build hung (run z3-ld1): the game thread, running a bone task itself inside joinBackground, reached a guarded
+accessor (AnimationPlayer.DoAngles inside the bone math) whose guard joined the background again and waited for the very
+task it was running. The guard never joins while the game thread runs a background task, a nested joinBackground returns at
+once, and the background wait gives up after 200 ms (logged once, the lane off for the session, the completion run: one slow
+frame instead of a hung game). tests/pzopt/FrameBatchBackgroundTest: every background task once under random foreground
+traffic (run, runAsync + join, streams), the foreground completing while every background task is blocked (a join of the
+background would hang), the per-thread flags, the nested join (hangs on the first build, watchdog) and the bounded wait.
+
+### Per-worker random streams (`randPerWorker`, off: statistically identical, not bit-identical)
+
+The game's `Rand` draws from one `CellularAutomatonRNG` whose `next` takes a fair ReentrantLock; eight workers drawing from it
+in the entity flight (the sheet-rope roll every zombie every frame, the sound response, the idle and wander states) spent
+~7 % of the flight's samples there (zomb2-prof5), most of it lock hand-offs. `pzopt.WorkerRand` wraps the game's instance
+(RandStandard.INSTANCE's field, re-wrapped if the game replaces it): every thread but a frame worker draws the game's own
+values in the same order (the wrapper delegates `next` to it), a frame worker draws from its own generator of the same kind.
+Which zombie got which number was already decided by the workers' scheduling; the workers' draws no longer advance the game
+thread's stream.
+
+### An idle animal's line of sight without the walk (`animalLosSkip`, off until its rig and A/B are read; IsoAnimal override, pzopt.AnimalLosSkip)
+
+IsoAnimal extends IsoPlayer, so entityUpdatePlayerFirst updates every animal in place in the buckets' collection, before
+the zombies' flight is dispatched, and each animal's updateLOS walks the cell's whole object set: 0.46-0.48 ms of the game
+thread a frame on the Louisville horde (z3-prof1), all of it ahead of the flight. For an idle animal that walk changes nothing:
+every spotted() call clears spottedChr (already null), ticks lastAlerted towards 0 (already 0) and returns before any branch
+that acts, and the spotted list ends as the animal itself (as it was); the branches that act (a flight, an alert, stress,
+the player acceptance with its random roll, an attack) need a zombie within 10 squares of an animal that flees zombies, a
+non-animal player within 10 squares of a tame animal, or a player anywhere near a wild one. The call site in the animal's
+update skips updateLOS when the animal is idle (spottedChr null, lastAlerted exactly 0, its spotted list exactly itself) and,
+for a tame animal, no non-animal player stands within 11 squares (live positions, any level); a wild animal (every animal of
+the Louisville bench: z3-rig2 counted 23,590 walks of wild animals and nothing else) rolls Rand.Next(AdjustForFramerate(25000))
+once for every moving player its walk hands to spotted(), whatever the distance, and beyond its spotting distance (and 3
+squares) that roll is the call's only effect: the skip requires every such player farther than max(3, spottingDist) + 1
+squares and rolls the same number of times at the same place, so the game's random stream stays bit for bit the one the walk
+would leave (players dropped by the walk's own filters before the roll, other level, no square, invisible, ghost, dead, roll
+nothing; an animal on a smoke square is left to the walk); and, if the animal flees zombies, no zombie stands
+within 12 squares and 2 levels (the frame's zombie positions, snapshotted on a 16-square grid at the scheduler's update before
+the collection: nothing moves a zombie by 2 squares inside the collection; every zombie counts, also those stock's filters
+drop). Everything else takes the stock walk; nothing runs on another thread, and the inside of updateLOS is untouched (so it
+combines with the tail pass's animalLosWalk, which makes the remaining walks cheaper). `devAnimalLosSkipCheck` runs the stock
+walk anyway for every skipped animal and compares what it changed (spottedChr, lastAlerted, the spotted list, stress, the
+alert, the alerted / fighting / attack targets, the behaviour flag, the player acceptance values) with nothing, and the rolls it
+made (RandAbstract's draw counter) with the predicted count. The zombie snapshot is built at the frame's first animal (no cost
+on a drive without animals).
+
+### Animals back under the flight (`entityUpdateAnimalsInline`, off: behaviour difference against today's default)
+
+entityUpdatePlayerFirst moved the players and the vehicles before the combined flight (the player's update writes the
+zombies it sees); because IsoAnimal extends IsoPlayer, the animals went with them, although nothing in an animal's update
+writes a zombie the flight reads, and the flight's only runway (the inline phase) shrank to ~0.06 ms while its join waits
+0.36-0.45 ms. With the key `UpdateBatch.playerFirst` answers false for an animal, so the animals update in the inline phase
+under the flight again, in their stock order among the inline entities: the semantics entityUpdatePipeline shipped with for
+them (a batched zombie's position read as it was when the flight was dispatched, which is what an animal updating before the
+flight reads too). What changes against today's default: an animal now updates after every player and vehicle of the frame
+instead of at its place among them, and a batched zombie reading an animal reads it while the game thread may be updating it
+(as for every other inline entity).
+
+### Results of round 3 (2026-10-13, full maintainer setup + the coordinator's candidate stack, JVM -Xms4096m -XX:MaxGCPauseMillis=10)
+
+In-run A/Bs (pzopt-gtab.out; "zombie sections" = separation, collection, inline phase, flight join, drain, postupdate, sceneCull,
+characters draw, FinishAnimation; alternation periods 230 / 410 ms: a 330 ms second group phase-locks with the game's 1 s periodic
+work and biased every group-2 cell of z3-ld2 / z3-rand1, as it did zomb2-all3's):
+- entityUpdateAlerted, house-alarm scene (z3-alert2): inline phase 0.57 -> 0.18 ms, scheduler update -0.11 ms, frame wall
+  -0.23 ms, frames whose zombie sections exceed 8 ms 11 -> 4. Plain route (z3-alert1): no alerted zombies, no difference.
+- zombieLateApply x zombieDrawLate (z3-ld3, 2x2): zombie sections 2.82 (neither) / 2.95 (late apply alone: the bone batch is
+  then waited for at FinishAnimation) / 2.72 (draw late) / 2.69 (both). Repeat (z3-anim1, draw late with late apply on):
+  3.45 -> 3.29 and 3.42 -> 3.23. The late apply's own gain is the evaluation waits of the apply loop (step 1 0.14 -> 0.07 ms).
+- randPerWorker (z3-rand1): the flight's worker CPU 4.95 -> 3.81 ms a frame, its join 0.59 -> 0.46 ms. frameThreadsAlt=7 in the
+  same run: flight wall +0.06 ms (dropped).
+- animalLosSkip (z3-anim3): the animals' LOS 0.57 -> 0.49 ms; Louisville's animals are all wild and mostly within 12 squares of a
+  zombie, so 4,894 of 35,823 walks were skipped there (13-63 % across runs). Exactness rig (z3-rig4): 0 mismatches in 7,405 checked
+  skips (state and the game thread's own Rand rolls; z3-rig3's 13 roll differences in 17,574 were other threads' draws on the shared
+  generator, which rig4 no longer counts).
+- entityUpdateAnimalsInline (z3-anim3): the flight's join 0.28 -> 0.01 ms, but the animals' updates under the flight ran twice as
+  slow (the inline phase 0.16 -> 1.25 ms, their LOS 0.57 -> 1.07: every zombie position read goes through the frozen snapshot while
+  eight workers share the cores): scheduler update +0.23 ms. Dropped (key kept, off).
+- Every round-3 key together (z3-all2, plain route): zombie sections 3.51 -> 3.15 ms, frame wall 7.56 -> 7.04 ms, game-thread
+  CPU 6.79 -> 6.41 ms, frames with zombie sections > 8 ms 16 -> 10; the postupdate's flush 0.26 -> 0 (its apply work, 0.17 ms, is
+  in FinishAnimation now, with no bone wait), the flight's join 0.56 -> 0.42. House-alarm scene (z3-all1): 3.44 -> 3.22 ms.
+- Waits left on the game thread (z3-all2, on): separation 0.20, flight join 0.42, movement batch 0.35 ms: throughput-bound
+  batches with no independent game-thread work beside them inside the update.
+
+Behaviour: brawl rig (4 runs off, 4 on, Jev): the whole stack "same: yes 0.19", kind more_aggressive 0.51 / same 0.48 (damage per
+second 8.5 vs 7.4 mean, within-4 and targeting slightly higher); isolated: entityUpdateAlerted alone "same" 0.74 (but the thump
+share 0.057-0.097 against 0.036-0.056 off), late apply + draw late + randPerWorker "same" 0.54. Car through Rosewood (z3-ram-off /
+on): 108 crashes, condition 3500 both, no worker exception. drive-120-south in-run A/B of every key (z3-drive-ab1): wall 1.672 ->
+1.706 ms (+2 %, 5.8 zombie updates a frame; the animal snapshot is lazy since). Draw late: brawl frames at zoom 1 show intact
+models and smooth motion frame to frame.
+
+Lock checks at the 120 cap (two runs each): off 110.4 / 110.3 fps, 80.0 / 78.0 % of frames within 9 ms, p99 18.4 / 17.8, p99.9
+41.6 / 41.8 ms; on 111.5 / 112.2 fps, 79.4 / 81.3 %, p99 17.3 / 16.9, p99.9 35.5 / 29.5 ms (mangohud, route window; bake counters
+healthy, ~5.7-6k strong marks). The share of late frames does not move beyond the noise: the lock's misses are not zombie waits.
+
+Open: the postupdate stream (round 2's postupdateFuse) throws in a task now and then, caught by the batch and logged ("postupdate
+stream: a task failed": a null task item, or ActionStateContainer.currentState null in an evaluation): 1 of 71 runs without
+zombieLateApply (zomb2-br-on4), 4 of 24 with it; no bounded wait ever timed out (waitTimeouts=0). The null item is now skipped and
+logged with the stream's state; the root cause is not found. Keep zombieLateApply off until it is.
+
 ## The postupdate stream's task failures (2026-10-13, worktree f8-streamfix): no game-thread write beside a zombie's own evaluation task
 
 Round 2's postupdate stream (postupdateFuse / postupdateClean, `pzopt.PuStream`, `StreamTasks`) logged "postupdate stream: a task
