@@ -7454,7 +7454,7 @@ public abstract class IsoGameCharacter
          IsoBulletTracerEffects.getInstance().render();
       }
 
-      if (this.inventory != null) {
+      if (this.inventory != null && !pzopt.RenderLast.skipUpdaters()) { // pzopt: renderLastFast, every vanilla IUpdater's renderlast is empty
          for (int n = 0; n < this.inventory.items.size(); n++) {
             InventoryItem item = (InventoryItem)this.inventory.items.get(n);
             if (item instanceof IUpdater iUpdater) {

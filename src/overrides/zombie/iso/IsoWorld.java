@@ -2929,7 +2929,9 @@ public final class IsoWorld {
                var18 = profiler.profile("renderWeatherFX");
 
                try {
+                  long pzoptWfxT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
                   this.renderWeatherFX();
+                  pzopt.GtAb.end(pzopt.GtAb.S_WEATHER, pzoptWfxT); // pzopt
                } catch (Throwable var12) {
                   if (var18 != null) {
                      try {

@@ -492,7 +492,9 @@ public final class SpriteRenderer {
    }
 
    public void prePopulating() {
+      long pzoptT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
       this.states.getPopulating().prePopulating();
+      pzopt.GtAb.end(pzopt.GtAb.S_PREPOP, pzoptT); // pzopt
    }
 
    public void postRender() {
@@ -742,7 +744,9 @@ public final class SpriteRenderer {
          AbstractPerformanceProfileProbe var4 = this.waitForReadySlotToOpen.profile();
 
          try {
+            long pzoptT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
             this.waitForReadySlotToOpen();
+            pzopt.GtAb.end(pzopt.GtAb.S_HANDOFF, pzoptT); // pzopt
          } catch (Throwable var9) {
             if (var4 != null) {
                try {

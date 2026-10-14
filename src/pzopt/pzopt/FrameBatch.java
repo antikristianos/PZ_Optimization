@@ -329,6 +329,95 @@ public final class FrameBatch {
    }
 
    /**
+    * f8-render1 (recording passes): {@link #join} with a bound. False when the batch did not finish within {@code timeoutNs}:
+    * it is abandoned (its completion never runs; a worker still inside it is lost to later batches, which the other workers
+    * and the game thread finish), so the caller can take its stock path instead of hanging.
+    */
+   public static boolean joinWithin(long timeoutNs) {
+      Batch batch = pending;
+      if (batch == null) {
+         return true;
+      }
+      if (!batch.sealed) { // integ-r2: as join(): an unsealed entityUpdateStream lands what is published before the bounded wait
+         streamSealedByJoin++;
+         seal(batch.count);
+      }
+      pending = null;
+      Completion done = pendingDone;
+      pendingDone = null;
+      long t0 = System.nanoTime();
+      batch.work();
+      int spins = 0;
+      while (batch.finished.get() < batch.count) {
+         LuaGate.service();
+         if (++spins < 200) {
+            Thread.onSpinWait();
+         } else {
+            ShortWait.pause(20_000L);
+            if ((spins & 15) == 0 && System.nanoTime() - t0 > timeoutNs) {
+               Log.warn("frame batch: an asynchronous batch did not finish in " + timeoutNs / 1_000_000L + " ms (" + batch.finished.get() + " of " + batch.count
+                  + " tasks); abandoned");
+               asyncJoinNanos += System.nanoTime() - t0;
+               return false;
+            }
+         }
+      }
+      asyncJoinNanos += System.nanoTime() - t0;
+      done.done(batch.failure);
+      return true;
+   }
+
+   /** f8-render1: what {@link #runWithin} returns when its batch did not finish in time (the batch is abandoned). */
+   public static final class Timeout extends RuntimeException {
+      Timeout(String msg) {
+         super(msg, null, false, false);
+      }
+   }
+
+   /** f8-render1 (recording passes): {@link #run} with a bound; a {@link Timeout} when the tasks did not all finish in time. */
+   public static Throwable runWithin(int n, Runner r, long timeoutNs) {
+      landEntityFlight();
+      if (n <= 0) {
+         return null;
+      }
+      if (running) {
+         throw new IllegalStateException("FrameBatch.run is not reentrant");
+      }
+      if (!joinWithin(timeoutNs)) {
+         return new Timeout("the batch before did not finish");
+      }
+      if (workers == null) {
+         start();
+      }
+      running = true;
+      long t0 = System.nanoTime();
+      batches++;
+      tasks += n;
+      Batch batch = new Batch(r, n);
+      current = batch;
+      synchronized (gate) {
+         generation++;
+         gate.notifyAll();
+      }
+      batch.work();
+      int spins = 0;
+      while (batch.finished.get() < n) {
+         LuaGate.service();
+         if (++spins < 200) {
+            Thread.onSpinWait();
+         } else {
+            ShortWait.pause(20_000L);
+            if ((spins & 15) == 0 && System.nanoTime() - t0 > timeoutNs) {
+               running = false;
+               return new Timeout("a batch did not finish in " + timeoutNs / 1_000_000L + " ms (" + batch.finished.get() + " of " + n + " tasks)");
+            }
+         }
+      }
+      running = false;
+      return batch.failure;
+   }
+
+   /**
     * Game thread: run tasks 0..count-1 on the workers and this thread, wait for all of them, and return the first
     * exception a task threw (null when every task finished).
     */

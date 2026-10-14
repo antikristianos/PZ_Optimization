@@ -95,7 +95,7 @@ public final class BakeRecord {
    /** Whether this frame's bakes go through units (the game thread's chunk loop asks before the pre-pass). */
    public static boolean active() {
       return Config.BAKE_RECORD_PARALLEL && !failed && Overrides.enabled() && zombie.characters.IsoPlayer.numPlayers == 1 && !PixelLight.ACTIVE
-         && !Config.MIRRORS && !Sway.frameOn;
+         && !Config.MIRRORS && !Sway.frameOn && GtAb.on(GtAb.BAKE_RECORD);
    }
 
    /** Game thread, before the pre-pass. */
@@ -269,10 +269,15 @@ public final class BakeRecord {
       if (k > 0 && units[k - 1].task == u.task) {
          Unit prev = units[k - 1];
          int spins = 0;
+         long deadline = System.nanoTime() + TileRecord.timeoutNs(); // (f8-render1: bounded; past it the level goes the stock way)
          while (!prev.infoDone) {
             pause(++spins);
+            if ((spins & 63) == 0 && System.nanoTime() > deadline) {
+               waitTimedOut("a level's info pass (unit " + (k - 1) + ")");
+               break;
+            }
          }
-         if (prev.stockPath) {
+         if (prev.stockPath || !prev.infoDone) {
             u.stockPath = true;
             u.infoDone = true;
             u.done = true;
@@ -314,6 +319,15 @@ public final class BakeRecord {
 
    private static final Skip SKIP = new Skip();
 
+   /** f8-render1: a bounded wait ran out: logged once, bakeRecordParallel off from the next frame (failed). */
+   private static void waitTimedOut(String what) {
+      if (!failed) {
+         Log.warn("bakeRecordParallel: " + what + " did not finish in " + Config.RECORD_WAIT_TIMEOUT_MS + " ms; the stock bakes from now on");
+      }
+      failed = true;
+      spliceTimeouts++;
+   }
+
    private static void pause(int spins) {
       if (spins < 200) {
          Thread.onSpinWait();
@@ -352,8 +366,13 @@ public final class BakeRecord {
       }
       Unit v = units[k];
       int spins = 0;
+      long deadline = System.nanoTime() + TileRecord.timeoutNs(); // (f8-render1: bounded)
       while (!v.infoDone) {
          pause(++spins);
+         if ((spins & 63) == 0 && System.nanoTime() > deadline) {
+            waitTimedOut("a neighbour's info pass (unit " + k + ")");
+            throw SKIP;
+         }
       }
       if (v.stockPath) {
          awaitSpliced(v);
@@ -449,8 +468,17 @@ public final class BakeRecord {
          }
       } else {
          int spins = 0;
+         long deadline = t0 + TileRecord.timeoutNs(); // (f8-render1: bounded; past it the stock path, bakeRecordParallel off)
          // the unit, and the info pass of the texture's level above (it writes the lists this level's tail reads)
          while (!u.done || next != null && !next.infoDone) {
+            if ((spins & 63) == 63 && System.nanoTime() > deadline) {
+               waitTimedOut("the unit of a baking level");
+               u.stockPath = true;
+               if (next != null) {
+                  next.stockPath = true;
+               }
+               return null;
+            }
             LuaGate.service(); // a worker may be waiting for its Lua call
             int k = nextTask.get() < n ? nextTask.getAndIncrement() : n;
             if (k < n) {
@@ -511,7 +539,9 @@ public final class BakeRecord {
          units[i].spliced = true;
       }
       if (pending) {
-         FrameBatch.join();
+         if (!FrameBatch.joinWithin(TileRecord.timeoutNs())) {
+            waitTimedOut("the bake recording batch");
+         }
          pending = false;
       }
       for (int i = 0; i < n; i++) {
@@ -611,7 +641,7 @@ public final class BakeRecord {
       }
       if (Config.INSTRUMENT) {
          floorReasons.incrementAndGet(why);
-         TileRecord.deferClasses.computeIfAbsent("bake:floor:" + o.getClass().getSimpleName() + ":" + FLOOR_REASONS[why], x -> new java.util.concurrent.atomic.LongAdder()).increment();
+         floorCensus.add(o.getClass(), why); // (f8-render1: no key string per defer)
       }
       r.defer(DEFER_FLOOR, o, null);
       return true;
@@ -630,7 +660,7 @@ public final class BakeRecord {
       }
       if (Config.INSTRUMENT) {
          objectReasons.incrementAndGet(why);
-         TileRecord.deferClasses.computeIfAbsent("bake:" + o.getClass().getSimpleName() + ":" + TileRecord.REASONS[why], x -> new java.util.concurrent.atomic.LongAdder()).increment();
+         objectCensus.add(o.getClass(), why); // (f8-render1: no key string per defer)
       }
       r.defer(DEFER_OBJECT, o, null);
       return true;
@@ -652,6 +682,8 @@ public final class BakeRecord {
     * joins, no slope (its ramp draws through the cell's shared colour), no children or wall splats, sprites warm.
     */
    static final String[] FLOOR_REASONS = {"class", "noSprite", "lightOn", "slope", "roof", "model", "fascia", "clock", "children", "cold"};
+   static final TileRecord.Census floorCensus = new TileRecord.Census("bake:floor:", FLOOR_REASONS);
+   static final TileRecord.Census objectCensus = new TileRecord.Census("bake:", TileRecord.REASONS);
    static final java.util.concurrent.atomic.AtomicLongArray floorReasons = new java.util.concurrent.atomic.AtomicLongArray(FLOOR_REASONS.length);
    static final java.util.concurrent.atomic.AtomicLongArray objectReasons = new java.util.concurrent.atomic.AtomicLongArray(TileRecord.REASONS.length);
 
@@ -881,7 +913,7 @@ public final class BakeRecord {
          sb.append(' ').append(TileRecord.REASONS[i]).append('=').append(objectReasons.get(i));
       }
       sb.append(" classes:");
-      TileRecord.deferClasses.entrySet().stream().filter(e -> e.getKey().startsWith("bake:"))
+      TileRecord.deferClasses().entrySet().stream().filter(e -> e.getKey().startsWith("bake:"))
          .sorted((a, b) -> Long.compare(b.getValue().sum(), a.getValue().sum())).limit(14)
          .forEach(e -> sb.append(' ').append(e.getKey().substring(5)).append('=').append(e.getValue().sum()));
       return sb.toString();

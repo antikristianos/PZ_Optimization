@@ -58,7 +58,7 @@ PzoptSettingsLayout = {
                     "entityUpdateParallel", "entityUpdatePipeline", "entityUpdatePlayerFirst", "entityUpdateMoreStates", "postupdateParallel",
                     "postupdateFuse", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker" } },
                 { title = "Cheaper checks", keys = { "playerLosFast", "ecsLookupFast", "actionConditionFast", "zombieCullSortFast", "vehicleCull", "nearVehicleGrid",
-                    "zombieSpotFast", "zombieAtlasFast", "separateFast", "edgeTestFast", "separateEdgeCache", "postupdateNoopSkip", "luaSilentSkip", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
+                    "zombieSpotFast", "zombieAtlasFast", "renderLastFast", "separateFast", "edgeTestFast", "separateEdgeCache", "postupdateNoopSkip", "luaSilentSkip", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",
                     "emitterParamSkip", "profilerThreadMemo" } },
                 { title = "Detail by distance", keys = { "zombieLodDynamic", "zombieSimLodTiles", "zombieSimLodSteps", "zombieCheckSpread",

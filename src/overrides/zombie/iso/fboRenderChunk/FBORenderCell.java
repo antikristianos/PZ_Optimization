@@ -329,7 +329,9 @@ public final class FBORenderCell {
          int maxHeight = playerZ < 0 ? playerZ : IsoCell.getInstance().chunkMap[playerIndex].maxHeight;
          int min = this.cell.chunkMap[playerIndex].minHeight;
          min = Math.max(min, playerZ);
+         long pzoptRtT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
          this.RenderTiles(min, maxHeight);
+         pzopt.GtAb.end(pzopt.GtAb.S_TILES_INTERNAL, pzoptRtT); // pzopt
       } catch (Exception ex) {
          this.cell.rendering = false;
          ExceptionLogger.logException(ex);
@@ -345,6 +347,7 @@ public final class FBORenderCell {
       }
 
       ProfileArea var24 = GameProfiler.getInstance().profile("renderLast");
+      long pzoptRlT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer
 
       try {
          for (IsoMovingObject obj : this.cell.getObjectList()) {
@@ -355,6 +358,7 @@ public final class FBORenderCell {
             IsoObject obj = (IsoObject)this.cell.getStaticUpdaterObjectList().get(i);
             obj.renderlast();
          }
+         pzopt.GtAb.end(pzopt.GtAb.S_RENDERLAST, pzoptRlT); // pzopt
       } catch (Throwable var21) {
          if (var24 != null) {
             try {
@@ -1894,7 +1898,7 @@ public final class FBORenderCell {
       pzopt.GpuSections.end(pzopt.Relief.section(pzopt.Sway.section(pzopt.SpriteFilter.section("composite")))); // pzopt: sprite filter, devSpriteFilterAlternate splits the section; foliage sway, devSwayAlternate too
       if (!pzopt.ResumeShot.noTranslucent && DebugOptions.instance.fboRenderChunk.renderTranslucentNonFloor.getValue()) { // pzopt: tileRecordAsync, every level's translucent units to the workers while the frame goes on
          IsoChunkMap pzoptCm = IsoWorld.instance.currentCell.getChunkMap(playerIndex); // pzopt
-         pzopt.TileRecord.startFrame(this, perPlayerData1.chunksWithTranslucentNonFloor, playerIndex, pzoptCm.minHeight, pzoptCm.maxHeight, floorRenderShader, wallRenderShader, currentTimeMillis); // pzopt
+         pzopt.TileRecord.startFrame(this, perPlayerData1.chunksWithTranslucentNonFloor, perPlayerData1.chunksWithTranslucentFloor, playerIndex, pzoptCm.minHeight, pzoptCm.maxHeight, floorRenderShader, wallRenderShader, currentTimeMillis); // pzopt
       } // pzopt
       pzopt.Ssr.afterComposite(); // pzopt: reflections, dev timing of the composite with its scatter
       pzopt.Sway.afterComposite(); // pzopt: foliage sway, the motion-vector attachment off the world framebuffer
@@ -4647,8 +4651,10 @@ public final class FBORenderCell {
                IsoGridSquare.setBlendFunc();
                Shader floorShader = null;
                IndieGL.StartShader(floorShader, playerIndex);
-               this.defColorInfo.set(1.0F, 1.0F, 1.0F, 1.0F);
-               object.renderFloorTile(square.x, square.y, square.z, this.defColorInfo, true, false, floorShader, floorShaper, attachedFloorShaper);
+               FBORenderCell.PzoptCellScratch pzoptCs = this.pzoptCellScratch(); // pzopt: a recording thread's own colour (the game thread's ramp path writes defColorInfo meanwhile)
+               ColorInfo pzoptCol = pzoptCs == null ? this.defColorInfo : pzoptCs.floorCol; // pzopt
+               pzoptCol.set(1.0F, 1.0F, 1.0F, 1.0F); // pzopt
+               object.renderFloorTile(square.x, square.y, square.z, pzoptCol, true, false, floorShader, floorShaper, attachedFloorShaper); // pzopt
                IndieGL.EndShader();
             }
          }
@@ -7065,11 +7071,19 @@ public final class FBORenderCell {
       if (DebugOptions.instance.fboRenderChunk.renderTranslucentFloor.getValue()) {
          this.renderTranslucentOnly = true;
          FBORenderCell.PerPlayerData perPlayerData1 = this.perPlayerData[playerIndex];
+         long pzoptTfT = pzopt.GtAb.begin(); // pzopt: devGtAlternate section timer (tl_floor)
+         try { // pzopt
+         if (pzopt.TileRecord.spliceFloorLevel(this, perPlayerData1.chunksWithTranslucentFloor, playerIndex, z, floorRenderShader, wallRenderShader, currentTimeMillis)) { // pzopt: tileRecordFloors, the level's floor units recorded on the workers, spliced in this order
+            return; // pzopt
+         } // pzopt
 
          for (int i = 0; i < perPlayerData1.chunksWithTranslucentFloor.size(); i++) {
             IsoChunk chunk = perPlayerData1.chunksWithTranslucentFloor.get(i);
             this.renderOneChunk_TranslucentFloor(chunk, playerIndex, z, floorRenderShader, wallRenderShader, currentTimeMillis);
          }
+         } finally { // pzopt
+            pzopt.GtAb.end(pzopt.GtAb.S_TL_FLOOR, pzoptTfT); // pzopt
+         } // pzopt
       }
    }
 
@@ -7129,6 +7143,7 @@ public final class FBORenderCell {
       final TimSort timSort = new TimSort(); // pzopt
       final PZArrayList<IsoGridSquare> tempSquares = new PZArrayList(IsoGridSquare.class, 64); // pzopt
       final ColorInfo light = new ColorInfo(); // pzopt
+      final ColorInfo floorCol = new ColorInfo(); // pzopt: tileRecordFloors / bakeRecordParallel, the floor draw's colour (defColorInfo is the game thread's)
    } // pzopt
 
    private FBORenderCell.PzoptCellScratch pzoptCellScratch() { // pzopt
@@ -7223,6 +7238,20 @@ public final class FBORenderCell {
    /** pzopt: tileRecordParallel, one unit of the translucent pass (the stock chunk loop's body). */
    public void pzoptRecordChunkTranslucent(IsoChunk c, int playerIndex, int zza, Shader floorRenderShader, Shader wallRenderShader, long currentTimeMillis) { // pzopt
       this.renderOneChunk_Translucent(c, playerIndex, zza, floorRenderShader, wallRenderShader, currentTimeMillis); // pzopt
+   } // pzopt
+
+   /** pzopt: tileRecordFloors, one unit of the translucent floor pass (the stock chunk loop's body). */
+   public void pzoptRecordChunkTranslucentFloor(IsoChunk c, int playerIndex, int zza, Shader floorRenderShader, Shader wallRenderShader, long currentTimeMillis) { // pzopt
+      this.renderOneChunk_TranslucentFloor(c, playerIndex, zza, floorRenderShader, wallRenderShader, currentTimeMillis); // pzopt
+   } // pzopt
+
+   /** pzopt: tileRecordFloors, whether the chunk has translucent floor squares at this level (else the stock call runs at its place in the splice). */
+   public boolean pzoptTranslucentFloorWork(IsoChunk c, int playerIndex, int level) { // pzopt
+      if (c == null || c.lightingNeverDone[playerIndex]) { // pzopt
+         return false; // pzopt
+      } // pzopt
+      FBORenderLevels renderLevels = c.getRenderLevels(playerIndex); // pzopt
+      return renderLevels.isOnScreen(level) && !renderLevels.getCachedSquares_TranslucentFloor(level).isEmpty(); // pzopt
    } // pzopt
 
    /** pzopt: tileRecordParallel, whether the chunk has anything to draw in this level's translucent pass (else the stock call, state entries only, runs at its place in the splice). */

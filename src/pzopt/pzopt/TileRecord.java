@@ -30,6 +30,7 @@ public final class TileRecord {
 
    public static final int DEFER_OBJECT = 0; // FBORenderCell.renderTranslucent(IsoObject) on the game thread
    public static final int DEFER_ITEMS = 1; // FBORenderCell.renderWorldInventoryObjects(square, renderSquare, false)
+   public static final int DEFER_MASK = 2; // tileRecordWeather: WeatherFxMask's open door / objects / characters (DEFER_MASK + 0..2)
 
    private static final ArrayList<DrawRecorder> recorders = new ArrayList<>(); // every thread's recorder (reset after each pass)
    private static final ThreadLocal<DrawRecorder> threadRecorder = ThreadLocal.withInitial(() -> {
@@ -42,6 +43,11 @@ public final class TileRecord {
    // per recorded unit of the pass: its recorder and its entry / event ranges there
    private static DrawRecorder[] unitRec = new DrawRecorder[64];
    private static int[] unitEntryFrom = new int[64], unitEntryTo = new int[64], unitEvFrom = new int[64], unitEvTo = new int[64];
+   // f8-render1: each unit's first postRender entry in its recorder: a recorder's units are spliced in another order than
+   // recorded (a level's floor units before its translucent ones, the weather parts last), and the splice's postRender
+   // cursor must start at the unit's own entries, or a model's DrawModel entry missed the frame's postRender (its drawer
+   // never released, left on the entry object for the next StartShader: devDrawListCheck "drawer" differences)
+   private static int[] unitPostFrom = new int[64];
    private static boolean failed;
    private static int[] work = new int[64];
    private static final int UNIFORM_POOL = 512; // ShaderUniformSetter entries each recorder holds at a pass start (a tile-depth draw takes four)
@@ -66,10 +72,97 @@ public final class TileRecord {
       return deferReason(o) < 0;
    }
 
+   private static boolean modelsOn; // this frame's translucent units may draw 3D sprite models (tileRecordModels, GtAb)
+
+   /**
+    * tileRecordModels (f8-render1): a static 3D sprite model (a door) a recording thread may draw: its model and texture
+    * loaded and ready (nothing loads or creates), no animation (player or palette frame), no render effects, no highlight or
+    * outline. IsoObjectModelDrawer's pools are locked and it reads the recorder's render mode (override); IsoObject.renderModel
+    * scales a copy of the light on a recording thread.
+    */
+   static boolean modelRecordable(IsoObject o) {
+      zombie.iso.SpriteModel sm = o.getSpriteModel();
+      if (sm == null || sm.getTextureName() != null) {
+         modelWhy[0]++;
+         return false;
+      }
+      int p = zombie.iso.IsoCamera.frameState.playerIndex;
+      if (o.isHighlighted(p) || o.isOutlineHighlight(p) || o.getObjectRenderEffectsToApply() != null) {
+         modelWhy[1]++;
+         return false;
+      }
+      zombie.scripting.objects.ModelScript ms = zombie.scripting.ScriptManager.instance.getModelScript(sm.modelScriptName);
+      if (ms == null || ms.getModelManagerKey() == null) {
+         modelWhy[2]++;
+         return false;
+      }
+      zombie.core.skinnedmodel.model.Model m = zombie.core.skinnedmodel.ModelManager.instance.tryGetLoadedModel(ms.getModelManagerKey(), false);
+      if (m == null || m.isFailure() || !m.isReady() || m.mesh == null || !m.mesh.isReady() || m.tex != null && !m.tex.isReady()) {
+         modelWhy[3]++;
+         return false;
+      }
+      if (zombie.core.skinnedmodel.model.IsoObjectAnimations.getInstance().getAnimationPlayer(o) != null) {
+         modelWhy[4]++;
+         return false;
+      }
+      return true;
+   }
+
+   static final long[] modelWhy = new long[5]; // dev: why a model stayed on the game thread (texture name, highlight / effects, script, not loaded, animating); racy counts
+
    static final String[] REASONS = {"deferAll", "class", "noSprite", "lightOn", "roof", "model", "clock", "floorPath", "wallPath", "fascia", "attached", "cold", "mirror", "seam"};
 
    static final java.util.concurrent.atomic.AtomicLongArray reasons = new java.util.concurrent.atomic.AtomicLongArray(REASONS.length);
-   static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> deferClasses = new java.util.concurrent.ConcurrentHashMap<>();
+   /**
+    * The dev census of deferred objects by class and reason (instrumented runs). f8-render1: counted per class without
+    * building a key string per deferred object (the census allocated a string per defer on every bench run: ~80 a frame
+    * with both recorders on, more ZGC work in the measured frames); the strings are made when the line is written.
+    */
+   static final class Census {
+      final String prefix;
+      final String[] reasons;
+      private final java.util.concurrent.ConcurrentHashMap<Class<?>, java.util.concurrent.atomic.LongAdder[]> map = new java.util.concurrent.ConcurrentHashMap<>();
+
+      Census(String prefix, String[] reasons) {
+         this.prefix = prefix;
+         this.reasons = reasons;
+      }
+
+      void add(Class<?> c, int why) {
+         java.util.concurrent.atomic.LongAdder[] a = this.map.get(c);
+         if (a == null) {
+            a = this.map.computeIfAbsent(c, k -> {
+               java.util.concurrent.atomic.LongAdder[] x = new java.util.concurrent.atomic.LongAdder[this.reasons.length];
+               for (int i = 0; i < x.length; i++) {
+                  x[i] = new java.util.concurrent.atomic.LongAdder();
+               }
+               return x;
+            });
+         }
+         a[why].increment();
+      }
+
+      void into(java.util.Map<String, java.util.concurrent.atomic.LongAdder> out) {
+         for (java.util.Map.Entry<Class<?>, java.util.concurrent.atomic.LongAdder[]> e : this.map.entrySet()) {
+            for (int i = 0; i < this.reasons.length; i++) {
+               if (e.getValue()[i].sum() > 0) {
+                  out.put(this.prefix + e.getKey().getSimpleName() + ":" + this.reasons[i], e.getValue()[i]);
+               }
+            }
+         }
+      }
+   }
+
+   static final Census tileCensus = new Census("", REASONS);
+
+   /** The census as "[bake:[floor:]]Class:reason" -> count (made when a line is written). */
+   static java.util.Map<String, java.util.concurrent.atomic.LongAdder> deferClasses() {
+      java.util.Map<String, java.util.concurrent.atomic.LongAdder> m = new java.util.HashMap<>();
+      tileCensus.into(m);
+      BakeRecord.floorCensus.into(m);
+      BakeRecord.objectCensus.into(m);
+      return m;
+   }
 
    /**
     * -1 when a recording thread may draw {@code o}, else the index of the first reason it may not (REASONS). The rule
@@ -96,6 +189,11 @@ public final class TileRecord {
       }
       if (Config.MIRRORS && Mirrors.capturable(o)) {
          return 12; // mirrors capture a window / mirror / reflective prop's quad as it draws (game-thread state)
+      }
+      if (!bake && floorsOn && o.sprite != null && o.sprite.getProperties().has(IsoFlagType.transparentFloor)) {
+         // tileRecordFloors (f8-render1): a transparent floor goes FBORenderCell.renderFloor's way; bakeRecordParallel made
+         // that path per thread (floor shapers, seam fix, offsets), so the same rule as a bake's floors decides
+         return BakeRecord.floorReason(o) < 0 ? -1 : 7;
       }
       Class<?> c = o.getClass();
       boolean window = c == zombie.iso.objects.IsoWindow.class;
@@ -125,7 +223,8 @@ public final class TileRecord {
          || BakeRecord.roofJoinTarget(o.square))) {
          return 4; // (bake: a tile that may draw a neighbour's joined, or be drawn joined by one, on the game thread at its splice)
       }
-      if (o.getSpriteModel() != null) {
+      boolean model = o.getSpriteModel() != null;
+      if (model && (bake || !modelsOn || !modelRecordable(o))) {
          return 5;
       }
       if (s.name != null && zombie.scripting.ScriptManager.instance.getClockScript(s.name) != null) {
@@ -150,8 +249,8 @@ public final class TileRecord {
       if (o.pzoptHasChildrenOrSplats()) {
          return 10;
       }
-      if (!o.pzoptSpritesWarm()) {
-         return 11;
+      if (!o.pzoptSpritesWarm() && !(model && s.def != null)) {
+         return 11; // (tileRecordModels: a recordable model draws no sprite, so its sprites need not be warm)
       }
       return -1;
    }
@@ -202,7 +301,7 @@ public final class TileRecord {
       }
       if (Config.INSTRUMENT) { // dev census
          reasons.incrementAndGet(why);
-         deferClasses.computeIfAbsent(o.getClass().getSimpleName() + ":" + REASONS[why], k -> new java.util.concurrent.atomic.LongAdder()).increment();
+         tileCensus.add(o.getClass(), why);
       }
       r.defer(DEFER_OBJECT, o, r.windowFrameOutline ? Boolean.TRUE : Boolean.FALSE); // drawn with the flag stock had set around it
       return true;
@@ -251,9 +350,17 @@ public final class TileRecord {
       if (spliceFrameLevel(cell, chunks, playerIndex, z, floorShader, wallShader, ms)) {
          return;
       }
+      dropWeather();
+      if (failed) { // (f8-render1: a batch timed out this frame: the stock pass)
+         for (int i = 0; i < chunks.size(); i++) {
+            cell.pzoptRecordChunkTranslucent(chunks.get(i), playerIndex, z, floorShader, wallShader, ms);
+         }
+         return;
+      }
       int n = chunks.size();
       GenericSpriteRenderState real = DrawRecorder.real();
       passes++;
+      modelsOn = Config.TILE_RECORD_MODELS && GtAb.on(GtAb.TILE_MODELS);
       boolean check = Config.DEV_DRAW_LIST_CHECK > 0 && zombie.iso.IsoCamera.frameState.frameCount % Config.DEV_DRAW_LIST_CHECK == 0;
       Check snap = null;
       if (check) {
@@ -276,10 +383,10 @@ public final class TileRecord {
       Throwable failure = null;
       try {
          if (Config.TILE_RECORD_PARALLEL && nw > 1) {
-            failure = FrameBatch.run(nw, k -> record(cell, k, chunks.get(wk[k]), playerIndex, z, floorShader, wallShader, ms, real));
+            failure = FrameBatch.runWithin(nw, k -> record(cell, k, chunks.get(wk[k]), playerIndex, z, floorShader, wallShader, ms, real, false), timeoutNs());
          } else {
             for (int k = 0; k < nw; k++) {
-               record(cell, k, chunks.get(wk[k]), playerIndex, z, floorShader, wallShader, ms, real);
+               record(cell, k, chunks.get(wk[k]), playerIndex, z, floorShader, wallShader, ms, real, false);
             }
          }
       } catch (Throwable t) {
@@ -288,6 +395,15 @@ public final class TileRecord {
          DrawRecorder.recording = false;
       }
       long t1 = System.nanoTime();
+      if (failure instanceof FrameBatch.Timeout) {
+         // a recording unit hangs: nothing of this pass is spliced, the stock pass draws the level, the stock path from now on
+         timedOut(failure.getMessage());
+         for (int i = 0; i < n; i++) {
+            cell.pzoptRecordChunkTranslucent(chunks.get(i), playerIndex, z, floorShader, wallShader, ms);
+         }
+         return;
+      }
+      DrawRecorder.moveRef = Config.TILE_RECORD_MOVE_REF && GtAb.on(GtAb.TILE_MOVE_REF);
       Deferred deferred = new Deferred(cell);
       DrawRecorder.carryZ = TextureDraw.nextZ; // the stream's carried next-draw depth
       DrawRecorder.carryCd = TextureDraw.nextChunkDepth;
@@ -297,6 +413,7 @@ public final class TileRecord {
             DrawRecorder r = unitRec[k];
             LightingDefer.applyOne(k); // the unit's lazy-lighting side effects (level invalidations, puddle / cutaway / room hooks), as stock ran them during its draws
             if (r != null) {
+               r.seekPost(unitPostFrom[k]); // (f8-render1: the unit's own postRender entries)
                r.splice(real, deferred, unitEntryFrom[k], unitEntryTo[k], unitEvFrom[k], unitEvTo[k]);
             }
             unitRec[k] = null;
@@ -356,8 +473,10 @@ public final class TileRecord {
          unitEntryFrom = new int[m];
          unitEntryTo = new int[m];
          unitEvFrom = new int[m];
+         unitPostFrom = new int[m];
          unitEvTo = new int[m];
          unitZ = new int[m];
+         unitFloor = new boolean[m];
       }
    }
 
@@ -383,6 +502,11 @@ public final class TileRecord {
    private static int frameUnits, frameMinZ, frameMaxZ, frameLevelsSpliced;
    private static int[] levelFrom = new int[64], levelTo = new int[64]; // per level (z - frameMinZ), its units [from, to) (chunk order)
    private static int[] unitZ = new int[64];
+   private static boolean[] unitFloor = new boolean[64]; // tileRecordFloors: the unit is a chunk's translucent floor pass of its level
+   private static int[] floorFrom = new int[64], floorTo = new int[64]; // per level, its floor units [from, to) (floor chunk order)
+   private static List<IsoChunk> frameFloorChunks; // the frame's chunksWithTranslucentFloor when its floor units were dispatched
+   private static boolean floorsOn; // this frame's translucent floor passes are recorded (tileRecordFloors, GtAb)
+   private static AlphaSnap asyncSnapFloor; // devDrawListCheck, async: the floor chunks' objects' alpha at dispatch
    private static List<IsoChunk> frameChunks;
    private static volatile Throwable frameFailure;
    private static AlphaSnap asyncSnap; // devDrawListCheck, async: the objects' alpha at dispatch
@@ -395,6 +519,9 @@ public final class TileRecord {
       static AlphaSnap capture(List<IsoChunk> chunks, int minZ, int maxZ, int playerIndex) {
          AlphaSnap a = new AlphaSnap();
          for (IsoChunk chunk : chunks) {
+            if (chunk == null) {
+               continue;
+            }
             for (int z = minZ; z <= maxZ; z++) {
                for (int y = 0; y < 8; y++) {
                   for (int x = 0; x < 8; x++) {
@@ -431,19 +558,28 @@ public final class TileRecord {
     * thread draws the players, corpses, moving objects, water and attachments. The first translucent pass joins the
     * batch; each level is spliced at its own pass, in stock order.
     */
-   public static void startFrame(FBORenderCell cell, List<IsoChunk> chunks, int playerIndex, int minZ, int maxZ, Shader floorShader, Shader wallShader, long ms) {
+   public static void startFrame(FBORenderCell cell, List<IsoChunk> chunks, List<IsoChunk> floorChunks, int playerIndex, int minZ, int maxZ, Shader floorShader, Shader wallShader,
+         long ms) {
       frameOn = false;
       asyncSnap = null;
+      asyncSnapFloor = null;
+      frameFloorChunks = null;
+      floorsOn = false;
+      dropWeather(); // a weather unit last frame's mask pass never took
+      weatherIdx = -1;
       if (!Config.TILE_RECORD_PARALLEL || !Config.TILE_RECORD_ASYNC || !active()) {
          return;
       }
+      boolean floors = Config.TILE_RECORD_FLOORS && floorChunks != null && GtAb.on(GtAb.TILE_FLOORS);
+      modelsOn = Config.TILE_RECORD_MODELS && GtAb.on(GtAb.TILE_MODELS);
       long t0 = System.nanoTime();
       int levels = maxZ - minZ + 1;
       if (levels <= 0 || levels > 64) {
          return;
       }
       int n = chunks.size();
-      grow(n * levels);
+      int nf = floors ? floorChunks.size() : 0;
+      grow((n + nf) * levels + WEATHER_MAX_PARTS); // (+ the weather mask parts)
       int u = 0;
       for (int z = minZ; z <= maxZ; z++) {
          levelFrom[z - minZ] = u;
@@ -451,14 +587,47 @@ public final class TileRecord {
             if (cell.pzoptTranslucentWork(chunks.get(i), playerIndex, z)) {
                work[u] = i;
                unitZ[u] = z;
+               unitFloor[u] = false;
                u++;
             }
          }
          levelTo[z - minZ] = u;
       }
+      if (floors) {
+         for (int z = minZ; z <= maxZ; z++) {
+            floorFrom[z - minZ] = u;
+            for (int i = 0; i < nf; i++) {
+               if (cell.pzoptTranslucentFloorWork(floorChunks.get(i), playerIndex, z)) {
+                  work[u] = i;
+                  unitZ[u] = z;
+                  unitFloor[u] = true;
+                  u++;
+               }
+            }
+            floorTo[z - minZ] = u;
+         }
+      }
+      int nPlayerW = playerIndex;
+      if (Config.TILE_RECORD_WEATHER && GtAb.on(GtAb.TILE_WEATHER) && zombie.iso.weather.fx.WeatherFxMask.pzoptMaskRecordable(playerIndex)) {
+         // tileRecordWeather: the weather mask's wall / floor loop, recorded with the rest and spliced in WeatherFxMask.drawFxMask
+         weatherIdx = u;
+         weatherList = zombie.iso.weather.fx.WeatherFxMask.pzoptMaskList(playerIndex);
+         weatherCount = zombie.iso.weather.fx.WeatherFxMask.pzoptMaskCount(playerIndex);
+         weatherParts = Math.max(1, Math.min(WEATHER_MAX_PARTS, weatherCount / 24)); // a few parts: one long unit held up the first translucent join
+         for (int p = 0; p < weatherParts; p++) {
+            weatherFrom[p] = weatherCount * p / weatherParts;
+            weatherTo[p] = weatherCount * (p + 1) / weatherParts;
+            work[u] = 0;
+            unitZ[u] = 0;
+            unitFloor[u] = false;
+            u++;
+         }
+      }
       if (u == 0) {
          return;
       }
+      floorsOn = floors;
+      frameFloorChunks = floors ? floorChunks : null;
       frameUnits = u;
       frameMinZ = minZ;
       frameMaxZ = maxZ;
@@ -468,15 +637,30 @@ public final class TileRecord {
       prepareDispatch(u);
       if (Config.DEV_DRAW_LIST_CHECK > 0 && zombie.iso.IsoCamera.frameState.frameCount % Config.DEV_DRAW_LIST_CHECK == 0) {
          asyncSnap = AlphaSnap.capture(chunks, minZ, maxZ, playerIndex); // the objects' alpha before the units record (the check re-runs stock from it)
+         if (floors) {
+            asyncSnapFloor = AlphaSnap.capture(floorChunks, minZ, maxZ, playerIndex);
+         }
       }
       final GenericSpriteRenderState real = DrawRecorder.real();
       final int[] wk = work;
       final int[] uz = unitZ;
+      final boolean[] uf = unitFloor;
       DrawRecorder.recording = true;
       frameOn = true;
       framePending = true;
       asyncFrames++;
-      FrameBatch.runAsync(u, k -> record(cell, k, chunks.get(wk[k]), playerIndex, uz[k], floorShader, wallShader, ms, real), failure -> {
+      final int wIdx = weatherIdx;
+      final int wParts = weatherParts;
+      FrameBatch.runAsync(u, task -> {
+         // the weather unit (the longest single unit) is the batch's first task, so a worker starts it at once: as the last
+         // one it was still running at the first translucent pass's join (r1-wab: that join 0.04 -> 0.16 ms)
+         int k = wIdx < 0 ? task : task < wParts ? wIdx + task : task - wParts;
+         if (wIdx >= 0 && k >= wIdx && k < wIdx + wParts) {
+            recordWeather(k, k - wIdx, nPlayerW, real);
+         } else {
+            record(cell, k, (uf[k] ? floorChunks : chunks).get(wk[k]), playerIndex, uz[k], floorShader, wallShader, ms, real, uf[k]);
+         }
+      }, failure -> {
          DrawRecorder.recording = false;
          framePending = false;
          frameFailure = failure;
@@ -491,7 +675,10 @@ public final class TileRecord {
       }
       long t0 = System.nanoTime();
       if (framePending) {
-         FrameBatch.join();
+         if (!FrameBatch.joinWithin(timeoutNs())) {
+            timedOut("the frame's recording batch");
+            return false; // this level and the rest of the frame: the stock passes
+         }
          if (framePending) { // joined through another batch user's join: the completion ran there
             DrawRecorder.recording = false;
             framePending = false;
@@ -501,6 +688,7 @@ public final class TileRecord {
       asyncJoinNanos += t1 - t0;
       GenericSpriteRenderState real = DrawRecorder.real();
       passes++;
+      DrawRecorder.moveRef = Config.TILE_RECORD_MOVE_REF && GtAb.on(GtAb.TILE_MOVE_REF);
       Check snap = null;
       if (asyncSnap != null) {
          // devDrawListCheck in async mode: the stock pass of this level from the objects' state before the units
@@ -523,6 +711,7 @@ public final class TileRecord {
             DrawRecorder r = unitRec[k];
             LightingDefer.applyOne(k);
             if (r != null) {
+               r.seekPost(unitPostFrom[k]); // (f8-render1: the unit's own postRender entries)
                r.splice(real, deferred, unitEntryFrom[k], unitEntryTo[k], unitEvFrom[k], unitEvTo[k]);
             }
             unitRec[k] = null;
@@ -553,22 +742,253 @@ public final class TileRecord {
       return true;
    }
 
+   /**
+    * tileRecordFloors: the translucent floor pass of level z (FBORenderCell.renderTranslucentFloorObjects): true when
+    * startFrame recorded it (spliced here in chunk order), false = the caller's own path.
+    */
+   public static boolean spliceFloorLevel(FBORenderCell cell, List<IsoChunk> chunks, int playerIndex, int z, Shader floorShader, Shader wallShader, long ms) {
+      if (!frameOn || !floorsOn || chunks != frameFloorChunks || z < frameMinZ || z > frameMaxZ) {
+         return false;
+      }
+      long t0 = System.nanoTime();
+      if (framePending) {
+         if (!FrameBatch.joinWithin(timeoutNs())) {
+            timedOut("the frame's recording batch");
+            return false;
+         }
+         if (framePending) {
+            DrawRecorder.recording = false;
+            framePending = false;
+         }
+      }
+      long t1 = System.nanoTime();
+      asyncJoinNanos += t1 - t0;
+      GenericSpriteRenderState real = DrawRecorder.real();
+      floorPasses++;
+      DrawRecorder.moveRef = Config.TILE_RECORD_MOVE_REF && GtAb.on(GtAb.TILE_MOVE_REF);
+      Check snap = null;
+      if (asyncSnapFloor != null) {
+         AlphaSnap post = AlphaSnap.capture(chunks, z, z, playerIndex);
+         asyncSnapFloor.restore(playerIndex);
+         snap = Check.stock(cell, chunks, playerIndex, z, floorShader, wallShader, ms, real, true);
+         post.restore(playerIndex);
+         t1 = System.nanoTime();
+      }
+      Deferred deferred = new Deferred(cell);
+      int from = floorFrom[z - frameMinZ];
+      int to = floorTo[z - frameMinZ];
+      int k = from;
+      int n = chunks.size();
+      DrawRecorder.carryZ = TextureDraw.nextZ;
+      DrawRecorder.carryCd = TextureDraw.nextChunkDepth;
+      for (int i = 0; i < n; i++) {
+         if (k < to && work[k] == i) {
+            DrawRecorder r = unitRec[k];
+            LightingDefer.applyOne(k);
+            if (r != null) {
+               r.seekPost(unitPostFrom[k]); // (f8-render1: the unit's own postRender entries)
+               r.splice(real, deferred, unitEntryFrom[k], unitEntryTo[k], unitEvFrom[k], unitEvTo[k]);
+            }
+            unitRec[k] = null;
+            k++;
+         } else {
+            TextureDraw.nextZ = DrawRecorder.carryZ;
+            TextureDraw.nextChunkDepth = DrawRecorder.carryCd;
+            cell.pzoptRecordChunkTranslucentFloor(chunks.get(i), playerIndex, z, floorShader, wallShader, ms);
+            DrawRecorder.carryZ = TextureDraw.nextZ;
+            DrawRecorder.carryCd = TextureDraw.nextChunkDepth;
+         }
+      }
+      TextureDraw.nextZ = DrawRecorder.carryZ;
+      TextureDraw.nextChunkDepth = DrawRecorder.carryCd;
+      long t2 = System.nanoTime();
+      floorSpliceNanos += t2 - t1;
+      if (GtAb.TIMING) {
+         GtAb.add(GtAb.S_TL_RECORD, t1 - t0);
+         GtAb.add(GtAb.S_TL_SPLICE, t2 - t1);
+      }
+      if (snap != null) {
+         snap.compare(real);
+      }
+      return true;
+   }
+
+   static long floorPasses, floorSpliceNanos;
+
+   // ---- tileRecordWeather (f8-render1): the weather mask's loop ----
+   private static int weatherIdx = -1; // the frame's weather unit (-1 none)
+   private static Object weatherList; // the mask array and count it recorded (the splice checks they are unchanged)
+   private static int weatherCount;
+   private static boolean weatherWaiting; // recorded, endFrame passed, not spliced yet (the recorders keep their entries)
+   private static final int WEATHER_MAX_PARTS = 4;
+   private static int weatherParts; // the loop is recorded in this many units [weatherIdx, weatherIdx + weatherParts), masks split evenly
+   private static final int[] weatherFrom = new int[WEATHER_MAX_PARTS], weatherTo = new int[WEATHER_MAX_PARTS];
+   private static final boolean[] weatherBlendEnd = new boolean[WEATHER_MAX_PARTS]; // each part's glBlendfuncEnabled at its end
+   private static final int[] weatherDefersPart = new int[WEATHER_MAX_PARTS]; // deferred calls per part (the check skips frames with any)
+   static long weatherSpliced, weatherDropped, weatherNanos;
+
+   private static void recordWeather(int k, int part, int nPlayer, GenericSpriteRenderState real) {
+      DrawRecorder r = threadRecorder.get();
+      r.batchSim = Config.TILE_RECORD_BATCH_SIM && TileBatch.ON;
+      r.fixMovedIfAny();
+      LightingDefer.begin(k);
+      r.beginUnit(real);
+      unitRec[k] = r;
+      unitEntryFrom[k] = r.unitEntry;
+      unitEvFrom[k] = r.unitEvent;
+      unitPostFrom[k] = r.postSize();
+      int defers0 = r.defers;
+      r.weatherMask = true;
+      r.blendEnabled = true; // (the loop sets it before every blend set)
+      try {
+         zombie.iso.weather.fx.WeatherFxMask.pzoptMaskLoop(nPlayer, weatherFrom[part], weatherTo[part]);
+      } finally {
+         weatherBlendEnd[part] = r.blendEnabled;
+         weatherDefersPart[part] = r.defers - defers0;
+         r.weatherMask = false;
+         r.endUnit();
+         LightingDefer.end();
+         unitEntryTo[k] = r.state.numSprites;
+         unitEvTo[k] = r.eventCount();
+      }
+   }
+
+   private static boolean weatherRecorded() {
+      for (int p = 0; p < weatherParts; p++) {
+         if (unitRec[weatherIdx + p] == null) {
+            return false;
+         }
+      }
+      return true;
+   }
+
+   /** WeatherFxMask's loop on a recording thread: a call the game thread makes at this place of the stream (0 open door, 1 objects, 2 characters). */
+   public static boolean deferMask(int kind, Object mask) {
+      DrawRecorder r = DrawRecorder.current();
+      if (r == null || !r.weatherMask) {
+         return false;
+      }
+      r.defer(DEFER_MASK + kind, mask, r.blendEnabled ? Boolean.TRUE : Boolean.FALSE);
+      return true;
+   }
+
+   /**
+    * WeatherFxMask.drawFxMask, in place of the mask loop: true when this frame's weather unit was spliced here (the masks
+    * are the ones it recorded), false = the stock loop.
+    */
+   public static boolean spliceWeather(int nPlayer) {
+      if (!weatherWaiting || weatherIdx < 0) {
+         return false;
+      }
+      if (zombie.iso.weather.fx.WeatherFxMask.pzoptMaskList(nPlayer) != weatherList || zombie.iso.weather.fx.WeatherFxMask.pzoptMaskCount(nPlayer) != weatherCount) {
+         dropWeather();
+         return false;
+      }
+      long t0 = System.nanoTime();
+      GenericSpriteRenderState real = DrawRecorder.real();
+      DrawRecorder.moveRef = Config.TILE_RECORD_MOVE_REF && GtAb.on(GtAb.TILE_MOVE_REF);
+      Check snap = null;
+      int defers = 0;
+      for (int p = 0; p < weatherParts; p++) {
+         defers += weatherDefersPart[p];
+      }
+      if (Config.DEV_DRAW_LIST_CHECK > 0 && defers == 0 && zombie.iso.IsoCamera.frameState.frameCount % Config.DEV_DRAW_LIST_CHECK == 0) {
+         boolean b0 = zombie.core.SpriteRenderer.glBlendfuncEnabled;
+         snap = Check.stockRun(() -> zombie.iso.weather.fx.WeatherFxMask.pzoptMaskLoop(nPlayer), real);
+         zombie.core.SpriteRenderer.glBlendfuncEnabled = b0;
+      }
+      Deferred deferred = new Deferred(null);
+      DrawRecorder.carryZ = zombie.core.textures.TextureDraw.nextZ;
+      DrawRecorder.carryCd = zombie.core.textures.TextureDraw.nextChunkDepth;
+      for (int p = 0; p < weatherParts; p++) {
+         int k = weatherIdx + p;
+         DrawRecorder r = unitRec[k];
+         LightingDefer.applyOne(k);
+         if (r != null) {
+            r.seekPost(unitPostFrom[k]); // (f8-render1: the unit's own postRender entries)
+            r.splice(real, deferred, unitEntryFrom[k], unitEntryTo[k], unitEvFrom[k], unitEvTo[k]);
+         }
+         unitRec[k] = null;
+      }
+      zombie.core.textures.TextureDraw.nextZ = DrawRecorder.carryZ;
+      zombie.core.textures.TextureDraw.nextChunkDepth = DrawRecorder.carryCd;
+      zombie.core.SpriteRenderer.glBlendfuncEnabled = weatherBlendEnd[weatherParts - 1]; // where stock's loop left the flag
+      if (snap != null) {
+         snap.compare(real);
+      }
+      weatherIdx = -1;
+      weatherWaiting = false;
+      collectCounters();
+      weatherSpliced++;
+      weatherNanos += System.nanoTime() - t0;
+      return true;
+   }
+
+   /** A weather unit nothing took (the mask pass did not run, or its masks changed): its entries go with the recorders' reset. */
+   private static void dropWeather() {
+      if (!weatherWaiting) {
+         return;
+      }
+      if (weatherIdx >= 0) {
+         for (int p = 0; p < weatherParts; p++) {
+            unitRec[weatherIdx + p] = null;
+         }
+      }
+      weatherIdx = -1;
+      weatherWaiting = false;
+      weatherDropped++;
+      collectCounters();
+   }
+
+   static long timeoutNs() {
+      return Config.RECORD_WAIT_TIMEOUT_MS * 1_000_000L;
+   }
+
+   /**
+    * A recording batch did not finish within recordWaitTimeoutMs: tileRecordParallel is off for the rest of the session
+    * (failed), this frame's remaining passes take the stock path. DrawRecorder.recording stays as it is (a worker still in
+    * the batch keeps drawing into its own recorder, never into the frame's state); nothing recorded this frame is spliced.
+    */
+   private static void timedOut(String what) {
+      failed = true;
+      frameOn = false;
+      framePending = false;
+      floorsOn = false;
+      frameChunks = null;
+      frameFloorChunks = null;
+      weatherIdx = -1;
+      weatherWaiting = false;
+      Log.warn("tileRecordParallel: " + what + " did not finish in " + Config.RECORD_WAIT_TIMEOUT_MS + " ms; the stock passes from now on");
+   }
+
    /** FBORenderCell.performRenderTiles after the level loop (and spliceFrameLevel after the last level): the frame's units are done. */
    public static void endFrame() {
       if (!frameOn) {
          return;
       }
       if (framePending) {
-         FrameBatch.join();
+         if (!FrameBatch.joinWithin(timeoutNs())) {
+            timedOut("the frame's recording batch");
+            return;
+         }
          DrawRecorder.recording = false;
          framePending = false;
       }
       frameOn = false;
       frameChunks = null;
+      frameFloorChunks = null;
+      floorsOn = false;
       for (int k = 0; k < frameUnits; k++) {
-         unitRec[k] = null;
+         if (weatherIdx < 0 || k < weatherIdx || k >= weatherIdx + weatherParts) {
+            unitRec[k] = null;
+         }
       }
-      collectCounters();
+      if (weatherIdx >= 0 && frameFailure == null && weatherRecorded()) {
+         weatherWaiting = true; // the recorders keep their entries until the mask pass splices (or drops) the weather unit
+      } else {
+         weatherIdx = -1;
+         collectCounters();
+      }
       Throwable f = frameFailure;
       if (f != null) {
          failed = true;
@@ -578,15 +998,29 @@ public final class TileRecord {
    }
 
    private static void record(FBORenderCell cell, int k, IsoChunk chunk, int playerIndex, int z, Shader floorShader, Shader wallShader, long ms,
-         GenericSpriteRenderState real) {
+         GenericSpriteRenderState real, boolean floor) {
       DrawRecorder r = threadRecorder.get();
+      r.batchSim = Config.TILE_RECORD_BATCH_SIM && TileBatch.ON;
+      r.fixMovedIfAny(); // the slots the last frame's splices moved out take their spare objects, on this recorder's own thread
+      if (Config.DEV_RECORD_STALL_MS > 0 && k == 0 && asyncFrames == 600 && Thread.currentThread() instanceof FrameBatch.Worker) {
+         try {
+            Thread.sleep(Config.DEV_RECORD_STALL_MS); // devRecordStallMs: a hung unit
+         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+         }
+      }
       LightingDefer.begin(k);
       r.beginUnit(real);
       unitRec[k] = r;
       unitEntryFrom[k] = r.unitEntry;
       unitEvFrom[k] = r.unitEvent;
+      unitPostFrom[k] = r.postSize();
       try {
-         cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+         if (floor) {
+            cell.pzoptRecordChunkTranslucentFloor(chunk, playerIndex, z, floorShader, wallShader, ms);
+         } else {
+            cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+         }
       } finally {
          r.endUnit();
          LightingDefer.end();
@@ -618,6 +1052,9 @@ public final class TileRecord {
             if (outline) {
                this.cell.renderWindowFrameOutline = false;
             }
+         } else if (kind >= DEFER_MASK) {
+            zombie.core.SpriteRenderer.glBlendfuncEnabled = b == Boolean.TRUE; // the loop's flag at this point, as stock had it
+            zombie.iso.weather.fx.WeatherFxMask.pzoptMaskDeferred(kind - DEFER_MASK, (zombie.iso.weather.fx.WeatherFxMask)a);
          } else {
             this.cell.pzoptRenderItemsTranslucent((IsoGridSquare)a, (IsoGridSquare)b);
          }
@@ -640,14 +1077,14 @@ public final class TileRecord {
    public static String describe() {
       String s = "tile record: async frames=" + asyncFrames + " dispatch ms=" + asyncDispatchNanos / 1_000_000L + " join ms=" + asyncJoinNanos / 1_000_000L + " stock passes=" + stockPasses + " stock us/pass=" + (stockPasses == 0 ? 0 : stockPassNanos / 1000L / stockPasses)
          + " recorded us/pass=" + (passes == 0 ? 0 : (recordNanos + spliceNanos) / 1000L / passes) + " passes=" + passes + " units=" + units + " drawn=" + drawn + " defers=" + defers + " conds=" + conds + " kept=" + condsKept
-         + " record ms=" + recordNanos / 1_000_000L + " splice ms=" + spliceNanos / 1_000_000L
+         + " record ms=" + recordNanos / 1_000_000L + " splice ms=" + spliceNanos / 1_000_000L + " floor passes=" + floorPasses + " floor splice ms=" + floorSpliceNanos / 1_000_000L + " weather spliced=" + weatherSpliced + " dropped=" + weatherDropped + " weather ms=" + weatherNanos / 1_000_000L + " model kept: tex=" + modelWhy[0] + " hl=" + modelWhy[1] + " script=" + modelWhy[2] + " load=" + modelWhy[3] + " anim=" + modelWhy[4]
          + (checks > 0 ? " check passes=" + checks + " entries=" + checkEntries + " mismatches=" + checkMismatches + " stock ms=" + stockNanos / 1_000_000L : "");
       if (Config.INSTRUMENT) {
          s += " defer reasons:";
          for (int i = 0; i < REASONS.length; i++) {
             s += " " + REASONS[i] + "=" + reasons.get(i);
          }
-         s += " classes:" + deferClasses.entrySet().stream().sorted((a, b) -> Long.compare(b.getValue().sum(), a.getValue().sum())).limit(12)
+         s += " classes:" + deferClasses().entrySet().stream().sorted((a, b) -> Long.compare(b.getValue().sum(), a.getValue().sum())).limit(12)
             .map(e -> " " + e.getKey() + "=" + e.getValue().sum()).collect(java.util.stream.Collectors.joining());
       }
       return s;
@@ -682,6 +1119,11 @@ public final class TileRecord {
       final ArrayList<float[]> alphas = new ArrayList<>();
 
       static Check stock(FBORenderCell cell, List<IsoChunk> chunks, int playerIndex, int z, Shader floorShader, Shader wallShader, long ms, GenericSpriteRenderState real) {
+         return stock(cell, chunks, playerIndex, z, floorShader, wallShader, ms, real, false);
+      }
+
+      static Check stock(FBORenderCell cell, List<IsoChunk> chunks, int playerIndex, int z, Shader floorShader, Shader wallShader, long ms, GenericSpriteRenderState real,
+            boolean floor) {
          Check c = new Check();
          c.n0 = real.numSprites;
          c.postRender0 = real.postRender.size();
@@ -693,6 +1135,9 @@ public final class TileRecord {
             c.glDirty[i] = c.glStates[i].pzoptSnapshot(c.glValues[i]);
          }
          for (IsoChunk chunk : chunks) {
+            if (chunk == null) {
+               continue;
+            }
             for (int y = 0; y < 8; y++) {
                for (int x = 0; x < 8; x++) {
                   IsoGridSquare sq = chunk.getGridSquare(x, y, z);
@@ -713,13 +1158,21 @@ public final class TileRecord {
          int treeCount = cell.pzoptTreesCount();
          long t0 = System.nanoTime();
          for (IsoChunk chunk : chunks) {
-            cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+            if (floor) {
+               cell.pzoptRecordChunkTranslucentFloor(chunk, playerIndex, z, floorShader, wallShader, ms);
+            } else {
+               cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+            }
          }
          stockNanos += System.nanoTime() - t0;
          for (int i = c.n0; i < real.numSprites; i++) {
             c.stock.add(new Entry(real.sprite[i], real.style[i]));
          }
          // roll the stock pass back: the frame keeps the recorded one
+         for (int i = c.n0; i < real.numSprites; i++) {
+            real.sprite[i].drawer = null; // (f8-render1: a rolled-back entry object keeps no drawer: the next entry made in it, a
+            real.sprite[i].future = null; // StartShader, showed the stock model drawer as a false "drawer" difference)
+         }
          real.numSprites = c.n0;
          while (real.postRender.size() > c.postRender0) {
             real.postRender.remove(real.postRender.size() - 1);
@@ -736,6 +1189,44 @@ public final class TileRecord {
             o.setAlpha(playerIndex, a[0]);
             o.setTargetAlpha(playerIndex, a[1]);
          }
+         return c;
+      }
+
+      /** tileRecordWeather's check: the stock run of {@code body} into the frame's list, rolled back (GL caches too). */
+      static Check stockRun(Runnable body, GenericSpriteRenderState real) {
+         Check c = new Check();
+         c.n0 = real.numSprites;
+         c.postRender0 = real.postRender.size();
+         c.glStates = GlStates.all();
+         c.glValues = new IOpenGLState.Value[c.glStates.length];
+         c.glDirty = new boolean[c.glStates.length];
+         for (int i = 0; i < c.glStates.length; i++) {
+            c.glValues[i] = c.glStates[i].pzoptNewValue();
+            c.glDirty[i] = c.glStates[i].pzoptSnapshot(c.glValues[i]);
+         }
+         float nz = TextureDraw.nextZ;
+         float ncd = TextureDraw.nextChunkDepth;
+         Object tb = TileBatch.snapshot();
+         long t0 = System.nanoTime();
+         body.run();
+         stockNanos += System.nanoTime() - t0;
+         for (int i = c.n0; i < real.numSprites; i++) {
+            c.stock.add(new Entry(real.sprite[i], real.style[i]));
+         }
+         for (int i = c.n0; i < real.numSprites; i++) {
+            real.sprite[i].drawer = null;
+            real.sprite[i].future = null;
+         }
+         real.numSprites = c.n0;
+         while (real.postRender.size() > c.postRender0) {
+            real.postRender.remove(real.postRender.size() - 1);
+         }
+         for (int i = 0; i < c.glStates.length; i++) {
+            c.glStates[i].pzoptRestore(c.glValues[i], c.glDirty[i]);
+         }
+         TileBatch.restore(tb);
+         TextureDraw.nextZ = nz;
+         TextureDraw.nextChunkDepth = ncd;
          return c;
       }
 

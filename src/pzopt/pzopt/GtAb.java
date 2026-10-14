@@ -44,9 +44,15 @@ public final class GtAb {
    public static final int FRAME_SPIN = 134217728; // frameSpin: the frame workers' spin before parking (frameSpinUs > 0), zombie pass 2026-10-13
    public static final long RAGDOLL_GATE = 1L << 31; // ragdollGate (isRagdoll pass 2026-10-13; bits above 30 need the long mask)
    public static final long BODY_MODEL_CACHE = 1L << 32; // bodyModelCache (isRagdoll pass 2026-10-13)
+   public static final long BAKE_RECORD = 1L << 33; // bakeRecordParallel (render-phase pass f8-render1, 2026-10-13)
+   public static final long TILE_MOVE_REF = 1L << 35; // tileRecordMoveRef (render-phase pass f8-render1, 2026-10-13)
+   public static final long RENDER_LAST = 1L << 36; // renderLastFast (render-phase pass f8-render1, 2026-10-13)
+   public static final long TILE_MODELS = 1L << 37; // tileRecordModels (render-phase pass f8-render1, 2026-10-13)
+   public static final long TILE_WEATHER = 1L << 38; // tileRecordWeather (render-phase pass f8-render1, 2026-10-13)
+   public static final long TILE_FLOORS = 1L << 34; // tileRecordFloors (render-phase pass f8-render1, 2026-10-13)
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
-      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "nearVehicleGrid", "headOnWorker", "entityUpdatePlayerFirst", "frameSpin", "separateMemo", "entityUpdateNearPlayer", "entityUpdateMoreStates", "ragdollGate", "bodyModelCache"};
+      "weatherParticlesParallel", "entityUpdateParallel", "bakePrepParallel", "pplTorchNearChunk", "zombieStatsFold", "losLightPrefetch", "visPolyAsync", "aoContextParallel", "translucentOrderCache", "torchSource", "profilerIdleFast", "zombieSimLod", "animalLosSnapshot", "lootDefer", "zombieSpawnSpread", "slackWork", "zombieModelAddBudget", "bakeTimeGuard", "postupdateParallel", "tileRecordParallel", "nearVehicleGrid", "headOnWorker", "entityUpdatePlayerFirst", "frameSpin", "separateMemo", "entityUpdateNearPlayer", "entityUpdateMoreStates", "ragdollGate", "bodyModelCache", "bakeRecordParallel", "tileRecordFloors", "tileRecordMoveRef", "renderLastFast", "tileRecordModels", "tileRecordWeather"};
 
    private static final long MASK = parse(Config.DEV_GT_ALTERNATE_KEYS);
    // a second, independent alternation group (2026-10-13): its own keys and period, so one run measures two keys
@@ -141,7 +147,7 @@ public final class GtAb {
          if (out == null) {
             java.io.File f = new java.io.File(zombie.ZomboidFileSystem.instance.getCacheDir(), "pzopt-gtab.out");
             out = new java.io.BufferedWriter(new java.io.FileWriter(f));
-            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice" + ZombTiming.HEADER + "  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
+            out.write("# epoch_ms on(1)/off(0) game_thread_cpu_ns process_cpu_ns wall_ns zombie_updates, then ns per section: startFrame schedUpdate animalLos playerLos pplBeforeComposite renderMovingObjects performRenderTiles postupdate visPolyRenderMain aoFlush chunkMapUpdate popmanUpdate lightingUpdate logic finishAnimation renderInternal sceneCull atlases cellRender pu_loop pu_move pu_flush pu_zombies pu_moved pu_collided vzmUpdate chunkPos nativeUnload bake_t0 bake_t1 bake_t2 bake_t3 bake_offered tl_pass tl_record tl_splice rt_handoff rt_prepop rt_tilesInternal rt_renderlast rt_weather tl_floor" + ZombTiming.HEADER + "  (per frame, devGtAlternate " + Config.DEV_GT_ALTERNATE + " ms, keys "
                + Config.DEV_GT_ALTERNATE_KEYS + ")\n");
          }
          out.write(LOG.toString());
@@ -166,7 +172,11 @@ public final class GtAb {
    // burst, arrival quota, overdue, normal) and offered
    public static final int S_NATIVE_UNLOAD = 27, C_BAKE_T0 = 28, C_BAKE_T1 = 29, C_BAKE_T2 = 30, C_BAKE_T3 = 31, C_BAKE_OFFERED = 32;
    public static final int S_TL_PASS = 33, S_TL_RECORD = 34, S_TL_SPLICE = 35; // tileRecordParallel: the translucent passes (either path), recording, splicing
-   private static final int SECTIONS = 36;
+   // render-phase pass f8-render1 (2026-10-13): the frame hand-off wait (SpriteRenderer.pushFrameDown), the populating state's
+   // clear (prePopulating: the last use's postRender), renderTilesInternal, the renderlast loops, the weather fx, the
+   // translucent floor passes
+   public static final int S_HANDOFF = 36, S_PREPOP = 37, S_TILES_INTERNAL = 38, S_RENDERLAST = 39, S_WEATHER = 40, S_TL_FLOOR = 41;
+   private static final int SECTIONS = 42;
    private static final long[] SECTION_NS = new long[SECTIONS];
    public static final boolean TIMING = Config.DEV_GT_ALTERNATE > 0 && MASK != 0;
 

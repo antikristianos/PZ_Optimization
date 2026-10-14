@@ -201,6 +201,7 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
    private static final class PzoptScratch { // pzopt
       final ColorInfo stCol = new ColorInfo(); // pzopt
       final ColorInfo stCol2 = new ColorInfo(); // pzopt
+      final ColorInfo modelCol = new ColorInfo(); // pzopt: tileRecordModels, the door light copy (renderModel)
    } // pzopt
 
    private static IsoObject.PzoptScratch pzoptScratch() { // pzopt
@@ -6414,6 +6415,10 @@ public class IsoObject extends GameEntity implements Serializable, ILuaIsoObject
       if (bDoor && this.square != null && !DebugOptions.instance.fboRenderChunk.nolighting.getValue()) {
          col = this.square.getLightInfo(playerIndex);
       }
+      IsoObject.PzoptScratch pzoptMs = pzoptScratch(); // pzopt: tileRecordModels, a recording thread scales its own copy of the light (stock scales the square's shared light info and puts it back after)
+      if (pzoptMs != null) { // pzopt
+         col = pzoptMs.modelCol.set(col); // pzopt
+      } // pzopt
 
       ColorInfo colOrig = col;
       float a = col.a;

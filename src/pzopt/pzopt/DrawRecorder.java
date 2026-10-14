@@ -29,6 +29,37 @@ import zombie.core.textures.TextureDraw;
  * </ul>
  */
 public final class DrawRecorder {
+   /** tileRecordMoveRef: this splice moves the translucent units' entry objects instead of copying them (TileRecord sets it per pass). */
+   public static boolean moveRef;
+   /** IndieGL: SpriteRenderer.glBlendfuncEnabled as the calling thread sees it (a weather-mask recorder keeps its own). */
+   public static boolean blendEnabled() {
+      if (recording) {
+         DrawRecorder r = current();
+         if (r != null && r.weatherMask) {
+            return r.blendEnabled;
+         }
+      }
+      return SpriteRenderer.glBlendfuncEnabled;
+   }
+
+   /** WeatherFxMask's loop: true when the calling thread records the weather mask (the flag is the recorder's). */
+   public static boolean setBlendEnabled(boolean v) {
+      if (recording) {
+         DrawRecorder r = current();
+         if (r != null && r.weatherMask) {
+            r.blendEnabled = v;
+            return true;
+         }
+      }
+      return false;
+   }
+
+   /** TileBatch.start: the calling thread records a translucent unit with tileRecordBatchSim (its tile starts stay raw). */
+   public static boolean onBatchSimRecorder() {
+      DrawRecorder r = current();
+      return r != null && r.batchSim;
+   }
+
    /** True while units are being recorded this frame (the game thread sets it around the recording). */
    public static volatile boolean recording;
    private static DrawRecorder gameThreadRecorder; // the unit the game thread is recording (its share of a batch, or every unit with devTileRecordSerial)
@@ -108,6 +139,13 @@ public final class DrawRecorder {
    // bakeRecordParallel: a recorder of chunk-texture bake units (pzopt.BakeRecord) sees the bake's render mode (caching, not
    // the translucent pass) and its own unit's texture, offsets and seam-fix tile instead of FBORenderChunkManager's / IsoSprite's
    public boolean bakeUnit;
+   // tileRecordBatchSim (f8-render1): a translucent unit records every tile start raw too and is spliced through TileBatch's
+   // merge / fold replay like a bake unit (moveBake), so the stream is the stock one with tileVertexDepth's merged starts
+   public boolean batchSim;
+   // tileRecordWeather (f8-render1): a recorder of the weather mask loop sees WeatherFxMask.isRenderingMask() true and keeps
+   // its own SpriteRenderer.glBlendfuncEnabled (the loop flips it around each blend set; the game thread's draws read the static)
+   public boolean weatherMask;
+   public boolean blendEnabled = true;
    public Object bakeRc; // the unit's FBORenderChunk
    public float bakeXoff, bakeYoff; // FBORenderChunkManager.xoff / yoff as beginRenderChunkLevel sets them for the unit
    public Object seamFix2; // IsoSprite.seamFix2 on this recording thread (the floor seam fix's tile)
@@ -159,7 +197,7 @@ public final class DrawRecorder {
 
    /** Ends the unit on the calling thread: what it set goes to the game thread's cache at the end of its splice. */
    void endUnit() {
-      if (this.bakeUnit && TileBatch.ON) {
+      if ((this.bakeUnit || this.batchSim) && TileBatch.ON) {
          this.classify(this.unitEntry, this.state.numSprites);
       }
       this.knownToEvents();
@@ -237,10 +275,20 @@ public final class DrawRecorder {
    /** Game thread, no unit recording: the moved slots take their spare objects (see move). */
    void fixMoved() {
       for (int i = 0; i < this.movedN; i++) {
-         this.state.sprite[this.movedIdx[i]] = this.movedObj[i];
+         TextureDraw spare = this.movedObj[i];
+         spare.drawer = null; // (f8-render1: cleared here instead of in moveBake: the frame's spare objects are cold, a miss each)
+         spare.future = null;
+         this.state.sprite[this.movedIdx[i]] = spare;
          this.movedObj[i] = null;
       }
       this.movedN = 0;
+   }
+
+   /** tileRecordBatchSim: the recorder's thread puts its moved slots right before its next unit (TileRecord.record). */
+   void fixMovedIfAny() {
+      if (this.movedN != 0) {
+         this.fixMoved();
+      }
    }
 
    private int movedN;
@@ -310,9 +358,7 @@ public final class DrawRecorder {
             this.movedObj = java.util.Arrays.copyOf(this.movedObj, this.movedN * 2);
          }
          this.movedIdx[this.movedN] = k;
-         this.movedObj[this.movedN++] = spare;
-         spare.drawer = null;
-         spare.future = null;
+         this.movedObj[this.movedN++] = spare; // its drawer / future are cleared in fixMoved
          real.style[n] = rec.style[k];
          real.numSprites = n + 1;
          if (this.postCursor < rec.postRender.size() && rec.postRender.get(this.postCursor) == src) {
@@ -452,8 +498,8 @@ public final class DrawRecorder {
     * would have.
     */
    void splice(GenericSpriteRenderState real, Deferred deferred, int entryFrom, int entryTo, int evFrom, int evTo) {
-      if (this.bakeUnit && TileBatch.ON) {
-         TileBatch.spliceBegin(real); // bakeRecordParallel
+      if ((this.bakeUnit || this.batchSim) && TileBatch.ON) {
+         TileBatch.spliceBegin(real); // bakeRecordParallel; tileRecordBatchSim
       }
       int i = entryFrom;
       for (int ev = evFrom; ev < evTo; ev++) {
@@ -512,7 +558,7 @@ public final class DrawRecorder {
 
    /** Copies entries [from, to) of the recorder to the end of {@code real} (each recorder keeps its own TextureDraw objects). */
    private void move(GenericSpriteRenderState real, int from, int to) {
-      if (this.bakeUnit) {
+      if (this.bakeUnit || this.batchSim && TileBatch.ON) {
          this.moveBake(real, from, to);
          return;
       }
@@ -529,6 +575,24 @@ public final class DrawRecorder {
             }
             src.drawer = null;
             src.future = null;
+            continue;
+         }
+         if (moveRef && !tiles) {
+            // tileRecordMoveRef (f8-render1): the entry object itself goes into the frame's list and the frame's spare
+            // object (past numSprites: in no postRender list) takes its slot in the recorder; the units are all recorded
+            // (the batch is joined) before any splice, so no recording thread touches these arrays now. The entry keeps
+            // its drawer: it is the frame's entry now (a copy of every field was most of the splice's cost)
+            TextureDraw spare = real.sprite[n];
+            spare.drawer = null;
+            spare.future = null;
+            real.sprite[n] = src;
+            rec.sprite[k] = spare;
+            real.style[n] = rec.style[k];
+            real.numSprites = n + 1;
+            if (this.postCursor < rec.postRender.size() && rec.postRender.get(this.postCursor) == src) {
+               real.postRender.add(src);
+               this.postCursor++;
+            }
             continue;
          }
          real.sprite[n].pzoptCopyFrom(src);

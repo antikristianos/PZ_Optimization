@@ -7132,3 +7132,64 @@ which spreads both ways (zomb2-br-*).
 - Defaults: the exact keys on (separateEdgeCache, postupdateNoopSkip, postupdateFuse, headOnWorker, luaSilentSkip,
   postupdateEligibleOnWorker, postupdateVehicleOnWorker, postupdateClean, isLocalFast, ecsValuesCache), with tab entries;
   entityUpdateStream and entityUpdateAlerted off pending the maintainer; separateAsync off (rig differences).
+
+### Game-thread render phase on the Louisville horde (2026-10-13, worktree f8-render1): tileRecordFloors, tileRecordMoveRef
+
+Goal (maintainer, Louisville locked at 120): the game thread's render phase (`GameWindow.renderInternal`) at most 1.5 ms a
+frame. Both changes extend tileRecordParallel (off by default) and only act under it.
+
+- `FBORenderCell.renderTranslucentFloorObjects` (`tileRecordFloors`, default on under tileRecordParallel + tileRecordAsync):
+  each level's translucent floor pass (transparent floors, shore tiles) is recorded per chunk on the frame workers in the same
+  batch as the translucent units (`TileRecord.startFrame` takes the frame's `chunksWithTranslucentFloor` too) and spliced at
+  the pass's own place, in chunk order (`TileRecord.spliceFloorLevel`); a chunk with nothing on the level runs its stock call
+  (state entries only) at its place. New helpers `pzoptRecordChunkTranslucentFloor` (the stock loop body) and
+  `pzoptTranslucentFloorWork`. A transparent floor goes the floor path (`renderFloor`), which bakeRecordParallel made per
+  thread; `TileRecord.deferReason` lets a recording thread draw it when `BakeRecord.floorReason` does (else it is drawn by
+  the game thread at its place). `pzoptRenderFloor` gives a recording thread its own white colour (`PzoptCellScratch.floorCol`)
+  instead of the shared `defColorInfo`, which the game thread's ramp path writes with a square's light meanwhile.
+- `DrawRecorder.move` (`tileRecordMoveRef`, default on under tileRecordParallel): a translucent unit's entries are spliced by
+  moving the entry objects into the frame's list (the frame's spare object past `numSprites` takes the recorder's slot, its
+  drawer cleared) instead of copying every field; all units are recorded before the first splice, so no recording thread
+  touches the arrays then. The entry keeps its drawer (it is the frame's entry; a StartShader's uniform chain is released by
+  the frame's postRender as before).
+- GtAb bits 33 `bakeRecordParallel`, 34 `tileRecordFloors`, 35 `tileRecordMoveRef`, 36 `renderLastFast`, 37 `tileRecordModels`
+  (devGtAlternate within-run A/Bs); new per-frame columns `rt_handoff` (SpriteRenderer.pushFrameDown's wait), `rt_prepop`
+  (prePopulating), `rt_tilesInternal`, `rt_renderlast`, `rt_weather`, `tl_floor` (SpriteRenderer, IsoWorld, FBORenderCell timers).
+- Bounded waits (coordinator, 2026-10-13, after a worker-batch deadlock blocked the shared queue): `recordWaitTimeoutMs` (250)
+  bounds every wait of the recording code: TileRecord's async joins and sync batch (`FrameBatch.joinWithin` / `runWithin`, new:
+  the batch is abandoned so later batches cannot hang on it), BakeRecord's take / worker / endFrame waits. Past it the wait logs,
+  the feature is off for the session and the stock passes draw. Dev `devRecordStallMs` sleeps one recording worker once (the
+  600th recorded frame) to exercise it.
+- `TileRecord` / `DrawRecorder` (`tileRecordBatchSim`, default on under tileRecordParallel): devDrawListCheck found the
+  translucent units inexact since tileVertexDepth (2026-10-09): a unit's first tile start could not merge with the stream
+  before it (2-12 extra entries a pass). A translucent unit now records its tile starts raw (`TileBatch.start`'s raw mode,
+  as a bake unit's), classifies its entries at the unit's end and is spliced through bakeRecordParallel's `moveBake` /
+  TileBatch replay. The moved slots take the frame's spare objects on the recorder's own thread before its next unit
+  (`fixMovedIfAny`; the spares' drawer / future are cleared there instead of in the splice, where each was a cache miss).
+  devDrawListCheck: 0 mismatches in 1.29 M entries (r1-check2), 1 in 2.36 M (r1-check3: a window's light read before the
+  native lighting thread lit its square, the stock pass later in the frame saw it lit; a timing difference).
+- `IsoGameCharacter.renderlast` (`renderLastFast`, default on): the inventory walk for IUpdater items is skipped; every
+  IUpdater of the game (HandWeapon, WeaponPart, Radio, DrainableComboItem, all final) has an empty renderlast. Off with any
+  Java mod in the launch (`ModCompat.javaModsPossible`). `pzopt.RenderLast`.
+- `IsoObjectModelDrawer` (new override, `tileRecordModels`, default on under tileRecordParallel): the drawer pool and the
+  matrix-palette pools under the class lock, the frame-palette cache (`IsoObjectAnimations.getMatrixPaletteForFrame`, its list
+  and shared buffers) under a lock, the highlight / caching modes read as the calling thread sees them
+  (`FBORenderCell.pzoptHighlightRendering` / `pzoptCaching`). `IsoObject.renderModel`: a recording thread scales its own copy of
+  a door's light (stock scales the square's shared light info and restores it). `TileRecord.modelRecordable`: a 3D sprite
+  model is drawn by a recording thread when its model and texture are loaded and ready, it has no texture override, animation
+  player, render effect, highlight or outline; such an object needs no warm sprites (it draws none).
+- `TileRecord.Census`: the instrumented runs' defer census counts by class without building a key string per deferred
+  object (it allocated ~80 strings a frame with both recorders on; ZGC work in the measured frames).
+- `WeatherFxMask.drawFxMask` (`tileRecordWeather`, default on under tileRecordParallel + tileRecordAsync): the mask loop moved verbatim into
+  `pzoptMaskLoop`; with the key, when the masks are final at the translucent dispatch (`pzoptMaskRecordable`: no scan can add
+  masks this frame, the stock gates of the pass hold) the loop is recorded on a frame worker in TileRecord's batch and spliced in
+  place of the loop (`TileRecord.spliceWeather`, which checks the mask list is unchanged; else the stock loop). The loop's
+  `SpriteRenderer.glBlendfuncEnabled` writes go through `pzoptBlend` (a recording thread keeps its own flag, `IndieGL`'s three
+  reads ask `DrawRecorder.blendEnabled()`), `isRenderingMask()` answers a recording thread's own pass (true for the weather unit),
+  and the open-door / object / character calls are drawn by the game thread at their place (`TileRecord.deferMask`, with the
+  loop's flag at that point). devDrawListCheck compares the weather unit too (frames whose loop deferred nothing).
+- `TileRecord` splices seek each unit's own postRender entries (`DrawRecorder.seekPost`, as BakeRecord's): a recorder's units
+  are spliced in another order than recorded (a level's floor units before its translucent ones, the weather parts last), and
+  a DrawModel entry (a recorded door model) could miss the frame's postRender, leaving its drawer on the entry object for the
+  next StartShader (devDrawListCheck "StartShader drawer" differences, r1-fcheck). The check's rollback also clears the rolled
+  back entries' drawers.

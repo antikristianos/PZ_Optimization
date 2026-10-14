@@ -126,7 +126,7 @@ public final class TileBatch {
       int n = st.numSprites;
       // bakeRecordParallel: a bake unit's recorder records every tile start; its splice merges and folds them as this
       // method would have against the frame's stream (spliceStart)
-      boolean raw = DrawRecorder.recording && BakeRecord.onBakeRecorder();
+      boolean raw = DrawRecorder.recording && (BakeRecord.onBakeRecorder() || DrawRecorder.onBatchSimRecorder()); // (tileRecordBatchSim: a translucent unit too)
       boolean reuse = !raw && p.state == st && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0 && p.lastDraw < n
          && st.sprite[p.lastDraw].type == TextureDraw.Type.glDraw && st.sprite[p.lastDraw].pzoptVD && onlyState(st, p.lastDraw + 1, n);
       if (!reuse && Config.TILE_STATE_FOLD && p.state == st && p.bound && p.program == program && p.swayKey == key && p.lastDraw >= 0
