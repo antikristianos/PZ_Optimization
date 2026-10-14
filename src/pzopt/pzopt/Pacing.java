@@ -209,7 +209,7 @@ public final class Pacing {
          collectQueries(now);
          issueQuery(frame);
       }
-      if (QUEUE && interval > 0L && frameSlotNs != 0L) {
+      if (QUEUE && interval > 0L && frameSlotNs != 0L && GtAb.on(GtAb.FRAME_QUEUE)) { // (GtAb: devGtAlternateKeys=frameQueue alternates it within a run; the render thread reads the phase the game thread set for its current step)
          swapCallNs = queueHold(now, interval);
          return;
       }

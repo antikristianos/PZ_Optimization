@@ -54,7 +54,8 @@ public final class TileRecord {
 
    // dev counters, logged with the periodic FBORenderCell line
    static long passes, units, drawn, defers, conds, condsKept, checks, checkEntries, checkMismatches, recordNanos, spliceNanos, stockNanos;
-   private static int checkLogged;
+   static long lightOrderDefers, checkLate; // tileRecordLightOrder: objects deferred to keep stock's light refresh order; devDrawListCheck: differences of draws on a native-late square
+   private static int checkLogged, lateLogged;
 
    /** Whether this frame's translucent pass goes through the recorders. */
    public static boolean active() {
@@ -110,7 +111,7 @@ public final class TileRecord {
 
    static final long[] modelWhy = new long[5]; // dev: why a model stayed on the game thread (texture name, highlight / effects, script, not loaded, animating); racy counts
 
-   static final String[] REASONS = {"deferAll", "class", "noSprite", "lightOn", "roof", "model", "clock", "floorPath", "wallPath", "fascia", "attached", "cold", "mirror", "seam"};
+   static final String[] REASONS = {"deferAll", "class", "noSprite", "lightOn", "roof", "model", "clock", "floorPath", "wallPath", "fascia", "attached", "cold", "mirror", "seam", "lightOrder"};
 
    static final java.util.concurrent.atomic.AtomicLongArray reasons = new java.util.concurrent.atomic.AtomicLongArray(REASONS.length);
    /**
@@ -190,6 +191,9 @@ public final class TileRecord {
       if (Config.MIRRORS && Mirrors.capturable(o)) {
          return 12; // mirrors capture a window / mirror / reflective prop's quad as it draws (game-thread state)
       }
+      if (!bake && lightTainted(o)) {
+         return 14; // tileRecordLightOrder: an object deferred before it in its unit may refresh its square's light at the splice
+      }
       if (!bake && floorsOn && o.sprite != null && o.sprite.getProperties().has(IsoFlagType.transparentFloor)) {
          // tileRecordFloors (f8-render1): a transparent floor goes FBORenderCell.renderFloor's way; bakeRecordParallel made
          // that path per thread (floor shapers, seam fix, offsets), so the same rule as a bake's floors decides
@@ -213,7 +217,13 @@ public final class TileRecord {
       }
       zombie.core.properties.PropertyContainer props = s.getProperties();
       if (props.has(IsoFlagType.HasLightOnSprite)
-         && (c != zombie.iso.objects.IsoLightSwitch.class || o.getOnOverlay() == null && o.shouldShowOnOverlay())) {
+         && (c != zombie.iso.objects.IsoLightSwitch.class || o.getOnOverlay() == null
+            && (!bake && lightUnread(o) ? ((zombie.iso.objects.IsoLightSwitch)o).pzoptOverlayIfSeen() : o.shouldShowOnOverlay()))) {
+         // (tileRecordLightOrder: shouldShowOnOverlay reads IsoGridSquare.isSeen, the square's lazy light refresh; stock runs
+         // it after the switch's draw, in hasAnimatedAttachments: asked here first, it rewrote the light the switch and every
+         // object of the square drawn after it read. On a square not read in this lighting pass the switch is asked only the
+         // power part: a switch that could show its overlay is deferred, one that cannot is recorded and its own stock code
+         // refreshes the square after its draw, as in stock.)
          // a plain object's power check walks containers and fuel pipes; a light switch's own check reads its memo and
          // the squares around (IsoLightSwitch override), but its "on" overlay instance comes from the shared sprite pool,
          // made on the game thread first (once)
@@ -288,6 +298,65 @@ public final class TileRecord {
       return false;
    }
 
+   /**
+    * tileRecordLightOrder (f8-twofix, 2026-10-14). A translucent draw reads its square's cached light (getLightInfo: the
+    * JNILighting's ColorInfo by reference; getVertLight: its cached corners); the lazy refresh (JNILighting.update, the
+    * first light read of the square in a lighting pass, by whatever code asks first) rewrites it in place. A unit runs its
+    * objects' stock code in stock order, so the refreshes that code makes come at stock's place for the draws after them,
+    * except two: the defer rule's own light question ({@code shouldShowOnOverlay} of a light switch, before its draw where
+    * stock asks after it), and a deferred object's stock code, which refreshes at the splice, after the unit's later draws
+    * read the square on the worker. So: a light switch on a square the pass has not read is deferred without asking
+    * ({@link #lightUnread}), and once an object on such a square is deferred, the unit's later objects on that square are
+    * deferred too ({@link #lightTainted}): they draw at the splice after it, as in stock. (Not narrowed to the chunk levels
+    * getChunkDirty marks: asked at the unit start it said clean for units whose lamps then refreshed to new values,
+    * twofix-lo-on2 / on3.)
+    */
+   static boolean lightUnread(IsoObject o) {
+      if (!Config.TILE_RECORD_LIGHT_ORDER) {
+         return false;
+      }
+      DrawRecorder r = DrawRecorder.current();
+      return r != null && !r.bakeUnit && stale(o.square, zombie.iso.IsoCamera.frameState.playerIndex);
+   }
+
+   static boolean lightTainted(IsoObject o) {
+      if (!Config.TILE_RECORD_LIGHT_ORDER) {
+         return false;
+      }
+      DrawRecorder r = DrawRecorder.current();
+      if (r == null || r.bakeUnit || r.taintN == 0) {
+         return false;
+      }
+      for (int i = 0; i < r.taintN; i++) {
+         if (r.taint[i] == o.square) {
+            r.lightOrder++;
+            return true;
+         }
+      }
+      return false;
+   }
+
+   /** A deferred object (or a square's deferred items) whose square the pass has not read: the unit's later objects on it follow it. */
+   private static void taint(DrawRecorder r, IsoGridSquare sq) {
+      if (!Config.TILE_RECORD_LIGHT_ORDER || r.bakeUnit || sq == null || !stale(sq, zombie.iso.IsoCamera.frameState.playerIndex)) {
+         return;
+      }
+      for (int i = 0; i < r.taintN; i++) {
+         if (r.taint[i] == sq) {
+            return;
+         }
+      }
+      if (r.taintN == r.taint.length) {
+         r.taint = java.util.Arrays.copyOf(r.taint, r.taintN * 2);
+      }
+      r.taint[r.taintN++] = sq;
+   }
+
+   private static boolean stale(IsoGridSquare sq, int p) {
+      return sq != null && sq.lighting[p] instanceof zombie.iso.LightingJNI.JNILighting jl && jl.pzoptStaleSync();
+   }
+
+
    /** FBORenderCell.renderTranslucent(IsoObject): true when the calling thread records and {@code o} is deferred instead. */
    public static boolean deferObject(IsoObject o) {
       DrawRecorder r = DrawRecorder.current();
@@ -303,6 +372,7 @@ public final class TileRecord {
          reasons.incrementAndGet(why);
          tileCensus.add(o.getClass(), why);
       }
+      taint(r, o.square); // tileRecordLightOrder
       r.defer(DEFER_OBJECT, o, r.windowFrameOutline ? Boolean.TRUE : Boolean.FALSE); // drawn with the flag stock had set around it
       return true;
    }
@@ -328,6 +398,7 @@ public final class TileRecord {
       if (r == null) {
          return false;
       }
+      taint(r, square); // tileRecordLightOrder
       r.defer(DEFER_ITEMS, square, renderSquare);
       return true;
    }
@@ -490,7 +561,8 @@ public final class TileRecord {
             conds += r.conds;
             condsKept += r.condsKept;
             drawn += r.drawn;
-            r.units = r.defers = r.conds = r.condsKept = r.drawn = 0;
+            lightOrderDefers += r.lightOrder;
+            r.units = r.defers = r.conds = r.condsKept = r.drawn = r.lightOrder = 0;
          }
       }
    }
@@ -640,6 +712,7 @@ public final class TileRecord {
          if (floors) {
             asyncSnapFloor = AlphaSnap.capture(floorChunks, minZ, maxZ, playerIndex);
          }
+         LightTrace.begin(); // the recording's light refreshes are undone for the check's stock re-runs (devDrawListTrace: logged)
       }
       final GenericSpriteRenderState real = DrawRecorder.real();
       final int[] wk = work;
@@ -833,6 +906,7 @@ public final class TileRecord {
       r.fixMovedIfAny();
       LightingDefer.begin(k);
       r.beginUnit(real);
+      r.taintN = 0; // (tileRecordLightOrder)
       unitRec[k] = r;
       unitEntryFrom[k] = r.unitEntry;
       unitEvFrom[k] = r.unitEvent;
@@ -975,6 +1049,7 @@ public final class TileRecord {
          framePending = false;
       }
       frameOn = false;
+      LightTrace.end();
       frameChunks = null;
       frameFloorChunks = null;
       floorsOn = false;
@@ -1011,6 +1086,11 @@ public final class TileRecord {
       }
       LightingDefer.begin(k);
       r.beginUnit(real);
+      r.taintN = 0; // tileRecordLightOrder
+      r.unitZ = z; // devDrawListCheck: the unit's place in stock order (LightTrace)
+      r.unitFloor = floor;
+      r.unitWx = chunk.wx; // devDrawListTrace
+      r.unitWy = chunk.wy;
       unitRec[k] = r;
       unitEntryFrom[k] = r.unitEntry;
       unitEvFrom[k] = r.unitEvent;
@@ -1078,7 +1158,8 @@ public final class TileRecord {
       String s = "tile record: async frames=" + asyncFrames + " dispatch ms=" + asyncDispatchNanos / 1_000_000L + " join ms=" + asyncJoinNanos / 1_000_000L + " stock passes=" + stockPasses + " stock us/pass=" + (stockPasses == 0 ? 0 : stockPassNanos / 1000L / stockPasses)
          + " recorded us/pass=" + (passes == 0 ? 0 : (recordNanos + spliceNanos) / 1000L / passes) + " passes=" + passes + " units=" + units + " drawn=" + drawn + " defers=" + defers + " conds=" + conds + " kept=" + condsKept
          + " record ms=" + recordNanos / 1_000_000L + " splice ms=" + spliceNanos / 1_000_000L + " floor passes=" + floorPasses + " floor splice ms=" + floorSpliceNanos / 1_000_000L + " weather spliced=" + weatherSpliced + " dropped=" + weatherDropped + " weather ms=" + weatherNanos / 1_000_000L + " model kept: tex=" + modelWhy[0] + " hl=" + modelWhy[1] + " script=" + modelWhy[2] + " load=" + modelWhy[3] + " anim=" + modelWhy[4]
-         + (checks > 0 ? " check passes=" + checks + " entries=" + checkEntries + " mismatches=" + checkMismatches + " stock ms=" + stockNanos / 1_000_000L : "");
+         + (checks > 0 ? " check passes=" + checks + " entries=" + checkEntries + " mismatches=" + checkMismatches + " stock ms=" + stockNanos / 1_000_000L : "")
+         + " lightOrder defers=" + lightOrderDefers + (checks > 0 ? " check late-light differences=" + checkLate : "") + LightTrace.describeTotals();
       if (Config.INSTRUMENT) {
          s += " defer reasons:";
          for (int i = 0; i < REASONS.length; i++) {
@@ -1111,6 +1192,8 @@ public final class TileRecord {
    static final class Check {
       int n0;
       int postRender0;
+      int traceFrom, traceTo; // devDrawListTrace: this stock re-run's events
+      int sFrom, sTo; // LightTrace: this stock re-run's object draws
       final ArrayList<Entry> stock = new ArrayList<>();
       IOpenGLState<?>[] glStates;
       IOpenGLState.Value[] glValues;
@@ -1157,13 +1240,24 @@ public final class TileRecord {
          zombie.iso.fboRenderChunk.FBORenderTrees trees = cell.pzoptTreesSnapshot();
          int treeCount = cell.pzoptTreesCount();
          long t0 = System.nanoTime();
-         for (IsoChunk chunk : chunks) {
-            if (floor) {
-               cell.pzoptRecordChunkTranslucentFloor(chunk, playerIndex, z, floorShader, wallShader, ms);
-            } else {
-               cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+         c.traceFrom = LightTrace.mark();
+         c.sFrom = LightTrace.sMark();
+         ArrayList<Object> lightPost = LightTrace.undo(LightTrace.key(z, floor)); // the squares the recording refreshed at or after this pass's place, as before it
+         LightTrace.stockRun = true;
+         try {
+            for (IsoChunk chunk : chunks) {
+               if (floor) {
+                  cell.pzoptRecordChunkTranslucentFloor(chunk, playerIndex, z, floorShader, wallShader, ms);
+               } else {
+                  cell.pzoptRecordChunkTranslucent(chunk, playerIndex, z, floorShader, wallShader, ms);
+               }
             }
+         } finally {
+            LightTrace.stockRun = false;
+            LightTrace.redo(lightPost);
          }
+         c.traceTo = LightTrace.mark();
+         c.sTo = LightTrace.sMark();
          stockNanos += System.nanoTime() - t0;
          for (int i = c.n0; i < real.numSprites; i++) {
             c.stock.add(new Entry(real.sprite[i], real.style[i]));
@@ -1234,7 +1328,7 @@ public final class TileRecord {
          checks++;
          int n = real.numSprites - this.n0;
          checkEntries += this.stock.size();
-         int bad = 0;
+         int bad = 0, late = 0;
          String first = null;
          if (n != this.stock.size()) {
             bad++;
@@ -1243,6 +1337,16 @@ public final class TileRecord {
          int m = Math.min(n, this.stock.size());
          for (int i = 0; i < m; i++) {
             String d = this.stock.get(i).diff(real.sprite[this.n0 + i], real.style[this.n0 + i]);
+            if (d != null && n == this.stock.size() && LightTrace.lateSquare(this.sFrom, this.sTo, this.n0 + i) != null) {
+               // the native lighting thread wrote this draw's square between the recording and the re-run (LightTrace)
+               checkLate++;
+               late++;
+               LightTrace.explain(this.traceFrom, this.traceTo, this.n0 + i, d, true);
+               continue;
+            }
+            if (d != null) {
+               LightTrace.explain(this.traceFrom, this.traceTo, this.n0 + i, d, false);
+            }
             if (d != null) {
                bad++;
                if (first == null) {
@@ -1255,6 +1359,9 @@ public final class TileRecord {
             if (checkLogged++ < 20) {
                Log.info("tile record check: " + bad + " differences in a pass of " + this.stock.size() + " entries, first: " + first);
             }
+         }
+         if (late > 0 && lateLogged++ < 20) {
+            Log.info("tile record check: " + late + " late-light differences in a pass of " + this.stock.size() + " entries (draws of squares the native lighting thread wrote between the recording and the re-run)");
          }
       }
    }

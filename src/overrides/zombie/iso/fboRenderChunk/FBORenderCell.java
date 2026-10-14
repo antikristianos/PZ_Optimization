@@ -5896,6 +5896,7 @@ public final class FBORenderCell {
       if (pzopt.DrawRecorder.recording && pzopt.TileRecord.deferObject(object)) { // pzopt: tileRecordParallel, an object the recording thread may not draw: the game thread draws it at splice time
          return; // pzopt
       } // pzopt
+      if (pzopt.LightTrace.CHECK && pzopt.LightTrace.on) pzopt.LightTrace.object(object); // pzopt: devDrawListCheck, the square of each stock re-run draw (devDrawListTrace: the light this draw reads)
       if (pzopt.Config.INSTRUMENT && (pzoptTlFrames & 15) == 0 && !pzopt.DrawRecorder.recording) pzoptCountTranslucent(object); // pzopt: dev counter, one frame in 16 (it was 1.7 % of a harness run's game thread); not while units record (its tileset map is not thread-safe)
       boolean pzoptMirror = !pzopt.DrawRecorder.onRecordingThread() && pzopt.Mirrors.beginCapture(object); // pzopt: mirrors, a window / mirror tile: its quad is captured as it draws (on the game thread: a recorder defers those objects)
       boolean pzoptDepth = pzopt.Props.writesDepth(object.getSprite()); // pzopt: an opaque reflective prop drawn per frame writes its depth as its baked self did

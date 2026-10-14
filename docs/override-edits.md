@@ -7761,3 +7761,45 @@ unaffected):
   now prints `gc: this launch's JVM flags: ...` (the running JVM's -XX / -Xm arguments and our markers), in harness runs
   too. Tab: "Java memory and garbage collector", entry "G1 tuned for steady frames"; gcPauseMs gained 5 and 10 ms choices.
   Tests: GcChoiceTest (order after the unlock, idempotent, exact undo, a player's unlock / tuning, the Windows section).
+
+## tileRecordParallel: the squares' lazy light refreshes in stock order; the draw-list check's light state (2026-10-14, worktree `f8-twofix`)
+
+devDrawListCheck found one "draw colours" difference a run (integ4-rigs2, r1-check3, r1-check5: a window,
+`fixtures_windows_01_16`, recorded darker than the stock re-run). A translucent draw reads its square's cached light
+(`IsoGridSquare.getLightInfo` returns the JNILighting's ColorInfo by reference, `getVertLight` its cached corners); only the
+lazy refresh (`JNILighting.update`, the first light read of the square in a lighting pass, by whatever code asks first)
+rewrites it, in place. `devDrawListTrace` (runs twofix-chk-off*, -lo-off*) showed:
+
+- the window: the recording read the previous pass's light like stock does, then a later object of the same unit refreshed
+  the square (`IsoLightSwitch.shouldShowOnOverlay` -> `isSeen`, asked by the defer rule); the check's stock re-run came
+  later in the frame and read the refreshed light. A check artefact, not a frame difference.
+- a real difference behind it: the defer rule (`TileRecord.deferReason`) asks a light switch's `shouldShowOnOverlay`, whose
+  `isSeen` refreshes the square, before the switch's draw; stock asks it after the draw (`IsoObject.hasAnimatedAttachments`).
+  The recording drew outdoor lamps (`lighting_outdoor_01_*`, IsoLightSwitch) with the new pass's light one frame early
+  (twofix-lo-off2: 7 differences once the check was fixed).
+- the native answers a square's dirty bit once a pass (asked again after a refresh it says "not dirty"), and a chunk the
+  native lighting thread is still lighting can answer "not dirty" to the recording and be readable a few ms later
+  (twofix-chk-off f:4537): timing, the same race stock's own pass runs.
+
+Edits:
+- `LightingJNI.JNILighting.update()`: on a checked frame (`pzopt.LightTrace.on`) every refresh runs under the square's
+  monitor through `pzopt.LightTrace`: a recording thread's first refresh saves the square's state (`pzoptSaveLight`), the
+  check's stock re-run of a square the recording refreshed loads the values the recording read instead of asking the native
+  again (`LightTrace.replay`), and `devDrawListTrace` logs it. New `pzoptTick()`, `pzoptStaleSync()` (`pzoptStale()` under
+  the monitor a refresh holds while units record), `pzoptSaveLight()` / `pzoptLoadLight()` (every field a refresh writes),
+  `pzoptTraceStale` (dev).
+- `FBORenderCell.renderTranslucent(IsoObject)`: on a checked frame, the draw-list index and square of each stock re-run draw
+  (`LightTrace.object`; with devDrawListTrace also the light every draw reads).
+- `IsoLightSwitch`: new `pzoptOverlayIfSeen()`, `shouldShowOnOverlay`'s answer for a seen square without asking `isSeen`.
+- pzopt only: `tileRecordLightOrder` (default on; tileRecordParallel only): a light switch on a square the current lighting
+  pass has not read is asked only `pzoptOverlayIfSeen` by the defer rule: deferred when it could show its overlay, recorded
+  otherwise (its own stock code then refreshes the square after its draw, as in stock); after any deferred object (or
+  deferred items) on such a square the unit's later objects on that square are deferred too (the deferred one's stock code
+  refreshes at the splice), reason `lightOrder`.
+  devDrawListCheck: the stock re-run of level z (floor pass, then object pass) starts from the light the squares had before
+  the units at or after its place refreshed them, and the frame goes on with the recording's state after it; the squares
+  the re-run refreshed itself go back to their state before it, and the frame's own next refresh of each takes what the
+  re-run read (the splice after the re-run had drawn a deferred lamp with the re-run's refresh); a difference
+  of a draw on a square the recording asked for and the native did not answer, while the re-run's refresh read it (same Java
+  update counter), is counted as `late-light` and not as a mismatch. `devDrawListTrace` (dev): `pzopt.LightTrace` explains
+  every difference. `GtAb` bit 48 `frameQueue` (`devGtAlternateKeys=frameQueue`) alternates frameQueue within a run.

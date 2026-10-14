@@ -177,6 +177,12 @@ public final class DrawRecorder {
    private int postCursor; // splice: the next entry of the recorder's postRender list
 
    public int units, drawn, defers, conds, condsKept; // dev counters (this recorder's, summed by TileRecord)
+   public int lightOrder; // tileRecordLightOrder: objects this recorder deferred after a deferred object of their square (summed by TileRecord)
+   int unitWx, unitWy; // devDrawListTrace: the current unit's chunk
+   int unitZ; // devDrawListCheck: the current unit's level and pass (LightTrace's stock order)
+   boolean unitFloor;
+   zombie.iso.IsoGridSquare[] taint = new zombie.iso.IsoGridSquare[8]; // tileRecordLightOrder: squares of the unit a deferred object may refresh at the splice
+   int taintN;
 
    // one recorder per recording thread: its units follow each other in its lists (a recorder per unit spread the
    // pass over ~70 sets of arrays and entries and slowed the rest of the tile render through the caches, 2026-10-06)

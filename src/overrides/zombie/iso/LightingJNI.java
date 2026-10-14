@@ -1659,6 +1659,18 @@ public final class LightingJNI {
       private void update() {
          if (this.playerIndex != -1 && PerformanceSettings.fboRenderChunk) {
             java.util.ArrayList<Runnable> pzoptDefer = pzopt.LightingDefer.current(); // pzopt: entityUpdateParallel, a batched entity reading light
+            if (pzopt.LightTrace.CHECK && pzopt.LightTrace.on) { // pzopt: devDrawListCheck, a checked tileRecordParallel frame: the recording's refreshes are undone for the stock re-run (devDrawListTrace: every refresh logged)
+               synchronized (this) { // pzopt
+                  int pzoptBefore = this.updateTick; // pzopt
+                  int pzoptLight = pzopt.LightTrace.packed(this.lightInfo); // pzopt
+                  if (!pzopt.LightTrace.replay(this, pzoptBefore)) { // pzopt: the stock re-run's refresh of a square the recording refreshed takes the values the recording read (the native answers a square once a pass)
+                     pzopt.LightTrace.beforeRefresh(this, pzoptBefore); // pzopt: a recording thread's first refresh of the square saves its state
+                     this.updateFBORenderChunk(); // pzopt
+                  } // pzopt
+                  pzopt.LightTrace.light(this, this.square, this.playerIndex, pzoptBefore, this.updateTick, pzoptLight, this.lightInfo, this.cacheVertLight[0], this.pzoptTraceStale); // pzopt
+               } // pzopt
+               return; // pzopt
+            } // pzopt
             if (pzoptDefer != null || pzopt.DrawRecorder.recording) { // pzopt: one refresh of this square at a time; its side effects to the game thread at the join (tileRecordParallel: also the game thread's own refreshes while units record)
                synchronized (this) { // pzopt
                   this.updateFBORenderChunk(); // pzopt
@@ -2061,6 +2073,77 @@ public final class LightingJNI {
        * read stored (the visibility bits, the light colour, the dark multipliers, the light level, the vertex lights);
        * true when everything matches. Game thread, after a parallel batch, for a sample of its squares.
        */
+      /** pzopt: devDrawListTrace, the lighting pass this square's light was last read for. */
+      public int pzoptTick() { // pzopt
+         return this.updateTick; // pzopt
+      } // pzopt
+
+      public int pzoptTraceStale = -1; // pzopt: devDrawListTrace, the traced frame a translucent draw read this square's light before its refresh
+
+      /** pzopt: devDrawListCheck, everything a refresh rewrites (the check's stock re-run starts from the state before the recording). */
+      public int[] pzoptSaveLight() { // pzopt
+         int n = this.lightsCount; // pzopt
+         int[] st = new int[21 + 9 * n]; // pzopt
+         st[0] = this.updateTick; // pzopt
+         st[1] = this.vis; // pzopt
+         st[2] = Float.floatToRawIntBits(this.lightInfo.r); // pzopt
+         st[3] = Float.floatToRawIntBits(this.lightInfo.g); // pzopt
+         st[4] = Float.floatToRawIntBits(this.lightInfo.b); // pzopt
+         st[5] = Float.floatToRawIntBits(this.lightInfo.a); // pzopt
+         st[6] = Float.floatToRawIntBits(this.cacheDarkMulti); // pzopt
+         st[7] = Float.floatToRawIntBits(this.cacheTargetDarkMulti); // pzopt
+         st[8] = this.lightLevel; // pzopt
+         st[9] = this.square.lightLevel; // pzopt
+         System.arraycopy(this.cacheVertLight, 0, st, 10, 8); // pzopt
+         st[18] = n; // pzopt
+         st[19] = this.pzoptLightAcc; // pzopt
+         st[20] = this.pzoptLightAccFrame; // pzopt
+         for (int i = 0; i < n; i++) { // pzopt
+            IsoGridSquare.ResultLight l = this.lights[i]; // pzopt
+            int k = 21 + 9 * i; // pzopt
+            st[k] = l.id; st[k + 1] = l.x; st[k + 2] = l.y; st[k + 3] = l.z; st[k + 4] = l.radius; // pzopt
+            st[k + 5] = Float.floatToRawIntBits(l.r); st[k + 6] = Float.floatToRawIntBits(l.g); st[k + 7] = Float.floatToRawIntBits(l.b); st[k + 8] = l.flags; // pzopt
+         } // pzopt
+         return st; // pzopt
+      } // pzopt
+
+      public void pzoptLoadLight(int[] st) { // pzopt: devDrawListCheck
+         this.updateTick = st[0]; // pzopt
+         this.vis = (byte)st[1]; // pzopt
+         this.lightInfo.r = Float.intBitsToFloat(st[2]); // pzopt
+         this.lightInfo.g = Float.intBitsToFloat(st[3]); // pzopt
+         this.lightInfo.b = Float.intBitsToFloat(st[4]); // pzopt
+         this.lightInfo.a = Float.intBitsToFloat(st[5]); // pzopt
+         this.cacheDarkMulti = Float.intBitsToFloat(st[6]); // pzopt
+         this.cacheTargetDarkMulti = Float.intBitsToFloat(st[7]); // pzopt
+         this.lightLevel = st[8]; // pzopt
+         this.square.lightLevel = st[9]; // pzopt
+         System.arraycopy(st, 10, this.cacheVertLight, 0, 8); // pzopt
+         int n = st[18]; // pzopt
+         this.lightsCount = n; // pzopt
+         this.pzoptLightAcc = st[19]; // pzopt
+         this.pzoptLightAccFrame = st[20]; // pzopt
+         for (int i = 0; i < n; i++) { // pzopt
+            if (this.lights == null) this.lights = new ResultLight[6]; // pzopt
+            if (this.lights[i] == null) this.lights[i] = new ResultLight(); // pzopt
+            IsoGridSquare.ResultLight l = this.lights[i]; // pzopt
+            int k = 21 + 9 * i; // pzopt
+            l.id = st[k]; l.x = st[k + 1]; l.y = st[k + 2]; l.z = st[k + 3]; l.radius = st[k + 4]; // pzopt
+            l.r = Float.intBitsToFloat(st[k + 5]); l.g = Float.intBitsToFloat(st[k + 6]); l.b = Float.intBitsToFloat(st[k + 7]); l.flags = st[k + 8]; // pzopt
+         } // pzopt
+      } // pzopt
+
+      /**
+       * pzopt: tileRecordStaleLight. The current lighting pass has not read this square yet (a later lazy refresh may rewrite
+       * its light); under the square's monitor, which a refresh while units record holds: a false answer means the refresh
+       * is complete and visible, and no other refresh can follow before the next LightingJNI.update.
+       */
+      public boolean pzoptStaleSync() { // pzopt
+         synchronized (this) { // pzopt
+            return this.pzoptStale(); // pzopt
+         } // pzopt
+      } // pzopt
+
       /** pzopt: losLightPrefetch, the lazy refresh would read the native now (the fboRenderChunk path, not read this pass). */
       public boolean pzoptStale() { // pzopt
          return this.playerIndex != -1 && PerformanceSettings.fboRenderChunk && this.square != null && this.square.chunk != null // pzopt
