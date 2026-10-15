@@ -11,7 +11,7 @@ public final class ZombAb {
    }
 
    private static final String[] NAMES = {"zombNoop", "separateAsync", "postupdateMoveStream", "entityUpdateStream", "separateEdgeCache",
-      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "zombieLateApply", "zombieDrawLate", "randPerWorker", "animalLosSkip", "entityUpdateAnimalsInline", "coreFrameCpus", "playerLosParallel", "schedulerFillParallel", "playerLosFast"};
+      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "zombieLateApply", "zombieDrawLate", "randPerWorker", "animalLosSkip", "entityUpdateAnimalsInline", "coreFrameCpus", "playerLosParallel", "schedulerFillParallel", "playerLosFast", "workerQosMac", "joinSpinPark"};
 
    public static final long NOOP = 1L; // zombNoop: no code reads it (an alternation of it turns the timers on, both halves alike)
    public static final long SEP_ASYNC = 1L << 1; // separateAsync
@@ -34,6 +34,8 @@ public final class ZombAb {
    public static final long LOS_PARALLEL = 1L << 19; // playerLosParallel (f9-los)
    public static final long SCHED_FILL = 1L << 20; // schedulerFillParallel (f9-los)
    public static final long LOS_FAST = 1L << 21; // playerLosFast (f9-los: its cost on the flip within one run; the off half is the stock Stack walk)
+   public static final long WORKER_QOS = 1L << 22; // workerQosMac (f11-mac): the "off" half runs the frame-critical pools at utility QoS
+   public static final long SPIN_PARK = 1L << 23; // joinSpinPark (f11-mac): the "off" half spins the old unbounded way
    public static final long CORE_FRAME = 1L << 18; // coreFrameCpus (f8-flip): the "on" half puts the frame workers on coreFrameCpus, the "off" half on the background class
 
    /** GtAb.parse: a name of this pass shares GtAb bit 40 (timers on); 0 for any other name. */

@@ -131,7 +131,7 @@ public final class CharDraw {
          final AtomicInteger n = new AtomicInteger();
          p = java.util.concurrent.Executors.newFixedThreadPool(THREADS, r -> {
             Thread t = new Thread(() -> {
-               CorePlacement.background(); // macOS: utility QoS (E cores first)
+               CorePlacement.frameCritical(); // macOS: workerQosMac (utility by default, E cores first)
                r.run();
             }, "pzopt-chardraw-" + n.getAndIncrement());
             t.setDaemon(true);
@@ -145,6 +145,7 @@ public final class CharDraw {
 
    /** Executor thread: the on-screen objects in the set's order, and the zombies whose model tests pass so far. */
    private static void runWalk(Set<IsoMovingObject> objects, boolean stockOnly, boolean alphaForced) {
+      CorePlacement.frameCritical(); // f11-mac: workerQosMac alternation
       long t0 = System.nanoTime();
       try {
          onScreen.clear();
@@ -299,6 +300,7 @@ public final class CharDraw {
 
    /** Pool thread: the draw data of the batched zombies from .. to - 1 (a chunk the game thread just handed over). */
    private static void buildRange(int from, int to) {
+      CorePlacement.frameCritical(); // f11-mac: workerQosMac alternation
       try {
          ArrayList<IsoZombie> list = batch;
          for (int i = from; i < to; i++) {

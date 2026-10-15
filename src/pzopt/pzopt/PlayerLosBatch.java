@@ -80,7 +80,7 @@ public final class PlayerLosBatch {
    private static Object token;
    private static volatile Throwable failure;
    private static boolean failed;
-   public static long frames, objects, serial, early, helped, waitNanos, checks, mismatches;
+   public static long frames, objects, serial, early, helped, parks, waitNanos, checks, mismatches;
 
    /** Game thread, updateLOS: this frame's pass may take the parallel path. */
    public static boolean enabled() {
@@ -129,11 +129,18 @@ public final class PlayerLosBatch {
          return;
       }
       long t0 = System.nanoTime();
+      // joinSpinPark (f11-mac): after ~200 spins the wait parks in 10 us slices like the other joins (ShortWait); spinning on
+      // kept the game thread on a core while the worker that holds the chunk waited for one under outside load
+      boolean park = Config.JOIN_SPIN_PARK && ZombAb.on(ZombAb.SPIN_PARK);
+      int spins = 0;
       while (doneStamp.get(t) != stamp) {
          if (FrameBatch.isPending(token) && FrameBatch.helpOne()) {
             helped++;
-         } else {
+         } else if (!park || ++spins < 200) {
             Thread.onSpinWait();
+         } else {
+            ShortWait.pause(10_000L);
+            parks++;
          }
       }
       waitNanos += System.nanoTime() - t0;
@@ -302,7 +309,7 @@ public final class PlayerLosBatch {
    }
 
    public static String describe() {
-      return "playerLos frames=" + frames + " objects=" + objects + " serial=" + serial + " early=" + early + " helped=" + helped
+      return "playerLos frames=" + frames + " objects=" + objects + " serial=" + serial + " early=" + early + " helped=" + helped + " parks=" + parks
             + " wait ms=" + waitNanos / 1_000_000L + (Config.DEV_PLAYER_LOS_CHECK ? " checks=" + checks + " mismatches=" + mismatches : "")
             + (failed ? " FAILED" : "");
    }

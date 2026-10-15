@@ -689,6 +689,10 @@ local SECTIONS = {
               choices = { "auto", "efficient", "performance", "off" },
               note = { auto = "background work on the efficient cores, the game and render threads there too while they keep the frame cap", efficient = "every thread on the efficient cores", performance = "game and render threads on the fast cores, the rest on the efficient ones", off = "stock: the operating system decides" },
               tip = "CPUs such as the Ryzen AI 300 series (Zen 5 + Zen 5c), Intel's P + E core chips and Apple silicon have fast cores that cost several times the power of their efficient ones for the same work: one busy thread drew 9.2 W on a Zen 5 core and 2.2 W on a Zen 5c core of an Ayaneo Flip. Linux put the game's lighting, compiler, audio and loader threads on the fast cores as often as not. Auto keeps all of that on the efficient cores and moves the game and render threads to the fast cores only while they would otherwise miss the frame cap. Linux sets the cores directly; macOS gets the matching quality-of-service classes. Applies on the next launch." },
+            { key = "workerQosMac", label = "Priority of the game's helper threads (Mac)",
+              choices = { "user-initiated", "utility", "user-interactive" },
+              note = { ["user-initiated"] = "work the player waits for: keeps its cores when other programs are busy", utility = "background work: the efficient cores first, gives way to other programs", ["user-interactive"] = "the game and render threads' own class" },
+              tip = "The helper threads that update and draw the zombies with the game thread every frame. macOS ran them at the background 'utility' class: with a virtual machine, a build or Spotlight busy beside the game they lost their cores, and the game thread waited for them every frame (Louisville horde on a MacBook Pro M1 Pro with four busy cores beside the game: 35 fps). At user-initiated they keep up (55 fps, the same as with nothing else running). No effect on Windows or Linux. Applies on the next launch." },
             { key = "gpuPstate", label = "AMD GPU clock level while playing (Linux)",
               choices = { "auto", "off", "standard", "min_sclk" },
               note = { auto = "the lowest fixed clock whose frame time fits the cap, automatic clocks otherwise", off = "stock: the driver's automatic clocks", standard = "a fixed ~1 GHz", min_sclk = "the lowest shader clock (~640 MHz)" },
@@ -1806,6 +1810,7 @@ local AXIS_TITLE = "load on that part with this setting  (stock game = mid)"
 -- bars describe moving it away from stock in the direction the tab offers.
 local EFFECTS = {
     corePlacement = { cores = -1 },
+    workerQosMac = { cpu = -2, cores = 1 },
     gpuPstate = { gpu = -1 },
     jitSteady = { cores = -2 },
     gcHeap = { cpu = -1, ram = 1 },

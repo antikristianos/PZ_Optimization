@@ -86,7 +86,7 @@ PzoptSettingsLayout = {
               } },
             { id = "system", title = "System, sound and mods", blurb = "Cores and power, the audio mix, other mods, updates.",
               subs = {
-                { title = "Cores and power", keys = { "corePlacement", "gpuPstate", "jitSteady", "lightingSyncPark" } },
+                { title = "Cores and power", keys = { "corePlacement", "workerQosMac", "gpuPstate", "jitSteady", "lightingSyncPark" } },
                 { title = "Sound", keys = { "audioLimiter", "audioLimiterCeilingDb", "audioLimiterStereoFold", "soundTickHz",
                     "emitterIdleSkip", "worldSoundCleanupFast", "hearingHoist", "soundZoneCache", "worldSoundFast" } },
                 { title = "Mods and multiplayer", keys = { "modProfile", "modCompat", "uiRetainedMods", "luaWorkerGate", "luaChecksumExempt" } },

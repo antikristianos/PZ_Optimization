@@ -159,6 +159,40 @@ public final class CorePlacement {
       }
    }
 
+   /**
+    * f11-mac (2026-10-16): QoS class of the frame-critical pools (frame workers, CharDraw, VisPolyAsync), whose batches the
+    * game thread joins every frame. Utility (the old background() class) loses its cores to any default-QoS load on macOS
+    * (a VM, a build, Spotlight): with ~3.7 cores of outside load the game thread waited at the joins and the optimized
+    * build fell ~25 % while stock lost nothing (35 fps vs 55 at user-initiated, the quiet level).
+    */
+   private static final int WORKER_QOS = switch (Config.WORKER_QOS_MAC.toLowerCase(Locale.ROOT)) {
+      case "user-interactive", "interactive" -> 0x21; // QOS_CLASS_USER_INTERACTIVE
+      case "utility" -> 0x11; // QOS_CLASS_UTILITY
+      case "default" -> 0x15; // QOS_CLASS_DEFAULT
+      default -> 0x19; // QOS_CLASS_USER_INITIATED
+   };
+   private static final boolean WORKER_QOS_ALT = MAC && ZombAb.listed(ZombAb.WORKER_QOS);
+   private static final ThreadLocal<int[]> workerQos = ThreadLocal.withInitial(() -> new int[] {-1});
+
+   /**
+    * A frame-critical pool thread, at its start and before each batch it runs: its macOS QoS class ({@code workerQosMac}; the
+    * off half of a {@code workerQosMac} alternation uses utility). One thread-local read when nothing changed; no-op elsewhere.
+    */
+   public static void frameCritical() {
+      if (!MAC) {
+         return;
+      }
+      int cls = WORKER_QOS_ALT && !ZombAb.on(ZombAb.WORKER_QOS) ? 0x11 : WORKER_QOS;
+      int[] cur = workerQos.get();
+      if (cur[0] != cls) {
+         cur[0] = cls;
+         qos(cls);
+      }
+   }
+
+   private static final java.util.concurrent.atomic.AtomicInteger qosOk = new java.util.concurrent.atomic.AtomicInteger();
+   private static final java.util.concurrent.atomic.AtomicInteger qosFailed = new java.util.concurrent.atomic.AtomicInteger();
+
    private static boolean qos(int cls) {
       if (!MAC || MODE.equals("off") || !Overrides.enabled()) {
          return false;
@@ -169,8 +203,11 @@ public final class CorePlacement {
             qosSelf = l.downcallHandle(l.defaultLookup().find("pthread_set_qos_class_self_np").orElseThrow(),
                   FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
          }
-         return (int) qosSelf.invokeExact(cls, 0) == 0;
+         boolean ok = (int) qosSelf.invokeExact(cls, 0) == 0;
+         (ok ? qosOk : qosFailed).incrementAndGet(); // f11-mac: describe() shows whether macOS took the classes
+         return ok;
       } catch (Throwable t) {
+         qosFailed.incrementAndGet();
          return false;
       }
    }
@@ -194,7 +231,7 @@ public final class CorePlacement {
             Log.warn("corePlacement: render thread QoS not set (" + t + ")");
          }
          broken = true; // nothing else to run on macOS: the pools call background() themselves
-         Log.info("corePlacement: macOS QoS classes (game / render threads user-interactive, pools utility)");
+         Log.info("corePlacement: macOS QoS classes (game / render threads user-interactive, frame-critical pools " + Config.WORKER_QOS_MAC + ", other pools utility)");
          return;
       }
       if (!LINUX) {
@@ -765,6 +802,10 @@ public final class CorePlacement {
 
    /** One line for the periodic FBORenderCell log and the harness summary. */
    public static String describe() {
+      if (MAC) {
+         return "cores=" + MODE + " macos_qos worker=" + Config.WORKER_QOS_MAC + (WORKER_QOS_ALT ? "/utility-alternating" : "")
+               + " qos_ok=" + qosOk.get() + " qos_failed=" + qosFailed.get();
+      }
       if (!active()) {
          return "cores=" + MODE + " (inactive)";
       }

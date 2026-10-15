@@ -644,6 +644,11 @@ update) re-run `scripts/decompile.sh` and `scripts/regen-overrides.sh`.
   caches), the wake gate per vertex (a per-pixel gate over 11 M pixels cost more than it saved). Mesa needs the flipbook's
   sampler3D bound in the source, NVIDIA's 1.20 refuses layout(): `RipplesLinkTest`. Rigs `devRainModes` / `devWakeModes`
   + `devRipplesAlternate`, `harness/ripples/cost.py --base`, `phaseframes.py`.
+- Mac under outside load (2026-10-16, `docs/findings-mac-outside-load-2026-10-16.md`): the frame workers, CharDraw and
+  VisPolyAsync ran at macOS utility QoS and lost their cores to any default-QoS load (a VM, a build): with 4 busy cores beside
+  the game the optimized build fell to 35 fps while stock lost nothing. `workerQosMac=user-initiated` (default;
+  `CorePlacement.frameCritical()`, no effect off macOS): 55 fps loaded, quiet 55.5 -> 59.5. Rig: four `yes` on the Mac for
+  exactly a queue job's run (bounded, killed after), in-run A/B through ZombAb `workerQosMac`. `joinSpinPark` measured off.
 - Open plans: `docs/plan-drive-game-thread.md` (2026-09-26: late frames while driving through town), `docs/plan-graphics-enhancements.md` (2026-09-25: visual features; items 1, 2, 4 and candidate B shipped by 2026-09-26), `docs/plan-game-load.md`, `docs/plan-vulkan-renderer.md`, `docs/plan-resource-use.md`,
   `docs/plan-zombie-multithread.md` (2026-09-22: the rest of the zombie simulation on all cores, phased).
   The game-thread optimization plans were dropped on 2026-09-21 at the maintainer's request.

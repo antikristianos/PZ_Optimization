@@ -663,7 +663,7 @@ public final class FrameBatch {
    private static final long SPIN_NANOS = Config.FRAME_SPIN_US * 1000L;
 
    private static void workerLoop() {
-      CorePlacement.background(); // macOS: utility QoS (E cores first)
+      CorePlacement.frameCritical(); // macOS: workerQosMac (utility by default, E cores first)
       Worker self = (Worker) Thread.currentThread();
       int seen = 0;
       while (true) {
@@ -679,6 +679,7 @@ public final class FrameBatch {
          if (generation != seen) {
             seen = generation;
             CorePlacement.frameWorker(self); // f8-flip: coreFrameCpus alternation
+            CorePlacement.frameCritical(); // f11-mac: workerQosMac alternation (one thread-local read otherwise)
             Batch batch = current;
             if (batch != null && self.index < batch.limit) {
                batch.work();
