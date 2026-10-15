@@ -52,10 +52,13 @@ public final class GtAb {
    public static final long TILE_FLOORS = 1L << 34; // tileRecordFloors (render-phase pass f8-render1, 2026-10-13)
    public static final long ANIMAL_WALK = 1L << 56; // animalLosWalk (tail pass 2026-10-13; tail1 takes bits 56-63, named in parse())
    public static final long COMBINER = 1L << 57; // combinerPool (tail2): keep storage, reserve, budget retention
-   public static final long HANDOFF_FAST = 1L << 58; // handoffRecalcFast (hand-off pass f8-handoff 2026-10-14; bits 58-62, named in parse())
+   public static final long HANDOFF_FAST = 1L << 58; // handoffRecalcFast (hand-off pass f8-handoff 2026-10-14; bits 58-61, named in parse())
    public static final long HANDOFF_PARALLEL = 1L << 59; // handoffRecalcParallel (f8-handoff)
    public static final long HANDOFF_MEMO = 1L << 60; // handoffRecalcMemo (f8-handoff)
    public static final long HANDOFF_SCHED = 1L << 61; // chunkHandoffSched: chunkHandoffCost=chunk + chunkHandoffSlackMaxWait + chunkHandoffForceAnyFrame together (f8-handoff)
+   public static final long BAKE_SLACK = 1L << 62; // bakeSlackCap (tail6 2026-10-14; bit 58 in its worktree, moved at the round-6 merge (58-61 are f8-handoff's); named in parse())
+   public static final long GC_FIT = 1L << 63; // gcSlackFit (tail6 2026-10-14; bit 59 in its worktree; named in parse())
+   public static final long PALETTE_MISMATCH = 1L << 49; // hordePaletteMismatch (tail6 2026-10-14; bit 60 in its worktree; named in parse())
    public static final long CHUNK_PACE = 1L << 51; // chunkHandoffPaceMs (chunk pass f8-chunk 2026-10-13)
    public static final long FRAME_QUEUE = 1L << 48; // frameQueue (f8-twofix 2026-10-14: its cost uncapped and at the cap, within one run; named in parse())
    public static final long VISION_BATCH = 1L << 50; // lightingVisionParallel (chunk pass f8-chunk 2026-10-13; bits 50-55, named in parse())
@@ -114,6 +117,15 @@ public final class GtAb {
          }
          if (k.equals("chunkHandoffSched")) { // hand-off pass (f8-handoff): the slack scheduler's three keys
             m |= HANDOFF_SCHED;
+         }
+         if (k.equals("bakeSlackCap")) { // tail6
+            m |= BAKE_SLACK;
+         }
+         if (k.equals("gcSlackFit")) { // tail6
+            m |= GC_FIT;
+         }
+         if (k.equals("hordePaletteMismatch")) { // tail6
+            m |= PALETTE_MISMATCH;
          }
       }
       return m;

@@ -7904,3 +7904,35 @@ grew past `chunkHandoffSlackBacklog` (24) and a few frames a run then handed off
   budget (at least one chunk, at most the stock count); the rest join in the slack (the producer stays registered). Edit in
   `IsoChunkMap.updateInternal`'s hand-off loop (`// pzopt` lines), which also times each in-frame hand-off for the chunk model.
 No other stock code changed for these (IsoChunkMap's producer and SlackWork are pzopt code).
+
+### Louisville 120 frame tails, round 6 (2026-10-14, worktree f8-tail6): bakeSlackCap, gcSlackFit, hordePaletteMismatch, renderPrewarmOutlines
+
+- `FBORenderCell.performRenderTiles`: the chunk loop's per-grant timing (fed to `BakeScheduler.grantCost`) also runs with
+  `bakeSlackCap` (it ran with `bakeCapUs` only).
+- pzopt only; `bakeSlackCap` and `gcSlackFit` off by default, `hordePaletteMismatch` and `renderPrewarmOutlines` on by default
+  since 2026-10-15 (maintainer, round-6 merge; tab entries next to the horde drawing entries / renderPrewarm):
+  - `BakeScheduler.plan` (`bakeSlackCap`): at a cap, the overdue and budgeted grants stop at the number whose measured cost
+    (EWMA per grant) still fits the step: interval - time used before the plan - the rest of the step (EWMA of the last steps'
+    length after their plan, less their bakes) - `bakeSlackMarginUs` (700); at least `bakeSlackMin` (2) a frame; a level 4x
+    past its class's longest wait still goes (up to bakeFrameBudgetHard). Held levels keep their texture (the scheduler's
+    usual deferral). GtAb key `bakeSlackCap` (bit 62; 58 in the pass's worktree, moved at the merge).
+  - `GcSlack` / `Pacing` / `SlackWork` (`gcSlackFit`, needs frameQueue): a scheduled young collection runs only where the
+    filler plus the expected pause (p75 of the last eight measured) delay no swap of the frame queue and drop no limiter slot
+    (`Pacing.planPause`: right away, or after the render thread's next swap, which the game thread waits for; checked against
+    the held frame, the frames already pushed and the step the pause delays); tried at each step start and in the slack.
+    GtAb key `gcSlackFit` (bit 63; 59 in the worktree). `gcSlackFillChunkKb` (256): the filler array size.
+    `gcSlackFitStart` (on): also at a step's start (moves the pause onto the game thread's timeline; quiet runs t6-fin1/2 were
+    below the baseline, so the measured setting is off), `gcSlackFitOverUs` (-1; 500 = only inside the game thread's idle time),
+    `gcSlackFitFallbackMb` (0; 56 in the runs): with that little eden left the slack rule (v1) runs instead of a natural pause.
+  - `HordeBatch.sameBits` (`hordePaletteMismatch`): the palette-sharing compare as one `MemorySegment.mismatch` of the two
+    ranges' raw bytes; LWJGL's FFM `memGetLong` walks the stack (`MemorySegment.reinterpret` is caller-sensitive) on every
+    call until C2 has compiled it, ~0.6 ms of render thread a frame at the horde's first sight. Same result: dev check
+    `devHordePaletteCheck` 228,114 compares, 0 disagreed. GtAb key `hordePaletteMismatch` (bit 49; 60 in the worktree).
+  - `FirstSight.prewarm` (`renderPrewarmOutlines`): the outline passes' lazy setup at the prewarm, as their first use does it:
+    `ModelOutlines.checkFBOs` and its three programs, `ModelSlotRenderData.solidColor` / `solidColorStatic`,
+    `FBORenderObjectOutline.Drawer2.outlineShader` (a 10-11 ms render-thread frame at their first use on the route); it costs
+    the three screen-sized outline framebuffers' VRAM from the start.
+- Measured (HANDOFF-tail6.md): gcSlackFit's pauses are followed by an interval > 9 ms 15 % of the time vs 42 % for gcSlack's
+  end-of-step placement (99 vs 78 pauses), but the step-start placement delays the game thread and the whole runs are not better
+  than the baseline; bakeSlackCap halves the frames with 20+ bakes without a frame-time gain (short-period within-run A/B);
+  hordePaletteMismatch and renderPrewarmOutlines remove their first-sight costs from the profile (whole runs within the noise).

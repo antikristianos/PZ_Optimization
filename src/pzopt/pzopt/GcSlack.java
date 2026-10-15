@@ -70,8 +70,18 @@ public final class GcSlack {
 
       @Override
       public long nextCostNs() {
+         fitNow = false;
          if (urgent) {
             return 0L; // now, whatever the slack, beats mid-step
+         }
+         if (Config.GC_SLACK_FIT && GtAb.on(GtAb.GC_FIT)) {
+            if (fits()) {
+               return 0L;
+            }
+            if (remaining > (long)Config.GC_SLACK_FIT_FALLBACK_MB << 20) {
+               return Long.MAX_VALUE;
+            }
+            fallbacks++; // little eden left: the slack collection beats a natural one mid-step (gcSlackFitFallbackMb)
          }
          double cost = Math.min(pauseNs, 6_000_000.0) + Math.max(0L, remaining) * fillNsPerByte;
          return Math.max(0L, (long)cost - Config.GC_SLACK_OVER_US * 1000L);
@@ -194,6 +204,17 @@ public final class GcSlack {
          if (due && !skipCycle) {
             missed++; // it was due but never ran
          }
+         if (Config.GC_SLACK_FIT && count - lastCount == 1L) {
+            // gcSlackFit: a natural pause counts towards the expected one too (whole ms from the collector, rounded up), so a
+            // few long scheduled ones cannot keep the estimate high with no fit left to correct it
+            try {
+               com.sun.management.GcInfo gi = ((com.sun.management.GarbageCollectorMXBean)young).getLastGcInfo();
+               if (gi != null && gi.getDuration() >= 0L) {
+                  PAUSES[pauseN++ % PAUSES.length] = (gi.getDuration() + 1L) * 1_000_000L - 500_000L;
+               }
+            } catch (Throwable ignored) {
+            }
+         }
          learnCollection();
          newCycle();
       } else if (lastUsed >= 0L && used >= lastUsed) {
@@ -222,14 +243,127 @@ public final class GcSlack {
       skipCycle = Config.GC_SLACK_ALTERNATE && !skipCycle;
    }
 
+   // ---- gcSlackFit (tail6 2026-10-14) ----
+   private static final long[] PAUSES = new long[8]; // the last measured scheduled pauses (ns)
+   private static int pauseN;
+   private static long fitStep = Long.MIN_VALUE; // the step whose first fit check was counted
+   private static boolean fitNow; // the collection about to run passed the fit test
+   private static boolean fitAtStart; // it runs at the step's start (else in the slack)
+   private static double fillEstNs = 1_500_000.0; // EWMA of the measured filler time before the collection
+   private static double fillPeakNs = 2_000_000.0; // its decaying peak (0.9 a collection)
+   private static double stepEstNs = 6_000_000.0; // EWMA of the game step's work up to its frame hand-off (Pacing.lastWorkNs)
+   private static double workPeakNs = 6_000_000.0; // its decaying peak (0.99 a step)
+   private static boolean collectedLastStep;
+   public static long fitRuns, fitStartRuns, fitWaitSteps, fitRenderBound, fitGameBound, fitWaitNs;
+
+   /**
+    * gcSlackFit, game thread, at the start of a capped step (Pacing.stepStart). Under frameQueue a pause delays nothing when it
+    * ends before the render thread's next swap with its submission done, or starts right after a swap (the render thread then has
+    * a whole interval for one submission) and leaves the delayed step and its frame inside their limits ({@link
+    * Pacing#planPause}). On Louisville D is about two intervals, so the swap comes about when a step starts: the collection runs
+    * here, before the step's work; in the slack ({@link #fits}) the game thread can wait for a swap that comes before its deadline
+    * (the drive: a short D).
+    */
+   static void stepStart() {
+      long last = Pacing.lastWorkNs; // the last step's work up to its hand-off (not when it held this producer's collection)
+      if (last > 0L && last < 100_000_000L && !collectedLastStep) {
+         stepEstNs += 0.1 * (last - stepEstNs);
+         workPeakNs = Math.max(workPeakNs * 0.99, last);
+      }
+      collectedLastStep = false;
+      if (!Config.GC_SLACK_FIT_START || !GtAb.on(GtAb.GC_FIT) || !SlackWork.active()) {
+         return;
+      }
+      sample();
+      if (!due || skipCycle) {
+         return;
+      }
+      long now = System.nanoTime();
+      long fill = (long)Math.max(fillEstNs, 0.75 * fillPeakNs); // conservative: a longer filler would move the pause later
+      long start = Pacing.planPause(now, fill, fitPauseNs(), Config.GC_SLACK_FIT_MARGIN_US * 1000L, workEstNs(), 0L, 300_000L);
+      if (start >= 0L) {
+         collectedLastStep = true;
+         fitNow = true;
+         fitAtStart = true;
+         fitStartRuns++;
+         collect();
+      } else {
+         countWait(true);
+      }
+   }
+
+   /** gcSlackFit: the step's work before its hand-off, conservatively (its EWMA or 3/4 of its slowly decaying peak). */
+   private static long workEstNs() {
+      return (long)Math.max(stepEstNs, 0.75 * workPeakNs);
+   }
+
+   private static long fallbacks; // gcSlackFit: steps that fell back to the slack rule with little eden left
+   private static long swapWaitTimeouts; // gcSlackFit: planned swaps not seen within 3 ms of their target
+
+   private static void countWait(boolean renderBound) {
+      long step = Pacing.stepStartNs();
+      if (step != fitStep) {
+         fitStep = step;
+         fitWaitSteps++;
+         if (renderBound) {
+            fitRenderBound++;
+         } else {
+            fitGameBound++;
+         }
+      }
+   }
+
+   /** The pause a scheduled collection is expected to take: the 75th percentile of the last eight measured (4 ms until then). */
+   private static long fitPauseNs() {
+      int n = Math.min(pauseN, PAUSES.length);
+      if (n < 3) {
+         return 4_000_000L;
+      }
+      long[] s = java.util.Arrays.copyOf(PAUSES, n);
+      java.util.Arrays.sort(s);
+      return s[Math.min(n - 1, n * 3 / 4)];
+   }
+
+   /**
+    * gcSlackFit: does the filler plus the expected pause end before the render thread's next swap (less gcSlackFitMarginUs) and
+    * before this step's deadline + gcSlackFitOverUs.
+    */
+   private static boolean fits() {
+      long now = System.nanoTime();
+      long fill = (long)Math.max(fillEstNs, 0.75 * fillPeakNs); // conservative: a longer filler would move the pause later
+      long deadline = SlackWork.currentDeadlineNs;
+      long start = Pacing.planPause(now, fill, fitPauseNs(), Config.GC_SLACK_FIT_MARGIN_US * 1000L, workEstNs(), deadline,
+            Math.max(0L, deadline - now - 300_000L));
+      boolean ok = start >= 0L;
+      if (ok && Config.GC_SLACK_FIT_OVER_US >= 0 && start + fitPauseNs() > deadline + Config.GC_SLACK_FIT_OVER_US * 1000L) {
+         ok = false; // gcSlackFitOverUs: only where the game thread would idle anyway
+      }
+      if (!ok) {
+         countWait(false);
+      } else {
+         fitNow = true;
+         fitAtStart = false;
+      }
+      return ok;
+   }
+
    /** Fill the rest of eden until the collector runs (bounded: eden left + sixteen regions, at most 80 MB). */
    private static void collect() {
+      if (fitNow) {
+         long w0 = System.nanoTime(); // gcSlackFit: a pause planned after a swap waits for that swap, then fills
+         if (!Pacing.waitPlannedSwap()) {
+            swapWaitTimeouts++;
+         }
+         fitWaitNs += System.nanoTime() - w0;
+      }
       long t0 = System.nanoTime();
       long c0 = gcCount();
       long limit = Math.min(Math.max(0L, remaining) + 16L * regionBytes, 80L << 20); // uninitialised filler: ~0.03-0.04 ns a byte, a wrong estimate costs ~3 ms at most
-      int chunk = (int)Math.min(256L << 10, regionBytes / 4L); // well below half a region: never humongous
+      int chunk = (int)Math.min((long)Config.GC_SLACK_FILL_CHUNK_KB << 10, regionBytes / 4L); // well below half a region: never humongous
       long filled = 0L;
       java.lang.invoke.MethodHandle mh = uninit();
+      long maxIterNs = 0L; // gcSlackFit: the allocation that ran into the collection holds the pause
+      long ti = t0;
       while (filled < limit) {
          if (mh != null) {
             try {
@@ -243,6 +377,9 @@ public final class GcSlack {
             sink = new byte[chunk];
          }
          filled += chunk;
+         long tn = System.nanoTime();
+         maxIterNs = Math.max(maxIterNs, tn - ti);
+         ti = tn;
          if ((filled & ((1L << 20) - 1L)) == 0L && gcCount() != c0) {
             break;
          }
@@ -253,11 +390,19 @@ public final class GcSlack {
       fillerBytes += filled;
       fillerNs += t1 - t0;
       boolean wasUrgent = urgent;
+      boolean wasFit = fitNow;
+      fitNow = false;
       if (c1 != c0) {
          scheduled++;
          if (wasUrgent) {
             urgentRuns++;
          }
+         if (wasFit) {
+            fitRuns++;
+         }
+         PAUSES[pauseN++ % PAUSES.length] = maxIterNs; // gcSlackFit: the measured pause (the allocation that waited for it)
+         fillEstNs += 0.2 * (Math.max(0L, (t1 - t0) - maxIterNs) - fillEstNs); // gcSlackFit: the filler's own time
+         fillPeakNs = Math.max(fillPeakNs * 0.9, Math.max(0L, (t1 - t0) - maxIterNs));
          long pauseBefore = lastYoungTimeMs;
          learnCollection();
          long pauseMs = lastYoungTimeMs - pauseBefore;
@@ -279,7 +424,9 @@ public final class GcSlack {
       urgent = false;
       if (Config.INSTRUMENT) {
          Log.info("gc slack: collect at " + System.currentTimeMillis() + " ms, " + (filled >> 10) + " KB filler, " + (t1 - t0) / 1000L
-               + " us with the pause" + (wasUrgent ? " (urgent)" : "") + (c1 == c0 ? " (no collection)" : ""));
+               + " us with the pause" + (wasUrgent ? " (urgent)" : "") + (c1 == c0 ? " (no collection)" : "")
+               + ", pause " + maxIterNs / 1000L + " us, fill " + Math.max(0L, (t1 - t0) - maxIterNs) / 1000L + " us, mode "
+               + (wasFit ? "fit " + (fitAtStart ? "start" : "slack") : wasUrgent ? "urgent" : Config.GC_SLACK_FIT && GtAb.on(GtAb.GC_FIT) ? "fallback" : "v1"));
       }
    }
 
@@ -320,6 +467,8 @@ public final class GcSlack {
             + " edenLeftBeforeNaturalMB(avg/max)=" + (remBeforeNaturalN > 0 ? remBeforeNaturalSum / remBeforeNaturalN >> 20 : -1) + "/" + (remBeforeNaturalMax >> 20)
             + " edenCapEstMB=" + (capEst >> 20) + " targetAfter=" + targetAfterUsed + " fillerMB=" + (fillerBytes >> 20) + " fillerAndPauseMs=" + fillerNs / 1_000_000L
             + " pauseEstUs=" + (long)(pauseNs / 1000) + " fillNsPerByte=" + String.format("%.3f", fillNsPerByte)
-            + " perStepKB=" + (long)(perStep / 1024) + collectors();
+            + " perStepKB=" + (long)(perStep / 1024)
+            + (Config.GC_SLACK_FIT ? " fit: runs=" + fitRuns + " atStart=" + fitStartRuns + " fillEstUs=" + (long)(fillEstNs / 1000) + " workEstUs=" + (long)(stepEstNs / 1000) + "/" + (long)(workPeakNs / 1000) + " waitSteps=" + fitWaitSteps + " (at start " + fitRenderBound + ", in slack " + fitGameBound + ") waitedMs=" + fitWaitNs / 1_000_000L + " fallbackSteps=" + fallbacks + " swapWaitTimeouts=" + swapWaitTimeouts + " planFail(target/held/pushed/twoIntervals/delayedFrame)=" + java.util.Arrays.toString(Pacing.planFail) + " submitEstUs=" + Pacing.submitEstUs() + " dUs=" + Pacing.queueTargetUs() + " pauseP75Us=" + fitPauseNs() / 1000L : "")
+            + collectors();
    }
 }

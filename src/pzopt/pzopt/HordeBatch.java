@@ -275,6 +275,9 @@ public final class HordeBatch {
       long now = System.nanoTime();
       if (now - lastLogNs > 10_000_000_000L) {
          lastLogNs = now;
+         if (Config.DEV_HORDE_PALETTE_CHECK) {
+            Log.info("horde palette check: " + paletteChecks + " compares, " + paletteMismatches + " disagreed"); // tail6: hordePaletteMismatch
+         }
          Log.info("horde batch: mode=" + Config.HORDE_BATCH + " frames=" + statFrames + " chars=" + statChars + " draws=" + statDraws + " flushes=" + statFlushes + " (texture renders " + statTexFlushes + ")"
             + " stock=" + statStock + (statWindows > 0 ? orderStats() : "") + (programU != 0 ? " units: checks=" + unitsChecks + " notRestored=" + unitsMismatch : "") + " mapped=" + mappedOk + " fenceWaits=" + fenceWaits + " skipped=" + skippedDraws + " rejects:" + rejects() + " instance:" + java.util.Arrays.toString(INSTANCE_REJECT) + (Config.DEV_HORDE_CHECK > 0 ? " check: runs=" + checkRuns + " vacuous=" + checkVacuous + " drawnPixels=" + checkDrawn + " pixels=" + checkPixels + " colourDiff=" + checkColour + " depthDiff=" + checkDepth + " maxDelta=" + checkMaxDelta + " lastMs=" + checkLastMs + (Config.DEV_HORDE_CHECK_VARIANTS ? " variants runs/diff " + java.util.Arrays.toString(VAR_RUNS) + "/" + java.util.Arrays.toString(VAR_DIFF) : "") : ""));
       }
@@ -806,6 +809,36 @@ public final class HordeBatch {
     * its clothes compare equal over all 960 floats, so this ran to the end ~3 times a zombie), else float by float.
     */
    private static boolean sameBits(FloatBuffer a, int ia, FloatBuffer b, int ib, int len) {
+      if (Config.HORDE_PALETTE_MISMATCH && a.isDirect() && b.isDirect() && GtAb.on(GtAb.PALETTE_MISMATCH)) {
+         // hordePaletteMismatch (tail6 2026-10-14): one raw-byte comparison of the two ranges (MemorySegment.mismatch, the
+         // vectorised intrinsic once compiled). LWJGL's FFM memGetLong runs MemorySegment.reinterpret, caller-sensitive: until C2
+         // inlined it, every call walked the stack (JVM_GetCallerClass), ~0.6 ms of render thread a frame at the horde's first sight
+         boolean same = sameBitsSegment(a, ia, b, ib, len);
+         if (Config.DEV_HORDE_PALETTE_CHECK) {
+            paletteChecks++;
+            if (same != sameBitsLongs(a, ia, b, ib, len)) {
+               paletteMismatches++;
+            }
+         }
+         return same;
+      }
+      return sameBitsLongs(a, ia, b, ib, len);
+   }
+
+   /** hordePaletteMismatch: the two direct ranges' raw bytes compared in one MemorySegment.mismatch (HordePaletteCompareTest). */
+   static boolean sameBitsSegment(FloatBuffer a, int ia, FloatBuffer b, int ib, int len) {
+      java.lang.foreign.MemorySegment sa = java.lang.foreign.MemorySegment.ofBuffer(a.duplicate().clear());
+      java.lang.foreign.MemorySegment sb = java.lang.foreign.MemorySegment.ofBuffer(b.duplicate().clear());
+      long oa = (long)ia * 4L;
+      long ob = (long)ib * 4L;
+      long n = (long)len * 4L;
+      return java.lang.foreign.MemorySegment.mismatch(sa, oa, oa + n, sb, ob, ob + n) < 0L;
+   }
+
+   /** hordePaletteMismatch's dev check: the in-run comparisons of the two compares, and how many disagreed. */
+   static long paletteChecks, paletteMismatches;
+
+   static boolean sameBitsLongs(FloatBuffer a, int ia, FloatBuffer b, int ib, int len) {
       if (a.isDirect() && b.isDirect()) {
          long pa = org.lwjgl.system.MemoryUtil.memAddress0(a) + (long)ia * 4L;
          long pb = org.lwjgl.system.MemoryUtil.memAddress0(b) + (long)ib * 4L;

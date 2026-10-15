@@ -142,6 +142,9 @@ public final class Pacing {
       AnimalPreload.drain(); // animalPreload (tail pass): preloaded action groups into the game's map
       stepStartNs = nowNs;
       capIntervalNs = intervalNs;
+      if (Config.GC_SLACK_FIT && Config.GC_SLACK && intervalNs > 0L) {
+         GcSlack.stepStart(); // gcSlackFit: a due collection at the step's start when the render thread's and this frame's room allow it
+      }
    }
 
    /** Game thread: System.nanoTime() at the start of the current step (bakeDeadlinePct). */
@@ -154,6 +157,7 @@ public final class Pacing {
       if (!ACTIVE) {
          return;
       }
+      lastWorkNs = System.nanoTime() - stepStartNs; // gcSlackFit: the step's own work before the hand-off
       int h = head;
       if (h - tail >= RING) {
          return; // render thread not consuming (no render state yet): drop
@@ -181,7 +185,170 @@ public final class Pacing {
          frameSlotNs = stepSlotNs;
          framePushNs = acquireNs;
       }
+      // gcSlackFit: the render thread's schedule for the game thread (when its next swap goes, how much render work is left)
+      rtTargetNs = QUEUE && capIntervalNs > 0L && frameSlotNs != 0L && qTargetNs > 0L ? frameSlotNs + qTargetNs : 0L;
+      rtAcquireNs = acquireNs;
    }
+
+   // --- gcSlackFit (tail6 2026-10-14): the render thread's schedule, read by the game thread -----------------------------
+   /** Render thread: when it took its current frame. */
+   private static volatile long rtAcquireNs;
+   /** Render thread: its current frame's swap target under frameQueue (slot + D), 0 = none (not held). */
+   private static volatile long rtTargetNs;
+   /** Render thread: when its current frame's submission ended (beforeSwap entered). */
+   private static volatile long rtSubmitDoneNs;
+   /** Render thread: when its last swap returned. */
+   private static volatile long rtSwapRetNs;
+   /** Render thread: acquire -> swap call, max(EWMA, 0.75 x decaying peak) (ns). */
+   private static volatile long rtSubmitEstNs = 3_000_000L;
+   private static double rtSubmitMean = 3_000_000.0, rtSubmitPeak = 3_000_000.0;
+
+   // gcSlackFit's pause planner: the pause it chose (game thread)
+   private static long planS, planE;
+
+   /**
+    * gcSlackFit, game thread: when a stop-the-world pause of {@code p} ns, preceded by {@code fill} ns of game-thread filler,
+    * may start without delaying any swap of the frame queue or dropping a limiter slot; -1 when no start in reach does.
+    * Candidates: right away (the pause ends before the render thread's next swap with its remaining submission done), or just
+    * after that swap (the render thread then has a whole frame's room), if the caller can wait that long ({@code maxWait}: the
+    * filler must start by now + maxWait). Each candidate is checked against: the frame the render thread holds (its swap at
+    * slot + D), every frame already pushed (rendered one after the other from that swap, each done by its slot + D), and the step
+    * the pause delays (at a step start: this one, {@code deadline} 0; in the slack: the next one, starting at max(deadline, pause
+    * end)): its frame done by its slot + D after {@code work} ns of step and the render submission, and its end inside two cap
+    * intervals of its slot (a longer step drops a limiter slot).
+    */
+   public static long planPause(long now, long fill, long p, long margin, long work, long deadline, long maxWait) {
+      long d = qTargetNs;
+      long interval = capIntervalNs;
+      if (!QUEUE || d <= 0L || interval <= 0L) {
+         return -1L;
+      }
+      planAfterAcquire = 0L;
+      long s1 = now + fill;
+      if (pauseOk(now, s1, s1 + p, margin, work, deadline, d, interval)) {
+         return s1;
+      }
+      long a = rtAcquireNs;
+      long tF = rtTargetNs;
+      if (a != 0L && rtSwapRetNs < a && tF > now && tF - now <= maxWait) {
+         // after the swap: the filler starts once the render thread's swap has returned (waitSwap), the pause after it
+         long s2 = tF + 150_000L + fill;
+         if (pauseOk(now, s2, s2 + p, margin, work, deadline, d, interval)) {
+            planAfterAcquire = a;
+            planSwapAt = tF;
+            return s2;
+         }
+      }
+      return -1L;
+   }
+
+   private static long planAfterAcquire, planSwapAt;
+
+   static long submitEstUs() {
+      return rtSubmitEstNs / 1000L;
+   }
+
+   static long queueTargetUs() {
+      return qTargetNs / 1000L;
+   }
+   /** gcSlackFit: failed checks of the pause planner (no frame target, the held frame's swap, a pushed frame, the delayed step's two intervals, its frame). */
+   public static final long[] planFail = new long[5];
+
+   /**
+    * gcSlackFit, game thread: when the planned pause comes after a swap, wait for it: park until just before the swap's target,
+    * then until the render thread's swap has returned (at most 3 ms past the target). True when the swap was seen.
+    */
+   public static boolean waitPlannedSwap() {
+      long a = planAfterAcquire;
+      if (a == 0L) {
+         return true;
+      }
+      planAfterAcquire = 0L;
+      long t = planSwapAt;
+      long w = t - 100_000L - System.nanoTime();
+      if (w > 20_000L) {
+         LockSupport.parkNanos(w);
+      }
+      long limit = t + 3_000_000L;
+      while (rtSwapRetNs < a) {
+         long now = System.nanoTime();
+         if (now > limit) {
+            return false;
+         }
+         Thread.onSpinWait();
+      }
+      return true;
+   }
+
+   /** The render thread's finish of a submission started at x, with the pause [s, e]. */
+   private static long renderDone(long x, long sub, long s, long e) {
+      if (e <= x || s >= x + sub) {
+         return x + sub;
+      }
+      return s <= x ? e + sub : x + sub + (e - s);
+   }
+
+   private static boolean pauseOk(long now, long s, long e, long margin, long work, long deadline, long d, long interval) {
+      long sub = rtSubmitEstNs;
+      long a = rtAcquireNs;
+      boolean hasF = a != 0L && rtSwapRetNs < a;
+      long rt = now; // when the render thread is free for the next frame
+      if (hasF) {
+         long tF = rtTargetNs;
+         if (tF == 0L) {
+            planFail[0]++;
+            return false; // presented as soon as it is ready: any pause delays it
+         }
+         if (s < tF) {
+            long left = rtSubmitDoneNs >= a ? 0L : Math.max(300_000L, a + sub - s); // its submission still to do at the pause
+            if (e + left > tF - margin) {
+               planFail[1]++;
+               return false;
+            }
+         }
+         rt = Math.max(now, tF);
+      }
+      // the frames already pushed, rendered in order after that
+      int h = head;
+      for (int t = tail; t != h; t++) {
+         long slot = ringSlot[t & (RING - 1)];
+         if (slot == 0L) {
+            planFail[0]++;
+            return false;
+         }
+         long done = renderDone(rt, sub, s, e);
+         if (done > slot + d - margin) {
+            planFail[2]++;
+            return false;
+         }
+         rt = Math.max(done, slot + d);
+      }
+      // the step the pause delays, and its frame
+      long slot = deadline == 0L ? stepSlotNs : deadline;
+      long start = deadline == 0L ? e : Math.max(deadline, e);
+      long push = start + work;
+      if (push > slot + 2L * interval - margin) {
+         planFail[3]++;
+         return false;
+      }
+      long done = renderDone(Math.max(rt, push), sub, s, e);
+      if (done > slot + d - margin) {
+         planFail[4]++;
+         return false;
+      }
+      planS = s;
+      planE = e;
+      return true;
+   }
+
+   /** Game thread: the last step's time from its start to the frame hand-off (gcSlackFit). */
+   static long lastWorkNs;
+
+   /** gcSlackFit, game thread: the current step's cap slot (the limiter's deadline it serves). */
+   static long stepSlotNs() {
+      return stepSlotNs;
+   }
+
 
    /** Render thread: the last frame's acquire -> swap-call time before any hold (pzopt.BakeScheduler's adaptive budget). */
    public static volatile long lastSubmitNs;
@@ -192,6 +359,13 @@ public final class Pacing {
          return;
       }
       lastSubmitNs = System.nanoTime() - acquireNs;
+      if (Config.GC_SLACK_FIT) { // gcSlackFit: the render thread's submission is done, its cost learned
+         rtSubmitDoneNs = acquireNs + lastSubmitNs;
+         double s = lastSubmitNs;
+         rtSubmitMean += 0.1 * (s - rtSubmitMean);
+         rtSubmitPeak = Math.max(rtSubmitPeak * 0.98, s);
+         rtSubmitEstNs = (long)Math.max(rtSubmitMean, 0.75 * rtSubmitPeak);
+      }
       if (!glChecked) {
          initGl();
       }
@@ -526,6 +700,9 @@ public final class Pacing {
 
    /** Render thread, after Display.update returned. */
    public static void afterSwap() {
+      if (Config.GC_SLACK_FIT) {
+         rtSwapRetNs = System.nanoTime(); // gcSlackFit: the render thread is free until its next acquire
+      }
       if (!LOG) {
          return;
       }

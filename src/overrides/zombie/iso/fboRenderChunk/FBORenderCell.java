@@ -1833,7 +1833,7 @@ public final class FBORenderCell {
          AbstractPerformanceProfileProbe var10 = renderOneChunk.profile();
 
          try {
-            long pzoptCapT0 = pzopt.Config.BAKE_CAP_US > 0 ? System.nanoTime() : 0L; // pzopt: bakeCapUs, the measured cost of a grant
+            long pzoptCapT0 = pzopt.Config.BAKE_CAP_US > 0 || pzopt.Config.BAKE_SLACK_CAP ? System.nanoTime() : 0L; // pzopt: bakeCapUs / bakeSlackCap (tail6), the measured cost of a grant
             int pzoptCapG0 = this.pzoptBakesThisFrame; // pzopt
             this.renderOneChunk(c, perPlayerRender, playerIndex, currentTimeMillis, floorRenderShader, wallRenderShader); // pzopt: (a per-chunk GPU section here cost 600 queries a frame; bake + composite cover it)
             pzopt.BakeRecord.chunkDone(c); // pzopt: bakeRecordParallel, the units that wait for this chunk's levels go on

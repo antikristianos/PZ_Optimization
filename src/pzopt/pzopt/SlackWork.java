@@ -45,6 +45,8 @@ public final class SlackWork {
    private static final java.util.HashMap<String, Integer> FORCED = new java.util.HashMap<>();
    private static long lastLogNs;
    private static long lastStepNs = Long.MIN_VALUE;
+   /** The deadline of the current step's slack run (game thread). */
+   static long currentDeadlineNs;
 
    public static void register(Producer p) {
       if (!PRODUCERS.contains(p)) {
@@ -74,6 +76,7 @@ public final class SlackWork {
       }
       lastStepNs = step;
       frame++;
+      currentDeadlineNs = deadlineNs; // gcSlackFit: the producers' view of this step's deadline
       if (Config.GC_SLACK && !gcRegistered) {
          gcRegistered = true;
          register(GcSlack.PRODUCER); // gcSlack: the young collection as a slack job

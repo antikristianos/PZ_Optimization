@@ -62,7 +62,7 @@ PzoptSettingsLayout = {
                     "zombieSpotFast", "zombieAtlasFast", "renderLastFast", "separateFast", "edgeTestFast", "separateEdgeCache", "postupdateNoopSkip", "luaSilentSkip", "ragdollGate", "bodyModelCache", "sleepCheckMemo", "stateParamMemo",
                     "actionGroupCache", "boneIndexCache", "lazyPose", "modelLockPerInstance", "poolStatsBatched", "actionSnapshotFilter",
                     "emitterParamSkip", "profilerThreadMemo" } },
-                { title = "Drawing the horde", keys = { "hordeBatch", "hordeBatchUpload", "hordeBatchVao", "atlasBatch", "hordeBatchOrder", "hordeBatchUnits", "renderPrewarm" } },
+                { title = "Drawing the horde", keys = { "hordeBatch", "hordeBatchUpload", "hordeBatchVao", "atlasBatch", "hordeBatchOrder", "hordeBatchUnits", "hordePaletteMismatch", "renderPrewarm", "renderPrewarmOutlines" } },
                 { title = "Detail by distance", keys = { "zombieLodDynamic", "zombieSimLodTiles", "zombieSimLodSteps", "zombieCheckSpread",
                     "zombieLodMin3d", "zombieLodMinBlend", "zombieLodUncappedFps", "zombieLodFixed3d", "zombieLodHysteresis", "zombieLodFadeMs", "zombieLodSpriteLight",
                     "zombieFirstSightSprite", "zombieCompositeBudgetUs" } },

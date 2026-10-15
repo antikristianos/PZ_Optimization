@@ -229,10 +229,45 @@ public final class FirstSight {
             st.add(zombie.core.textures.Texture.getErrorTexture()); // the combiner's static shaders (made at the first add)
             st.clear();
          }
+         if (Config.RENDER_PREWARM_OUTLINES) {
+            prewarmOutlines();
+         }
       } catch (Throwable t) {
          Log.warn("render prewarm: " + t);
       }
       Log.info("render prewarm: " + (System.nanoTime() - t0) / 1000L + " us");
+   }
+
+   /**
+    * renderPrewarmOutlines (tail6 2026-10-14): the object / model outline pass's lazy setup, as its first use would do it: the
+    * three screen-sized framebuffers (ModelOutlines.checkFBOs) and its three programs (ModelOutlines.endFrame makes them
+    * together when the first is null). Its first use on the Louisville route (s1.6) was a 10-11 ms render-thread frame.
+    */
+   private static void prewarmOutlines() throws ReflectiveOperationException {
+      zombie.core.skinnedmodel.model.ModelOutlines mo = zombie.core.skinnedmodel.model.ModelOutlines.instance;
+      mo.checkFBOs();
+      String[][] programs = {{"thickenHShader", "aim_outline_h"}, {"thickenVShader", "aim_outline_v"}, {"blitShader", "aim_outline_blit"}};
+      java.lang.reflect.Field first = zombie.core.skinnedmodel.model.ModelOutlines.class.getDeclaredField(programs[0][0]);
+      first.setAccessible(true);
+      if (first.get(mo) == null) {
+         for (String[] p : programs) {
+            java.lang.reflect.Field f = zombie.core.skinnedmodel.model.ModelOutlines.class.getDeclaredField(p[0]);
+            f.setAccessible(true);
+            f.set(mo, zombie.core.opengl.ShaderProgram.createShaderProgram(p[1], false, false, true));
+         }
+      }
+      // the character outline's solid-colour shaders (ModelSlotRenderData.performRenderCharacterOutline makes both when the first is null)
+      if (zombie.core.skinnedmodel.model.ModelSlotRenderData.solidColor == null) {
+         zombie.core.skinnedmodel.model.ModelSlotRenderData.solidColor = new zombie.core.skinnedmodel.shader.Shader("aim_outline_solid", false, false);
+         zombie.core.skinnedmodel.model.ModelSlotRenderData.solidColorStatic = new zombie.core.skinnedmodel.shader.Shader("aim_outline_solid", true, false);
+      }
+      // the object outline's sprite shader (FBORenderObjectOutline.Drawer2.render makes it when null)
+      Class<?> d2 = Class.forName("zombie.iso.fboRenderChunk.FBORenderObjectOutline$Drawer2");
+      java.lang.reflect.Field os = d2.getDeclaredField("outlineShader");
+      os.setAccessible(true);
+      if (os.get(null) == null) {
+         os.set(null, new zombie.core.skinnedmodel.shader.Shader("vboRenderer_SpriteOutline", true, false));
+      }
    }
 
    /** Render thread, right after the swap. */
