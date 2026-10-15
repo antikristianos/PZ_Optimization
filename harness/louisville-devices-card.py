@@ -38,7 +38,10 @@ DEVICES = [
     # then a stale options backup), now3 / now4 replace them
     ('MacBook Pro 14', 'M1 Pro, 1512x982',
      [f'{R10}/mac-stock21-1-20261015-221731', f'{R10}/mac-stock21-2-20261015-222046'],
-     [f'{R10}/mac-r10-now3-20261015-220915', f'{R10}/mac-r10-now4-20261015-221441']),
+     # round 10 on the quiet Mac (f10-mac, 23:06 / 23:08): now3 / now4 ran beside a Colima VM's x86 docker build (3.7 cores
+     # of outside load, 38.5 / 43.5 fps); stock was not slowed by it (stock21 28.9 / 29.1 = the quiet 18:16 pair)
+     [f'{HOME}/pzopt-wt/f10-mac/harness/runs/mac-f10-r10-b-20261015-230624',
+      f'{HOME}/pzopt-wt/f10-mac/harness/runs/mac-f10-r10-c-20261015-230835']),
     ('Dell laptop, 1080p', 'Core i5-6300HQ, GTX 960M',
      [f'{R8}/dell-pf-stock1-20261015-175310', f'{R8}/dell-pf-stock2-20261015-180454'],
      [f'{R10}/dell-r10-now1-20261015-215500', f'{R10}/dell-r10-now2-20261015-220018']),
