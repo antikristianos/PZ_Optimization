@@ -1162,6 +1162,30 @@ public final class Config {
    /** frameQueue: the shortest D in percent of the cap interval at caps below {@code frameQueueFixedMinFps} (the adaptive floor, frameQueueMinPct's default until 2026-10-15). */
    public static final int FRAME_QUEUE_LOW_CAP_MIN_PCT = Math.max(0, Math.min(400, integer("frameQueueLowCapMinPct", 60)));
    /**
+    * frameQueue at caps below {@code frameQueueFixedMinFps} (2026-10-15, after round 11): how long the frames must have been
+    * ready within one cap interval of their slot before D learns from them, after the queue turned on (a world loaded, a menu
+    * or the pause menu closed) or the cap changed. Until then D waits at its floor (frameQueueLowCapMinPct) with an empty
+    * window, at most 10 s. Round 11 learned from the world's start bursts (slot -> ready 77-411 ms): D began at the 260 %
+    * ceiling, 43 ms at a 60 fps cap and 87 ms at 30, and took 20 s / ~67 s to come down. 0 = learn from the first frame.
+    */
+   public static final int FRAME_QUEUE_LOW_CAP_CALM_MS = Math.max(0, Math.min(10_000, integer("frameQueueLowCapCalmMs", 1000)));
+   /**
+    * frameQueue at caps below frameQueueFixedMinFps: how fast D may fall, in percent of the cap interval per second (25: 4.2 ms/s
+    * at 60 fps, 8.3 ms/s at 30), instead of frameQueueDecayUsPerS's fixed 1 ms/s (12 % of an interval a second at 120 fps,
+    * 3 % at 30). 0 = frameQueueDecayUsPerS.
+    */
+   public static final int FRAME_QUEUE_LOW_CAP_DECAY_PCT = Math.max(0, Math.min(1000, integer("frameQueueLowCapDecayPct", 25)));
+   /**
+    * frameQueue at caps below frameQueueFixedMinFps: added to D on top of frameQueueMarginUs, in percent of the cap interval
+    * (20: 3.3 ms at 60 fps, 6.7 ms at 30). A D that falls within seconds sits close to the frames' p99 and every rise of the
+    * slow frames' time came late; replayed through round 11's logged 60 / 30 fps Louisville lags (route window, on-screen
+    * intervals): margin 0 / 10 / 15 / 20 % gave 21-29 / 18 / 16 / 14 intervals more than 0.5 ms long at 60 fps (round 11's
+    * slow-falling D: 14, D 23.1 ms on the route) and 4 / 1 / 1 / 0 at 30 (round 11: 0, D 63.6 ms); with 20 % D 23.2 / 26.5 ms.
+    * frameQueueSlewUs (500 us a frame) stays the slew at low caps too: a slew in percent of the interval (6-12 %) made each rise
+    * a run of 1-2 ms longer frames (60 fps p99 17.31 -> 17.78 ms on the Louisville route, run i11f-p60).
+    */
+   public static final int FRAME_QUEUE_LOW_CAP_MARGIN_PCT = Math.max(0, Math.min(100, integer("frameQueueLowCapMarginPct", 20)));
+   /**
     * frameQueue (f8-pace2, 2026-10-15; on by default with the queue since 2026-10-15, maintainer): D's samples include the frame's GPU completion. The swap of an on-time
     * frame goes at its slot + D, but the flip waits for the GPU: on the Louisville cap with the zombie LOD 8 % of the frames were
     * still drawing at their swap call (GPU done 0.7-10 ms after it), so 111 of the 168 on-screen intervals over 9 ms had their

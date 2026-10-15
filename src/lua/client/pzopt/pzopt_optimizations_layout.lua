@@ -13,7 +13,7 @@ PzoptSettingsLayout = {
           cats = {
             { id = "smooth", title = "Smoothness and pacing", blurb = "Even frame delivery, variable refresh and input latency.",
               subs = {
-                { title = "Frame pacing", keys = { "presentPacing", "frameQueue", "frameQueueGpu", "frameQueueMinPct", "frameQueueMaxPct", "frameQueueFixedMinFps", "frameQueueLowCapMinPct", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
+                { title = "Frame pacing", keys = { "presentPacing", "frameQueue", "frameQueueGpu", "frameQueueMinPct", "frameQueueMaxPct", "frameQueueFixedMinFps", "frameQueueLowCapMinPct", "frameQueueLowCapCalmMs", "frameQueueLowCapDecayPct", "frameQueueLowCapMarginPct", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
                 { title = "Variable refresh", keys = { "vrr", "vrrCap", "macGlCore", "macGlTimerQueries", "macPresent" } },
                 { title = "Input latency", keys = { "inputLatch", "keyboardFresh", "reflexSleep", "reflexBoost", "reflexCapFps",
                     "vblankLock", "gpuMaxFrames", "frameStartGate", "vsyncAdaptive", "cursorLatch", "aimHoldMs" } },
@@ -164,7 +164,8 @@ PzoptSettingsLayout = {
         "curtainDepthNudgePct", "lightingGlobalDeltaPct", "fogScalePct", "weatherFxScalePct", "macGlTimerQueries", "gameThreadProfileHz",
         "overlayRefreshMs", "overlayGraphHz", "overlayFlameDepth", "overlayTexture",
         "burstLateUs", "burstWorkPct", "zombieSpawnBurstUs", "zombieModelAddBurstUs", "zombieModelAddHeavyEvery", "zombieSpawnSlackBudgetUs",
-        "zombieSpawnHeavyMin", "zombieSpawnAgedCapUs", "zombieCompositeMaxPerFrame", "frameQueueMaxPct", "frameQueueLowCapMinPct" },
+        "zombieSpawnHeavyMin", "zombieSpawnAgedCapUs", "zombieCompositeMaxPerFrame", "frameQueueMaxPct", "frameQueueLowCapMinPct",
+        "frameQueueLowCapCalmMs", "frameQueueLowCapDecayPct", "frameQueueLowCapMarginPct" },
     expertPatterns = { "Budget$", "MaxFrames$", "Ms$", "Frames$", "Threads$", "Divisor$", "Hz$", "Kb$", "Mb$", "Slots$", "Delta$",
         "Interval", "Px$", "Steps$", "Tiles$", "Sec$", "Spread$", "PerSec$", "Min3d$", "MinBlend$", "UncappedFps$", "^dev" },
 

@@ -8341,3 +8341,49 @@ jitter 0.10 ms, console D 42.5 -> 34.6 -> 24.6 -> 24.4 ms with floor 10.00 ms (s
 33.36, max 33.4, jitter 0.02 ms, D 86.3 -> 80.7 -> 70.7 -> 60.7 ms with floor 20.00 ms (the adaptive D falls at frameQueueDecayUsPerS,
 1 ms/s, from the 260 % clamp it reached at the world's start). Visual (route s0.9-1.8 crops): the new zombies waiting for their model
 are lit sprites; with first sight off the zombieModelAddBudgetUs waits were black silhouettes (i11-p120nofs).
+
+**Fast settle at low caps** (2026-10-15, after the runs above; maintainer's aim: low input delay at low caps). Round 11's
+adaptive D at 60 / 30 fps learned from the world's start bursts (slot -> ready 77-411 ms in the first 3 s), sat at the 260 %
+ceiling (43 / 87 ms) and fell only at frameQueueDecayUsPerS (1 ms/s): ~20 s at 60 fps, ~67 s at 30, so the 30 fps route ran at
+D 56-86 ms. `pzopt.Pacing.queueD` (the D update, factored out of queueHold) now has low-cap rules, all only where
+`Pacing.lowCap(interval)` (cap below frameQueueFixedMinFps); at 100 fps or more the code path is the old one, unchanged:
+
+- `frameQueueLowCapCalmMs` (1000): when the queue turns on (`Pacing.queueTurnedOn`, called by queueAllowed on its off -> on
+  transition: a world loaded, a menu or the pause menu closed) or the cap interval changes by more than 1 %, D restarts at its
+  floor (frameQueueLowCapMinPct) with an empty window (`queueRestart`; an existing D slews there) and `addQueueSample` drops the
+  samples until the frames have been ready within one cap interval of their slot for that long (at most `Q_CALM_MAX_NS`, 10 s).
+  Console: "frame queue: low cap N fps, D learns after x s at its floor y ms (...)". 0 = learn from the first frame (round 11).
+- `frameQueueLowCapDecayPct` (25): D falls at most 25 % of the cap interval a second (4.2 ms/s at 60, 8.3 at 30) instead of
+  frameQueueDecayUsPerS's fixed 1 ms/s (12 % of an interval at 120, 3 % at 30). 0 = frameQueueDecayUsPerS.
+- `frameQueueLowCapMarginPct` (20): added to D on top of frameQueueMarginUs (3.3 ms at 60, 6.7 ms at 30). A D that falls within
+  seconds sits near the p99, so each rise of the slow frames came late; replayed through round 11's logged lags (on-screen
+  intervals in the route window, `fqsweep3.py` in the session scratchpad) margin 0 / 10 / 15 / 20 % gave 21-29 / 18 / 16 / 14
+  intervals > 0.5 ms long at 60 fps (round 11's slow D: 14, at D 23.1 ms on the route) and 4 / 1 / 1 / 0 at 30 (round 11: 0 at
+  D 63.6 ms); 20 %: D 23.2 / 26.5 ms there.
+- The slew stays frameQueueSlewUs (500 us a frame) at low caps. A first build with a slew in percent of the interval (12 %:
+  2 ms a frame at 60, 4 ms at 30) and a 10 % margin made each rise of D a run of 2-4 ms longer frames: i11f-p60 p99 17.78, max
+  22.2, jitter 0.08 ms; i11f-p30 p99 34.63, max 38.1, jitter 0.11 ms.
+
+Tab (Frame pacing, Everything view): "Frame queue at low caps: start from the shortest holding time (ms of steady frames)",
+"... how fast the holding time falls (% of a frame per second)", "... safety margin (% of a frame)"; the frameQueueFixedMinFps
+tip says the low-cap queue starts at its floor and settles within seconds. Test: `PacingQueueFloorTest` drives
+addQueueSample + queueD per frame: 120 fps D = 21.67 ms every frame through bursts and a queue restart; 120 -> 60 slews to the
+10 ms floor at <= 0.5 ms a frame; 3 s of 40-240 ms start bursts keep D at the floor; D learns after 1 s of calm frames; a 25 ms
+burst raises D to 25 + 0.3 + 3.33 ms at 0.5 ms a frame; back at the floor within 9.5 s, falling <= 4.17 ms/s; 60 -> 30 restarts
+at the 20 ms floor through bursts; a never-calm scene learns after 10 s. Build: audit 9,152 compared / 965 edited / 0 mismatches.
+
+Runs (desktop, player-like Louisville as above, `player.sh i11g-p60|p30 --prop frameCapFps=60|30`): D learns 4.4 s (60) / 3.6 s
+(30) after the queue turned on; 10 s console lines D mean/last (floor 10 / 20 ms):
+- 60 cap, round 11 i11-p60: 42.47/39.62, 34.61/29.61, 24.63/20.89, 24.43/22.94 ms; now i11g-p60: 13.58/17.44, 16.80/20.34,
+  26.30/26.13, 26.11/24.91 ms (per second: 10.0 to +4 s, 13-17 ms from +5 s = the GPU-inclusive slot -> ready p99 + margin;
+  23-29 ms on the heavier route, where round 11's D had come down to the same level). Route: 59.98 fps, p99 17.17, p99.9 18.68,
+  max 20.0, jitter 0.04 ms (round 11: 17.31 / 21.90 / 29.2 / 0.10); frames > interval + 0.6 / 2 / 4 ms: 3 / 2 / 0 (round 11:
+  16 / 5 / 3); the queue's late counter per 10 s after the start bursts 1 / 0 / 1 (round 11 0 / 1 / 1).
+- 30 cap, round 11 i11-p30: 86.32/85.77, 80.74/75.74, 70.71/65.72, 60.69/55.70 ms; now i11g-p30: 24.37/26.28, 22.00/23.37,
+  34.19/35.72, 38.80/35.40 ms (per second: 20.0 to +3 s, 24-27 ms at +4-10 s, 21 ms at +14-18 s, 35-40 ms on the route: its
+  GPU-inclusive p99 ~30 ms + 6.97). Route: 29.98 fps, p99 33.84, p99.9 35.55, max 35.5, jitter 0.05 ms (round 11: 33.36 / 33.42 /
+  33.4 / 0.02 at D 51-86 ms): 44 frames 0.3-0.6 ms long (D rising at the 0.5 ms slew), 3 > +0.6 ms, 1 > +2 ms (35.5 ms); the queue's
+  late counter per 10 s after the start bursts 1 / 0 / 0 (round 11 0 / 0 / 0). About 30-50 ms less input delay for one 2 ms-late frame in 25 s.
+- Lock (lock.sh, 120 fps, fixed D 21.67 ms on every 10 s line, no low-cap line): i11g-l1 119.96 fps, 99.83 % <= 9 ms, p99 8.377,
+  p99.9 10.12, max 16.68, ext 0.28; i11g-l2 119.72 fps, 99.53 %, p99 8.428, p99.9 16.681, max 16.70, ext 0.20; both PASS, crashed 0,
+  strongMarks 5.8-6.0k, strongPastBudget 0; settle frames (route -17 / -1 s) of all four runs uniform black roofs.

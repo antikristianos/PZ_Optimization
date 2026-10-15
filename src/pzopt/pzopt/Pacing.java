@@ -83,6 +83,8 @@ public final class Pacing {
    private static volatile boolean stepQueued;
    /** Game thread: why the queue is off for the current capped step ("" = on), logged when it changes. */
    private static String queueOffReason = null;
+   /** Game thread: +1 each time the queue turns on (a world loaded, a menu closed); the render thread restarts a low cap's D on it. */
+   private static volatile int queueOnCount;
 
    // --- render thread -------------------------------------------------------------------------
    /** The configured mode after the GL checks (AUTO stays AUTO); {@link #effectiveMode()} resolves AUTO per frame. */
@@ -337,6 +339,9 @@ public final class Pacing {
       }
       if (!why.equals(queueOffReason)) {
          queueOffReason = why;
+         if (why.isEmpty()) {
+            queueTurnedOn(); // frameQueueLowCapCalmMs: the render thread restarts a low cap's D from its floor
+         }
          Log.info(why.isEmpty() ? "frame queue state: on (capped world)" : "frame queue state: off (" + why + "), presentPacing applies");
       }
       return why.isEmpty();
@@ -627,31 +632,9 @@ public final class Pacing {
          qBefore[qs] = now;
          qGpuPending[qs] = true;
       } else {
-         addQueueSample(lag);
+         addQueueSample(lag, now);
       }
-      if (qCount > 0 && (++qSince >= 15 || qWantNs == 0L || Config.FRAME_QUEUE_SLEW_US > 0)) { // with frameQueueSlewUs every frame (the slew smooths it; ~3 us for the sort)
-         qSince = 0;
-         System.arraycopy(qWin, 0, qSorted, 0, qCount);
-         Arrays.sort(qSorted, 0, qCount);
-         long d = qSorted[Math.min(qCount - 1, qCount * Config.FRAME_QUEUE_PCT / 100)] + Config.FRAME_QUEUE_MARGIN_US * 1000L;
-         long lo = interval * queueMinPct(interval) / 100L;
-         long hi = interval * Config.FRAME_QUEUE_MAX_PCT / 100L;
-         d = Math.max(lo, Math.min(hi, d));
-         if (Config.FRAME_QUEUE_DECAY_US_PER_S > 0 && qWantNs > 0L) {
-            // frameQueueDecayUsPerS: D falls at most this fast after a burst
-            long fall = Config.FRAME_QUEUE_DECAY_US_PER_S * Math.max(0L, now - qWantAtNs) / 1_000_000L;
-            d = Math.max(d, qWantNs - fall);
-         }
-         qWantNs = d;
-         qWantAtNs = now;
-      }
-      if (Config.FRAME_QUEUE_SLEW_US > 0 && qTargetNs > 0L) {
-         // frameQueueSlewUs: D moves towards the new value a step per frame, so no present interval stretches by a whole jump
-         long step = Config.FRAME_QUEUE_SLEW_US * 1000L;
-         qTargetNs = qWantNs > qTargetNs ? Math.min(qWantNs, qTargetNs + step) : Math.max(qWantNs, qTargetNs - step);
-      } else {
-         qTargetNs = qWantNs;
-      }
+      queueD(now, interval);
       long target = frameSlotNs + qTargetNs;
       long latest = now + 3L * interval; // a bogus slot never parks the render thread for long
       if (target > latest) {
@@ -706,19 +689,123 @@ public final class Pacing {
    }
 
    /**
+    * frameQueue: D for this frame (qTargetNs, also returned): the {@code frameQueuePct} percentile of the window + margin,
+    * clamped to [floor, frameQueueMaxPct], falling at most at the decay rate and moving at most a slew step per frame.
+    *
+    * <p>At caps below frameQueueFixedMinFps (the adaptive queue, round 11) the rates are in percent of the cap interval
+    * (frameQueueLowCapDecayPct per second, frameQueueLowCapMarginPct on top of the margin; the slew stays frameQueueSlewUs)
+    * and, with frameQueueLowCapCalmMs, D restarts from its floor whenever the queue turns on (world loaded, menu or pause menu
+    * closed) or the cap changes: the window is emptied and takes no samples until the frames have been ready within one cap
+    * interval of their slot for that long (at most {@link #Q_CALM_MAX_NS}). Round 11 learned from the world's start bursts
+    * instead: D sat at the 260 % ceiling and fell 1 ms a second, 20 s at a 60 fps cap and ~67 s at 30 (D 56-86 ms on the
+    * whole Louisville route). At caps of frameQueueFixedMinFps or more the code path is the one of before (fixed D).
+    */
+   static long queueD(long now, long interval) {
+      boolean low = lowCap(interval);
+      int on = queueOnCount;
+      if (on != qSeenOn || Math.abs(interval - qIntervalNs) > qIntervalNs / 100L) {
+         qSeenOn = on;
+         qIntervalNs = interval;
+         if (low && Config.FRAME_QUEUE_LOW_CAP_CALM_MS > 0) {
+            queueRestart(now, interval);
+         } else {
+            qWarm = false; // a restart's wait ends with its low cap
+         }
+      }
+      if (qCount > 0 && (++qSince >= 15 || qWantNs == 0L || Config.FRAME_QUEUE_SLEW_US > 0)) { // with frameQueueSlewUs every frame (the slew smooths it; ~3 us for the sort)
+         qSince = 0;
+         System.arraycopy(qWin, 0, qSorted, 0, qCount);
+         Arrays.sort(qSorted, 0, qCount);
+         long d = qSorted[Math.min(qCount - 1, qCount * Config.FRAME_QUEUE_PCT / 100)] + Config.FRAME_QUEUE_MARGIN_US * 1000L;
+         if (low) {
+            d += interval * Config.FRAME_QUEUE_LOW_CAP_MARGIN_PCT / 100L; // frameQueueLowCapMarginPct (20 %: 3.3 ms at 60 fps)
+         }
+         long lo = interval * queueMinPct(interval) / 100L;
+         long hi = interval * Config.FRAME_QUEUE_MAX_PCT / 100L;
+         d = Math.max(lo, Math.min(hi, d));
+         if (low && Config.FRAME_QUEUE_LOW_CAP_DECAY_PCT > 0 && qWantNs > 0L) {
+            // frameQueueLowCapDecayPct: D falls at most this share of the cap interval a second (25 %: 4.2 ms/s at 60 fps, 8.3 at 30)
+            long fall = interval * Config.FRAME_QUEUE_LOW_CAP_DECAY_PCT / 100L * Math.min(100_000_000_000L, Math.max(0L, now - qWantAtNs)) / 1_000_000_000L;
+            d = Math.max(d, qWantNs - fall);
+         } else if (Config.FRAME_QUEUE_DECAY_US_PER_S > 0 && qWantNs > 0L) {
+            // frameQueueDecayUsPerS: D falls at most this fast after a burst
+            long fall = Config.FRAME_QUEUE_DECAY_US_PER_S * Math.max(0L, now - qWantAtNs) / 1_000_000L;
+            d = Math.max(d, qWantNs - fall);
+         }
+         qWantNs = d;
+         qWantAtNs = now;
+      }
+      if (Config.FRAME_QUEUE_SLEW_US > 0 && qTargetNs > 0L) {
+         // frameQueueSlewUs: D moves towards the new value a step per frame, so no present interval stretches by a whole jump
+         long step = Config.FRAME_QUEUE_SLEW_US * 1000L;
+         qTargetNs = qWantNs > qTargetNs ? Math.min(qWantNs, qTargetNs + step) : Math.max(qWantNs, qTargetNs - step);
+      } else {
+         qTargetNs = qWantNs;
+      }
+      return qTargetNs;
+   }
+
+   /** frameQueueLowCapCalmMs: the longest a low cap's restart waits for calm frames before D learns from whatever comes. */
+   static final long Q_CALM_MAX_NS = 10_000_000_000L;
+   /** frameQueue: the interval and queue-on count queueD last saw (a change at a low cap restarts D). */
+   private static long qIntervalNs;
+   private static int qSeenOn;
+   /** frameQueueLowCapCalmMs: D waits at its floor for calm frames; since when, and since when the frames are calm. */
+   private static boolean qWarm;
+   private static long qWarmStartNs, qCalmFromNs;
+
+   /** frameQueueLowCapCalmMs, render thread: a low cap's D starts again from its floor with an empty window. */
+   private static void queueRestart(long now, long interval) {
+      qCount = qPos = qSince = 0;
+      long lo = interval * queueMinPct(interval) / 100L;
+      qWantNs = lo;
+      qWantAtNs = now;
+      if (qTargetNs == 0L) {
+         qTargetNs = lo; // else the slew takes D there (a cap changed in game)
+      }
+      qWarm = true;
+      qWarmStartNs = qCalmFromNs = now;
+   }
+
+   /** Game thread: the frame queue turned on (queueAllowed); the next queueD restarts a low cap's D. */
+   static void queueTurnedOn() {
+      queueOnCount++;
+   }
+
+   /** frameQueueLowCapCalmMs: D waits at its floor for calm frames (PacingQueueFloorTest). */
+   static boolean queueCalmWait() {
+      return qWarm;
+   }
+
+   /** frameQueue: the cap interval is below frameQueueFixedMinFps (the adaptive queue with the low-cap rules). */
+   static boolean lowCap(long intervalNs) {
+      return Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 && intervalNs > 0L && Math.round(1.0e9 / intervalNs) < Config.FRAME_QUEUE_FIXED_MIN_FPS;
+   }
+
+   /**
     * frameQueue: D's floor in percent of the cap interval. frameQueueMinPct (the fixed D, 260 %) at caps of
     * frameQueueFixedMinFps (100) or more; below it frameQueueLowCapMinPct (60 %, the adaptive queue): 2.6 intervals are
     * 43 ms at a 60 fps cap and 87 ms at 30 (maintainer 2026-10-15).
     */
    static int queueMinPct(long intervalNs) {
-      if (Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 && intervalNs > 0L && Math.round(1.0e9 / intervalNs) < Config.FRAME_QUEUE_FIXED_MIN_FPS) {
-         return Config.FRAME_QUEUE_LOW_CAP_MIN_PCT;
-      }
-      return Config.FRAME_QUEUE_MIN_PCT;
+      return lowCap(intervalNs) ? Config.FRAME_QUEUE_LOW_CAP_MIN_PCT : Config.FRAME_QUEUE_MIN_PCT;
    }
 
-   /** frameQueue: one slot -> ready sample into the percentile window. */
-   private static void addQueueSample(long lag) {
+   /** frameQueue: one slot -> ready sample into the percentile window (now: the render thread's clock, for the calm wait). */
+   static void addQueueSample(long lag, long now) {
+      if (qWarm) {
+         // frameQueueLowCapCalmMs: the restart's samples count only once the frames have been ready within one interval for that long
+         if (lag > qIntervalNs || lag <= 0L) {
+            qCalmFromNs = now;
+         }
+         boolean calm = now - qCalmFromNs >= Config.FRAME_QUEUE_LOW_CAP_CALM_MS * 1_000_000L;
+         if (!calm && now - qWarmStartNs < Q_CALM_MAX_NS) {
+            return;
+         }
+         qWarm = false;
+         Log.info(String.format(Locale.ROOT, "frame queue: low cap %d fps, D learns after %.1f s at its floor %.2f ms (%s)", Math.round(1.0e9 / Math.max(1L, qIntervalNs)),
+               (now - qWarmStartNs) / 1e9, qWantNs / 1e6, calm ? "frames ready within one interval for " + Config.FRAME_QUEUE_LOW_CAP_CALM_MS + " ms" : "no calm stretch in " + Q_CALM_MAX_NS / 1_000_000_000L + " s"));
+      }
       if (lag > 0L && lag < 250_000_000L) {
          qWin[qPos] = lag;
          qPos = (qPos + 1) % Q_WINDOW;
@@ -857,7 +944,10 @@ public final class Pacing {
          if (QUEUE) {
             Log.info("pacing: frameQueue on (p" + Config.FRAME_QUEUE_PCT + " + " + Config.FRAME_QUEUE_MARGIN_US + " us, D " + Config.FRAME_QUEUE_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT
                + " % of the cap interval" + (Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 ? " at caps of " + Config.FRAME_QUEUE_FIXED_MIN_FPS + " fps or more, " + Config.FRAME_QUEUE_LOW_CAP_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT + " % below" : "") + ", limiter catch-up " + CATCH_UP + " slots, GPU samples " + (Config.FRAME_QUEUE_GPU && timestamps) + ", slew "
-               + Config.FRAME_QUEUE_SLEW_US + " us/frame, decay " + Config.FRAME_QUEUE_DECAY_US_PER_S + " us/s); presentPacing applies uncapped only");
+               + Config.FRAME_QUEUE_SLEW_US + " us/frame, decay " + Config.FRAME_QUEUE_DECAY_US_PER_S + " us/s"
+               + (Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 ? "; below " + Config.FRAME_QUEUE_FIXED_MIN_FPS + " fps margin +" + Config.FRAME_QUEUE_LOW_CAP_MARGIN_PCT
+                  + " %, decay " + Config.FRAME_QUEUE_LOW_CAP_DECAY_PCT + " %/s of the interval, restart from the floor after "
+                  + Config.FRAME_QUEUE_LOW_CAP_CALM_MS + " ms of calm frames" : "") + "); presentPacing applies uncapped only");
          }
          if (MODE != OFF) {
             Log.info("pacing: presentPacing=" + Config.PRESENT_PACING + " -> " + NAMES[mode] + (mode == AUTO ? " (" + NAMES[autoMode] + (autoMode == GPU ? ")" : " while VRR is active)") : "")
@@ -920,7 +1010,7 @@ public final class Pacing {
          queryFrame[i] = -1L;
          if (qGpuPending[i]) { // frameQueueGpu: the frame's slot -> ready time plus its GPU time past the end of its submit
             qGpuPending[i] = false;
-            addQueueSample(qCpuLag[i] + Math.max(0L, done - qBefore[i]));
+            addQueueSample(qCpuLag[i] + Math.max(0L, done - qBefore[i]), now);
             lastGpuPastNs = Math.max(0L, done - qBefore[i]); // bakeBudgetGpu (f8-resid): the GPU's time past the end of the latest timed frame's submit
          }
          if (effectiveMode() == GPU && querySim[i] != 0L) {
