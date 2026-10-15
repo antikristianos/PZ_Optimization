@@ -11,7 +11,7 @@ public final class ZombAb {
    }
 
    private static final String[] NAMES = {"zombNoop", "separateAsync", "postupdateMoveStream", "entityUpdateStream", "separateEdgeCache",
-      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "zombieLateApply", "zombieDrawLate", "randPerWorker", "animalLosSkip", "entityUpdateAnimalsInline"};
+      "postupdateNoopSkip", "postupdateFuse", "luaSilentSkip", "frameThreadsAlt", "entityUpdateAlerted", "postupdateClean", "postupdateEligibleOnWorker", "postupdateVehicleOnWorker", "zombieLateApply", "zombieDrawLate", "randPerWorker", "animalLosSkip", "entityUpdateAnimalsInline", "coreFrameCpus"};
 
    public static final long NOOP = 1L; // zombNoop: no code reads it (an alternation of it turns the timers on, both halves alike)
    public static final long SEP_ASYNC = 1L << 1; // separateAsync
@@ -31,6 +31,7 @@ public final class ZombAb {
    public static final long RAND_WORKER = 1L << 15; // randPerWorker (f8-zomb3)
    public static final long ANIMAL_LOS_SKIP = 1L << 16; // animalLosSkip (f8-zomb3)
    public static final long ANIMALS_INLINE = 1L << 17; // entityUpdateAnimalsInline (f8-zomb3)
+   public static final long CORE_FRAME = 1L << 18; // coreFrameCpus (f8-flip): the "on" half puts the frame workers on coreFrameCpus, the "off" half on the background class
 
    /** GtAb.parse: a name of this pass shares GtAb bit 40 (timers on); 0 for any other name. */
    static long bit(String name) {
@@ -59,6 +60,11 @@ public final class ZombAb {
 
    private static final long MASK1 = Config.DEV_GT_ALTERNATE > 0 ? parse(Config.DEV_GT_ALTERNATE_KEYS) : 0L;
    private static final long MASK2 = Config.DEV_GT_ALTERNATE2 > 0 ? parse(Config.DEV_GT_ALTERNATE_KEYS2) : 0L;
+
+   /** f8-flip: is {@code bit} listed in either alternation group (its caller then follows {@link #on} per frame). */
+   public static boolean listed(long bit) {
+      return ((MASK1 | MASK2) & bit) != 0L;
+   }
 
    /** False in the off half of the alternation group a listed key belongs to: the caller takes its old path this frame. */
    public static boolean on(long bit) {

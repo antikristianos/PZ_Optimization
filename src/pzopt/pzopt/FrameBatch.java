@@ -37,6 +37,7 @@ public final class FrameBatch {
       int index; // frameThreadsAlt: this worker's number (a batch uses workers 0..limit-1) // pzopt.Tl: this worker's thread-local values (zombie redesign, f8-zomb2)
       public java.util.Random rng; // randPerWorker (f8-zomb3): this worker's own generator (pzopt.WorkerRand)
       public boolean bgTask; // zombieDrawLate (f8-zomb3): this worker is running a background-lane task
+      public int coreGen; // coreFrameCpus alternation (f8-flip): the placement generation this worker last applied
       public Object zCurrent; // entityUpdateParallel (zombie redesign, f8-zomb2): the entity this worker's flight task updates (UpdateBatch.CURRENT without the ThreadLocal lookup)
 
       Worker(Runnable r, String name) {
@@ -667,6 +668,7 @@ public final class FrameBatch {
          }
          if (generation != seen) {
             seen = generation;
+            CorePlacement.frameWorker(self); // f8-flip: coreFrameCpus alternation
             Batch batch = current;
             if (batch != null && self.index < batch.limit) {
                batch.work();

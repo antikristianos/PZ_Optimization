@@ -250,7 +250,7 @@ local SECTIONS = {
             { key = "animBonesParallel", label = "Zombie animation bone math on other cores",
               tip = "After the object update loop the zombies' animation blending (bone, twist, model and skin matrices, 9 % of the game thread in a horde) runs on worker threads and is joined before rendering; off, it runs inline like stock." },
             { key = "frameThreads", label = "Worker threads for the zombie batches",
-              choices = { "2", "4", "8", "15" }, tip = "Threads of the per-frame zombie batches (bone math, transition evaluation, lighting reads; the game thread joins in); more than cores - 1 is clamped." },
+              choices = { "2", "4", "8", "11", "15" }, tip = "Threads of the per-frame zombie batches (bone math, transition evaluation, lighting reads; the game thread joins in); more than cores - 1 is clamped. Default 8, or on a CPU with fast and efficient cores and more than nine cores one per core besides the game thread's, at most 11 (a Ryzen AI 9 HX 370 handheld: 11 ran a horde frame about 5 % faster than 8)." },
             { key = "actionEvalParallel", label = "Zombie decision rules evaluated on other cores",
               tip = "Each zombie's action-state transition rules (dozens of variable tests per zombie per frame, 7-10 % of the game thread in a horde) are evaluated on worker threads after the object loop; the state changes, the animator and the model update then run on the game thread in the stock order. Rules that call Lua or a zombie mid-grapple stay on the game thread." },
             { key = "animatorParallel", label = "Zombie animators on other cores",

@@ -666,7 +666,7 @@ public final class Config {
    public static final boolean PLAYER_LOS_NATIVE = bool("playerLosNative", false); // experiment: the LOS arithmetic (distances, close count, branch per object) in C++ over arrays Java packs, one FFM call per player per frame (pzopt.NativeLos, natives/libpzopt_los64.so built with PZOPT_NATIVE=1); off = the Java loop
    public static final String PLAYER_LOS_NATIVE_LIB = string("playerLosNativeLib", ""); // experiment: absolute path of libpzopt_los64.so when it is not under the game dir's natives/ (build/native/ of the checkout survives other sessions' builds; build/classes does not)
    public static final boolean ANIM_BONES_PARALLEL = bool("animBonesParallel", true); // the zombies' animation bone math (blend, twist, model and skin matrices) runs on worker threads after the postupdate loop (pzopt.AnimBatch)
-   public static final int ANIM_BONES_THREADS = Math.max(1, integer("animBonesThreads", 8)); // (2026-09-22: the old name of frameThreads, read as its default)
+   public static final int ANIM_BONES_THREADS = Math.max(1, integer("animBonesThreads", CpuTopology.frameThreadsDefault())); // (2026-09-22: the old name of frameThreads, read as its default). f8-flip (2026-10-15): the default is 8, or on a hybrid CPU with more than nine physical cores one per physical core besides the game thread's, at most 11 (the flip: 11 workers ran the Louisville frame 0.64 / 0.75 ms faster than 8 in two in-run A/Bs, 16 no better than 11; pzopt.CpuTopology)
    public static final int FRAME_THREADS = Math.max(1, integer("frameThreads", ANIM_BONES_THREADS)); // worker threads of the per-frame zombie batches (bone math, action-context transitions; pzopt.FrameBatch; the game thread joins in); clamped to cores - 1
    public static final boolean ANIM_BATCH_ASYNC = bool("animBatchAsync", true); // the zombies' bone batch (animBonesParallel) runs on the frame workers while the game thread carries on with the frame's logic; joined at IsoWorld.FinishAnimation (the game's own animation join point, before the render phase) or by the next frame batch (pzopt.AnimBatch, pzopt.FrameBatch)
    public static final boolean ANIMATOR_PARALLEL = bool("animatorParallel", true); // the zombies' animator, move deltas and model update (track tick) run on the frame workers after the transition evaluation, anim events captured and dispatched on the game thread in order; a zombie whose animator fires an event, or whose anim states read a side-effecting variable callback, finishes on the game thread (pzopt.AnimParallel; IsoGameCharacter, IsoZombie, AnimationTrack, AnimationMultiTrack overrides)
@@ -1213,6 +1213,17 @@ public final class Config {
    public static final String CORE_BACKGROUND_CPUS = string("coreBackgroundCpus", "");
    /** corePlacement: the CPUs the game / render / GL threads use when they are on the fast class (a list; empty = the fast class). */
    public static final String CORE_CRITICAL_CPUS = string("coreCriticalCpus", "");
+   /**
+    * corePlacement (f8-flip, 2026-10-15): the CPUs of the frame workers ({@code pzopt-frame-N}, the zombie batches) in a world, a
+    * list like "1-3,13-15"; empty = the background class (the efficient cores, every core while frames miss the cap). On the
+    * flip the workers otherwise land on the Zen 5c cluster (2.8 GHz, the other L3) while the game thread that waits for them
+    * runs on Zen 5. Only where threads run: no result changes.
+    */
+   public static final String CORE_FRAME_CPUS = string("coreFrameCpus", "");
+   /** corePlacement (f8-flip): the CPUs of the game thread alone while the critical class is on the fast cores (empty = the critical class's). */
+   public static final String CORE_GAME_CPUS = string("coreGameCpus", "");
+   /** corePlacement (f8-flip): with coreGameCpus, no other thread (the GC pause class excepted) runs on the game thread's CPUs or their SMT siblings. */
+   public static final boolean CORE_GAME_EXCLUSIVE = bool("coreGameExclusive", false);
    /** corePlacement=auto: the game step's p90 (share of the frame interval) above which the game and render threads move to the fast cores. */
    public static final int CORE_PROMOTE_PCT = Math.max(30, Math.min(100, integer("corePromotePct", 85)));
    /** corePlacement=auto: back to the efficient cores when the work, scaled by the measured fast/slow speed ratio, fits this share of the interval. */

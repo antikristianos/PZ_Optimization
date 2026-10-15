@@ -48,6 +48,15 @@ public final class CorePlacement {
    private static final boolean MAC = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 
    private static final int CLASS_CRITICAL = 0, CLASS_PAUSE = 1, CLASS_BACKGROUND = 2;
+   private static final int CLASS_GAME = 3, CLASS_FRAME = 4; // coreGameCpus / coreFrameCpus (f8-flip): only used when those keys are set
+
+   // f8-flip: coreFrameCpus (the frame workers' own mask), coreGameCpus (the game thread's own mask) and coreGameExclusive
+   // (exclMask = the game CPUs and their SMT siblings, removed from every other class's mask); null = not set
+   private static long[] frameMask, gameMask, exclMask;
+   /** coreFrameCpus listed in a devGtAlternate group: the frame workers alternate between coreFrameCpus and the background class. */
+   private static final boolean FRAME_ALT = !Config.CORE_FRAME_CPUS.isBlank() && ZombAb.listed(ZombAb.CORE_FRAME);
+   private static volatile boolean frameOn = true; // the alternation's half (game thread writes, at a flip)
+   private static volatile int frameGen; // bumped at each flip; a frame worker re-applies its own mask when it sees a new one
 
    /** CPU masks (bit per logical CPU, up to 1024). */
    private static long[] fastMask, slowMask, allMask, backgroundMask, criticalFastMask;
@@ -123,6 +132,13 @@ public final class CorePlacement {
       stepCount = n + 1;
       loading = !inWorld;
       uncapped = isUncapped;
+      if (FRAME_ALT) { // f8-flip: coreFrameCpus within-run A/B, flipped with the alternation's phase
+         boolean on = ZombAb.on(ZombAb.CORE_FRAME);
+         if (on != frameOn) {
+            frameOn = on;
+            frameGen++;
+         }
+      }
       budgetNs = 1_000_000_000L / Math.max(1, capFps);
    }
 
@@ -317,6 +333,59 @@ public final class CorePlacement {
          long[] m = parseMask(Config.CORE_BACKGROUND_CPUS, words, rank, max);
          backgroundMask = m;
          slowList = slowList + " (background on " + Config.CORE_BACKGROUND_CPUS + ")";
+      }
+      if (!Config.CORE_FRAME_CPUS.isBlank()) { // f8-flip
+         frameMask = parseMask(Config.CORE_FRAME_CPUS, words, rank, max);
+         slowList = slowList + " (frame workers on " + Config.CORE_FRAME_CPUS + (FRAME_ALT ? ", alternating" : "") + ")";
+      }
+      if (!Config.CORE_GAME_CPUS.isBlank()) { // f8-flip
+         gameMask = parseMask(Config.CORE_GAME_CPUS, words, rank, max);
+         fastList = fastList + " (game thread on " + Config.CORE_GAME_CPUS + ")";
+         if (Config.CORE_GAME_EXCLUSIVE) {
+            long[] x = gameMask.clone();
+            for (int i = 0; i <= max; i++) {
+               if ((gameMask[i >> 6] & 1L << (i & 63)) != 0L) {
+                  for (int sib : readList("/sys/devices/system/cpu/cpu" + i + "/topology/thread_siblings_list")) {
+                     if (sib <= max) {
+                        x[sib >> 6] |= 1L << (sib & 63);
+                     }
+                  }
+               }
+            }
+            exclMask = x;
+            fastList = fastList + " (exclusive with its siblings)";
+         }
+      }
+   }
+
+   /** f8-flip: {@code m} without the game thread's reserved CPUs (coreGameExclusive), unless that leaves nothing. */
+   private static long[] excl(long[] m) {
+      long[] x = exclMask;
+      if (x == null || m == null) {
+         return m;
+      }
+      long[] r = new long[m.length];
+      boolean any = false;
+      for (int i = 0; i < m.length; i++) {
+         r[i] = m[i] & ~x[i];
+         any |= r[i] != 0L;
+      }
+      return any ? r : m;
+   }
+
+   /**
+    * f8-flip: a frame worker, before it runs a batch: re-applies its own CPU mask after an alternation flip of coreFrameCpus (the
+    * placement thread's 0.5 s scan would land up to two flips late). One volatile read per wake otherwise.
+    */
+   static void frameWorker(FrameBatch.Worker self) {
+      if (!FRAME_ALT || self.coreGen == frameGen || !active() || loading) {
+         return;
+      }
+      self.coreGen = frameGen;
+      try {
+         setAffinity(0, maskFor(CLASS_FRAME)); // tid 0 = the calling thread
+      } catch (Throwable t) {
+         // the scan applies it within half a second
       }
    }
 
@@ -648,8 +717,14 @@ public final class CorePlacement {
    }
 
    private static int classify(int tid, String comm) {
+      if (tid == gameTid && gameMask != null) {
+         return CLASS_GAME; // f8-flip: coreGameCpus
+      }
       if (tid == gameTid || tid == renderTid) {
          return CLASS_CRITICAL;
+      }
+      if (frameMask != null && comm.startsWith("pzopt-frame-")) {
+         return CLASS_FRAME; // f8-flip: coreFrameCpus
       }
       // Mesa's threads that carry the render thread's GL commands: <process>:gl0 (glthread), :gdrv0, :cs0
       int colon = comm.lastIndexOf(':');
@@ -670,9 +745,11 @@ public final class CorePlacement {
          return allMask;
       }
       return switch (cls) {
-         case CLASS_CRITICAL -> criticalFast ? criticalFastMask : slowMask;
+         case CLASS_GAME -> criticalFast ? gameMask : slowMask; // f8-flip: coreGameCpus
+         case CLASS_CRITICAL -> excl(criticalFast ? criticalFastMask : slowMask);
          case CLASS_PAUSE -> allMask;
-         default -> wide ? allMask : backgroundMask;
+         case CLASS_FRAME -> excl(!FRAME_ALT || frameOn ? frameMask : wide ? allMask : backgroundMask); // f8-flip: coreFrameCpus
+         default -> excl(wide ? allMask : backgroundMask);
       };
    }
 
