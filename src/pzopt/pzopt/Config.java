@@ -584,6 +584,16 @@ public final class Config {
    public static final boolean GC_SLACK_TARGET_AFTER = bool("gcSlackTargetAfter", true); // gcSlack: eden's next trigger point = the Eden pool's committed size right after a collection (G1's new target), not the usage before the last ones
    public static final boolean GC_SLACK_UNINIT = bool("gcSlackUninit", true); // gcSlack: the filler arrays uninitialised (jdk.internal.misc.Unsafe, exported by the game's launcher), no zeroing
    public static final boolean GC_SLACK_ALTERNATE = bool("gcSlackAlternate", false); // dev, gcSlack: every other collection cycle stays natural (within-run A/B)
+   /**
+    * gcSlack under frameQueue (f8-pace2 2026-10-15): where the due young collection runs, from its own thread
+    * (pzopt.GcSlack.queueLoop) instead of the game thread's slack, where it overlapped the hold's end and delayed the swap (8 of
+    * 28 pauses in run pace2-q1). off | swap (right after the render thread's next held swap) | hold (inside a hold that has room
+    * for the filler and the pause before its swap: the render thread only waits there, and the game step it delays has its D) |
+    * slack (the game thread's slack as before, but only while the render thread's hold has that room).
+    */
+   public static final String GC_SLACK_QUEUE = string("gcSlackQueue", "off");
+   /** gcSlackQueue=swap: how long after the held swap the filler may run before it stops short of the collection (us). */
+   public static final int GC_SLACK_QUEUE_FILL_US = Math.max(100, integer("gcSlackQueueFillUs", 800));
    public static final boolean GC_SLACK_FIT = bool("gcSlackFit", false); // gcSlack v2 (tail6 2026-10-14, needs frameQueue): a scheduled collection runs only where the filler plus the expected pause (p75 of the last 8 measured) delay no swap of the frame queue and drop no limiter slot (pzopt.Pacing.planPause): at a step start, or in the slack right after the render thread's swap (the game thread waits for it); otherwise it waits for a later step until eden is about to run out (urgent). GtAb key gcSlackFit (bit 59) alternates it within a run
    public static final int GC_SLACK_FIT_FALLBACK_MB = Math.max(0, integer("gcSlackFitFallbackMb", 0)); // gcSlackFit: with this little eden left (MB) a collection that found no fitting place takes the slack rule (gcSlack's v1) instead of waiting for a natural, mid-step one (0 = never)
    public static final boolean GC_SLACK_FIT_START = bool("gcSlackFitStart", true); // gcSlackFit: also place collections at a step's start (before its work: the step and the ones after it start late; false = only where the game thread idles)
@@ -1093,6 +1103,33 @@ public final class Config {
    public static final int FRAME_QUEUE_MAX_PCT = Math.max(50, Math.min(400, integer("frameQueueMaxPct", 300)));
    /** frameQueue: the shortest D in percent of the cap interval. */
    public static final int FRAME_QUEUE_MIN_PCT = Math.max(0, Math.min(400, integer("frameQueueMinPct", 60)));
+   /**
+    * frameQueue (f8-pace2, 2026-10-15; off by default): D's samples include the frame's GPU completion. The swap of an on-time
+    * frame goes at its slot + D, but the flip waits for the GPU: on the Louisville cap with the zombie LOD 8 % of the frames were
+    * still drawing at their swap call (GPU done 0.7-10 ms after it), so 111 of the 168 on-screen intervals over 9 ms had their
+    * swap call on the cadence (run integ6-lod2, present.txt), and the overlay / MangoHud frame time (swap return) blocked with
+    * them. A sample is then the frame's slot -> ready time plus how long the GPU took past the end of the render submit (GL
+    * timestamp, read a few frames later); without GL timestamps the CPU sample stays.
+    */
+   public static final boolean FRAME_QUEUE_GPU = bool("frameQueueGpu", false);
+   /**
+    * frameQueue: the most D may change from one frame to the next, in us (0 = D jumps to each new percentile). A jump of D
+    * makes one present interval longer by the jump: 22 of the 63 swap-call intervals over 9 ms of run integ6-lod2 were D rising
+    * 1-4 ms at a 15-frame recomputation. 500 keeps every interval within 8.33 +- 0.5 ms while D moves. With a slew the
+    * percentile is also recomputed every frame (else every 15), so D starts rising the frame a burst's first samples arrive.
+    */
+   public static final int FRAME_QUEUE_SLEW_US = Math.max(0, integer("frameQueueSlewUs", 0));
+   /**
+    * frameQueue: how fast D may fall, in us per second (0 = D follows the 240-frame percentile down at once). The percentile
+    * window forgets a burst in 2 s, so D fell to 7-10 ms in calm stretches and the next slow step was late (27 of the 63
+    * late swap calls of integ6-lod2 were game steps past a low D).
+    */
+   public static final int FRAME_QUEUE_DECAY_US_PER_S = Math.max(0, integer("frameQueueDecayUsPerS", 0));
+   /**
+    * frameQueue: how long before its swap target the holding render thread stops parking and spins (us; 1000 = the old hold,
+    * Pacing.waitUntil). Any other value also sets the render thread's timer slack to 1 ns, so a short spin still wakes on time.
+    */
+   public static final int FRAME_QUEUE_SPIN_US = Math.max(0, Math.min(5000, integer("frameQueueSpinUs", 1000)));
    /**
     * Frame limiter: how many missed slots of the cap grid the next steps make up (they start back to back until the grid is
     * reached again). 0 = stock (`accumulator %= interval`: a step longer than two intervals drops the whole intervals it

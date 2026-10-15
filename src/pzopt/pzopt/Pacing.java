@@ -244,6 +244,73 @@ public final class Pacing {
 
    private static long planAfterAcquire, planSwapAt;
 
+   /** gcSlackQueue=slack, game thread: the swap target of the frame the render thread holds now (submission done), else 0. */
+   static long holdTargetNs() {
+      long a = rtAcquireNs;
+      long t = rtTargetNs;
+      return a != 0L && rtSubmitDoneNsAny >= a && rtSwapRetNs < a ? t : 0L;
+   }
+
+   /** frameQueue is holding frames now (capped, D learned). */
+   static boolean queueActive() {
+      return QUEUE && capIntervalNs > 0L && qTargetNs > 0L;
+   }
+
+   /**
+    * gcSlackAfterSwap, its own thread: waits until the render thread has swapped a frame it held to its slot + D (on time), so
+    * whatever runs next has the render thread's whole interval; at most {@code maxWaitNs}. True when such a swap was seen.
+    */
+   static boolean waitHeldSwap(long maxWaitNs) {
+      long end = System.nanoTime() + maxWaitNs;
+      while (true) {
+         long now = System.nanoTime();
+         if (now > end) {
+            return false;
+         }
+         long a = rtAcquireNs;
+         long t = rtTargetNs;
+         if (a != 0L && t > now + 150_000L && rtSwapRetNs < a && rtSubmitDoneNsAny >= a) {
+            // the frame acquired at a has finished its submission and is held until t: wake just before t, then spin to its swap
+            long w = t - 250_000L - now;
+            if (w > 20_000L) {
+               LockSupport.parkNanos(w);
+            }
+            long limit = t + 3_000_000L;
+            while (rtSwapRetNs < a) {
+               if (System.nanoTime() > limit) {
+                  return false;
+               }
+               Thread.onSpinWait();
+            }
+            return true;
+         }
+         LockSupport.parkNanos(300_000L);
+      }
+   }
+
+   /**
+    * gcSlackQueue=hold, its own thread: waits until the render thread holds a frame (submission done, swap not yet) whose swap
+    * target is at least {@code minLeftNs} away; returns that target, or -1 after {@code maxWaitNs}.
+    */
+   static long waitHoldStart(long minLeftNs, long maxWaitNs) {
+      long end = System.nanoTime() + maxWaitNs;
+      while (true) {
+         long now = System.nanoTime();
+         if (now > end) {
+            return -1L;
+         }
+         long a = rtAcquireNs;
+         long t = rtTargetNs;
+         if (a != 0L && rtSubmitDoneNsAny >= a && rtSwapRetNs < a && t - now >= minLeftNs) {
+            return t;
+         }
+         LockSupport.parkNanos(100_000L);
+      }
+   }
+
+   /** Render thread: when its current frame's submission ended (beforeSwap), for gcSlackQueue. */
+   private static volatile long rtSubmitDoneNsAny;
+
    static long submitEstUs() {
       return rtSubmitEstNs / 1000L;
    }
@@ -359,6 +426,9 @@ public final class Pacing {
          return;
       }
       lastSubmitNs = System.nanoTime() - acquireNs;
+      if (GcSlack.AFTER_SWAP) {
+         rtSubmitDoneNsAny = acquireNs + lastSubmitNs; // gcSlackAfterSwap: the frame is now only held
+      }
       if (Config.GC_SLACK_FIT) { // gcSlackFit: the render thread's submission is done, its cost learned
          rtSubmitDoneNs = acquireNs + lastSubmitNs;
          double s = lastSubmitNs;
@@ -435,6 +505,11 @@ public final class Pacing {
    private static final long[] qSorted = new long[Q_WINDOW];
    private static int qCount, qPos, qSince;
    private static long qTargetNs;
+   /** frameQueue: the D the percentile (and the decay) asks for; qTargetNs follows it at frameQueueSlewUs per frame. */
+   private static long qWantNs, qWantAtNs;
+   /** frameQueueGpu: per query slot, the frame's CPU slot -> ready time and its beforeSwap time, until its GPU timestamp is read. */
+   private static final long[] qCpuLag = new long[QUERIES], qBefore = new long[QUERIES];
+   private static final boolean[] qGpuPending = new boolean[QUERIES];
    private static long qFrames, qHeld, qLate, qHoldNsSum, qTargetNsSum, qLastLogNs;
    private static BufferedWriter qLog;
    private static long qFlushNs;
@@ -454,19 +529,38 @@ public final class Pacing {
       GL11.glFlush(); // the frame's commands reach the GPU now: it is drawn during the hold
       long ready = framePushNs + (now - acquireNs);
       long lag = ready - frameSlotNs;
-      if (lag > 0L && lag < 250_000_000L) {
-         qWin[qPos] = lag;
-         qPos = (qPos + 1) % Q_WINDOW;
-         qCount = Math.min(Q_WINDOW, qCount + 1);
+      long f = frameNo - 1L;
+      int qs = (int)(f % QUERIES);
+      if (Config.FRAME_QUEUE_GPU && timestamps && queryFrame[qs] == f) {
+         // frameQueueGpu: the sample waits for this frame's GPU timestamp (collectQueries)
+         qCpuLag[qs] = lag;
+         qBefore[qs] = now;
+         qGpuPending[qs] = true;
+      } else {
+         addQueueSample(lag);
       }
-      if (qCount > 0 && (++qSince >= 15 || qTargetNs == 0L)) {
+      if (qCount > 0 && (++qSince >= 15 || qWantNs == 0L || Config.FRAME_QUEUE_SLEW_US > 0)) { // with frameQueueSlewUs every frame (the slew smooths it; ~3 us for the sort)
          qSince = 0;
          System.arraycopy(qWin, 0, qSorted, 0, qCount);
          Arrays.sort(qSorted, 0, qCount);
          long d = qSorted[Math.min(qCount - 1, qCount * Config.FRAME_QUEUE_PCT / 100)] + Config.FRAME_QUEUE_MARGIN_US * 1000L;
          long lo = interval * Config.FRAME_QUEUE_MIN_PCT / 100L;
          long hi = interval * Config.FRAME_QUEUE_MAX_PCT / 100L;
-         qTargetNs = Math.max(lo, Math.min(hi, d));
+         d = Math.max(lo, Math.min(hi, d));
+         if (Config.FRAME_QUEUE_DECAY_US_PER_S > 0 && qWantNs > 0L) {
+            // frameQueueDecayUsPerS: D falls at most this fast after a burst
+            long fall = Config.FRAME_QUEUE_DECAY_US_PER_S * Math.max(0L, now - qWantAtNs) / 1_000_000L;
+            d = Math.max(d, qWantNs - fall);
+         }
+         qWantNs = d;
+         qWantAtNs = now;
+      }
+      if (Config.FRAME_QUEUE_SLEW_US > 0 && qTargetNs > 0L) {
+         // frameQueueSlewUs: D moves towards the new value a step per frame, so no present interval stretches by a whole jump
+         long step = Config.FRAME_QUEUE_SLEW_US * 1000L;
+         qTargetNs = qWantNs > qTargetNs ? Math.min(qWantNs, qTargetNs + step) : Math.max(qWantNs, qTargetNs - step);
+      } else {
+         qTargetNs = qWantNs;
       }
       long target = frameSlotNs + qTargetNs;
       long latest = now + 3L * interval; // a bogus slot never parks the render thread for long
@@ -477,7 +571,11 @@ public final class Pacing {
       qFrames++;
       qTargetNsSum += qTargetNs;
       if (target > now) {
-         waitUntil(target);
+         if (Config.FRAME_QUEUE_SPIN_US != 1000) {
+            holdUntil(target); // frameQueueSpinUs: park (timer slack 1 ns) to the last frameQueueSpinUs, spin the rest
+         } else {
+            waitUntil(target);
+         }
          long after = System.nanoTime();
          waitNs = after - now;
          now = after;
@@ -500,6 +598,15 @@ public final class Pacing {
          catchUpSlots = droppedSlots = 0L;
       }
       return now;
+   }
+
+   /** frameQueue: one slot -> ready sample into the percentile window. */
+   private static void addQueueSample(long lag) {
+      if (lag > 0L && lag < 250_000_000L) {
+         qWin[qPos] = lag;
+         qPos = (qPos + 1) % Q_WINDOW;
+         qCount = Math.min(Q_WINDOW, qCount + 1);
+      }
    }
 
    /** pzopt-framequeue.out: sim_ns slot_ns push_ns lag_ns target_ns per frame (join with pzopt-pacing.out on sim_ns). */
@@ -627,7 +734,8 @@ public final class Pacing {
          }
          if (QUEUE) {
             Log.info("pacing: frameQueue on (p" + Config.FRAME_QUEUE_PCT + " + " + Config.FRAME_QUEUE_MARGIN_US + " us, D " + Config.FRAME_QUEUE_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT
-               + " % of the cap interval, limiter catch-up " + CATCH_UP + " slots); presentPacing applies uncapped only");
+               + " % of the cap interval, limiter catch-up " + CATCH_UP + " slots, GPU samples " + (Config.FRAME_QUEUE_GPU && timestamps) + ", slew "
+               + Config.FRAME_QUEUE_SLEW_US + " us/frame, decay " + Config.FRAME_QUEUE_DECAY_US_PER_S + " us/s); presentPacing applies uncapped only");
          }
          if (MODE != OFF) {
             Log.info("pacing: presentPacing=" + Config.PRESENT_PACING + " -> " + NAMES[mode] + (mode == AUTO ? " (" + NAMES[autoMode] + (autoMode == GPU ? ")" : " while VRR is active)") : "")
@@ -688,6 +796,10 @@ public final class Pacing {
             done = GL33.glGetQueryObjecti64(queryIds[i], GL15.GL_QUERY_RESULT) + gpuToCpuNs;
          }
          queryFrame[i] = -1L;
+         if (qGpuPending[i]) { // frameQueueGpu: the frame's slot -> ready time plus its GPU time past the end of its submit
+            qGpuPending[i] = false;
+            addQueueSample(qCpuLag[i] + Math.max(0L, done - qBefore[i]));
+         }
          if (effectiveMode() == GPU && querySim[i] != 0L) {
             addLag(done - querySim[i]);
          }
@@ -700,8 +812,8 @@ public final class Pacing {
 
    /** Render thread, after Display.update returned. */
    public static void afterSwap() {
-      if (Config.GC_SLACK_FIT) {
-         rtSwapRetNs = System.nanoTime(); // gcSlackFit: the render thread is free until its next acquire
+      if (Config.GC_SLACK_FIT || GcSlack.AFTER_SWAP) {
+         rtSwapRetNs = System.nanoTime(); // gcSlackFit / gcSlackAfterSwap: the render thread is free until its next acquire
       }
       if (!LOG) {
          return;
@@ -808,6 +920,32 @@ public final class Pacing {
          }
       } catch (Throwable t) {
          Log.warn("limiterSleep: no timer slack change (" + t + ")");
+      }
+   }
+
+   private static boolean rtSlackSet; // render thread only
+
+   /**
+    * frameQueue's hold with {@code frameQueueSpinUs}: the render thread's timer slack set to 1 ns once, then parks to that many us
+    * before the deadline and spins the rest. The 1 ms spin of {@link #waitUntil} keeps the render thread runnable for an eighth of
+    * every frame; 2-5 holds a run still ended 0.7-1.2 ms late without any safepoint (run pace2-sp1's safepoint log: GC only).
+    */
+   private static void holdUntil(long deadlineNs) {
+      if (!rtSlackSet) {
+         rtSlackSet = true;
+         timerSlack1ns();
+      }
+      long spin = Config.FRAME_QUEUE_SPIN_US * 1000L;
+      while (true) {
+         long left = deadlineNs - System.nanoTime();
+         if (left <= 0L) {
+            return;
+         }
+         if (left > spin + 20_000L) {
+            LockSupport.parkNanos(left - spin);
+         } else {
+            Thread.onSpinWait();
+         }
       }
    }
 

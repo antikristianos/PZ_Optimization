@@ -65,6 +65,10 @@ public final class GcSlack {
       @Override
       public boolean pending() {
          sample();
+         if (due && !skipCycle && AFTER_SWAP && !SLACK_ROOM && Pacing.queueActive()) {
+            requestAfterSwap(); // gcSlackAfterSwap: the pzopt-gc-after-swap thread runs it right after the render thread's next swap
+            return false;
+         }
          return due && !skipCycle;
       }
 
@@ -73,6 +77,24 @@ public final class GcSlack {
          fitNow = false;
          if (urgent) {
             return 0L; // now, whatever the slack, beats mid-step
+         }
+         if (SLACK_ROOM && Pacing.queueActive()) {
+            // gcSlackQueue=slack: in the game thread's slack, only while the render thread holds a frame whose swap is far
+            // enough away for the filler and the pause (planned with the longest recent pause, relaxed to the mean over ~25
+            // steps of waiting); the filler stops short of the swap if eden is larger than estimated
+            long now = System.nanoTime();
+            long t = Pacing.holdTargetNs();
+            long pHi = asPauseMax() + 300_000L, pLo = (long)asPauseEwma + 300_000L;
+            long plan = pHi - (pHi - Math.min(pHi, pLo)) * Math.min(roomWaitSteps, 25) / 25;
+            if (t > 0L && t - now >= plan + 600_000L) {
+               slackStopAt = t - plan - 200_000L;
+               return 0L;
+            }
+            if (roomStep != Pacing.stepStartNs()) {
+               roomStep = Pacing.stepStartNs();
+               roomWaitSteps++;
+            }
+            return Long.MAX_VALUE;
          }
          if (Config.GC_SLACK_FIT && GtAb.on(GtAb.GC_FIT)) {
             if (fits()) {
@@ -190,18 +212,28 @@ public final class GcSlack {
          return;
       }
       steps++;
+      long fs = asFillSerial;
+      boolean asTouched = fs != asFillSeen || asRequestBytes != 0L; // gcSlackAfterSwap's thread filled eden since the last sample
+      asFillSeen = fs;
       MemoryUsage u = eden.getUsage();
       long used = u.getUsed();
       long count = gcCount();
       if (lastCount >= 0L && count != lastCount) {
          // a collection since the last step that this producer did not run (its own reset lastCount in collect)
-         natural += count - lastCount;
-         if (lastRemaining >= 0L) {
+         long as = asCollections;
+         boolean byAfterSwap = as != asSeen; // gcSlackAfterSwap: the thread's own collection, not a natural one
+         asSeen = as;
+         if (byAfterSwap) {
+            scheduled += count - lastCount;
+         } else {
+            natural += count - lastCount;
+         }
+         if (lastRemaining >= 0L && !byAfterSwap) {
             remBeforeNaturalSum += lastRemaining;
             remBeforeNaturalN++;
             remBeforeNaturalMax = Math.max(remBeforeNaturalMax, lastRemaining);
          }
-         if (due && !skipCycle) {
+         if (due && !skipCycle && !byAfterSwap) {
             missed++; // it was due but never ran
          }
          if (Config.GC_SLACK_FIT && count - lastCount == 1L) {
@@ -217,8 +249,15 @@ public final class GcSlack {
          }
          learnCollection();
          newCycle();
-      } else if (lastUsed >= 0L && used >= lastUsed) {
+      } else if (lastUsed >= 0L && used >= lastUsed && !asTouched) { // (gcSlackAfterSwap: the thread's filler is not the game's rate)
          perStep = perStep * 0.95 + (used - lastUsed) * 0.05;
+      }
+      long nc = asNoCollectBytes;
+      if (nc != asNoCollectSeen) { // gcSlackAfterSwap: a filler that ran no collection: eden is larger than learned this cycle
+         if (capEst > 0L) {
+            capEst += nc - asNoCollectSeen;
+         }
+         asNoCollectSeen = nc;
       }
       if (lastYoungTimeMs < 0L) {
          lastYoungTimeMs = young.getCollectionTime();
@@ -364,7 +403,9 @@ public final class GcSlack {
       java.lang.invoke.MethodHandle mh = uninit();
       long maxIterNs = 0L; // gcSlackFit: the allocation that ran into the collection holds the pause
       long ti = t0;
-      while (filled < limit) {
+      long stopAt = slackStopAt; // gcSlackQueue=slack: the filler stops this short of the held swap
+      slackStopAt = Long.MAX_VALUE;
+      while (filled < limit && ti < stopAt) {
          if (mh != null) {
             try {
                sink = (Object)mh.invokeExact(byte.class, chunk);
@@ -401,6 +442,11 @@ public final class GcSlack {
             fitRuns++;
          }
          PAUSES[pauseN++ % PAUSES.length] = maxIterNs; // gcSlackFit: the measured pause (the allocation that waited for it)
+         if (SLACK_ROOM) {
+            asPauses[asPauseN++ & 7] = maxIterNs; // gcSlackQueue=slack: the planner's pauses
+            asPauseEwma += 0.2 * (maxIterNs - asPauseEwma);
+            roomWaitSteps = 0;
+         }
          fillEstNs += 0.2 * (Math.max(0L, (t1 - t0) - maxIterNs) - fillEstNs); // gcSlackFit: the filler's own time
          fillPeakNs = Math.max(fillPeakNs * 0.9, Math.max(0L, (t1 - t0) - maxIterNs));
          long pauseBefore = lastYoungTimeMs;
@@ -426,7 +472,165 @@ public final class GcSlack {
          Log.info("gc slack: collect at " + System.currentTimeMillis() + " ms, " + (filled >> 10) + " KB filler, " + (t1 - t0) / 1000L
                + " us with the pause" + (wasUrgent ? " (urgent)" : "") + (c1 == c0 ? " (no collection)" : "")
                + ", pause " + maxIterNs / 1000L + " us, fill " + Math.max(0L, (t1 - t0) - maxIterNs) / 1000L + " us, mode "
-               + (wasFit ? "fit " + (fitAtStart ? "start" : "slack") : wasUrgent ? "urgent" : Config.GC_SLACK_FIT && GtAb.on(GtAb.GC_FIT) ? "fallback" : "v1"));
+               + (wasFit ? "fit " + (fitAtStart ? "start" : "slack") : wasUrgent ? "urgent" : SLACK_ROOM ? "room" : Config.GC_SLACK_FIT && GtAb.on(GtAb.GC_FIT) ? "fallback" : "v1"));
+      }
+   }
+
+   // ---- gcSlackAfterSwap (f8-pace2 2026-10-15) ----
+   /**
+    * gcSlackAfterSwap: under frameQueue the scheduled young collection runs right after a held swap, from its own thread. With D
+    * about two intervals the render thread holds a frame for ~6 ms of every 8.33, so a collection started in the game thread's
+    * slack overlapped the hold's end and delayed the swap (run pace2-q1: 8 of 28 pauses, a fifth of the frames over 9 ms). Right
+    * after a swap the render thread has a whole interval for its next submission (~2 ms + the ~4 ms pause fit in 8.33) and the
+    * game thread is a few ms into a step whose frame is due D later, so the pause delays neither. Only the moment changes: the
+    * filler is garbage, as in collect().
+    */
+   static final boolean HOLD = Config.FRAME_QUEUE && "hold".equalsIgnoreCase(Config.GC_SLACK_QUEUE);
+   static final boolean SLACK_ROOM = Config.FRAME_QUEUE && "slack".equalsIgnoreCase(Config.GC_SLACK_QUEUE);
+   static final boolean AFTER_SWAP = HOLD || SLACK_ROOM || Config.FRAME_QUEUE && "swap".equalsIgnoreCase(Config.GC_SLACK_QUEUE);
+   private static long slackStopAt = Long.MAX_VALUE, roomStep = Long.MIN_VALUE; // game thread (gcSlackQueue=slack)
+   private static int roomWaitSteps;
+   private static double asPauseEwma = 4_500_000.0, asPausePeak = 4_500_000.0; // the thread's measured pauses (ns)
+   private static final long[] asPauses = new long[8]; // the last eight (gcSlackQueue=hold plans with their maximum)
+   private static int asPauseN;
+
+   private static long asPauseMax() {
+      if (asPauseN < 3) {
+         return 6_000_000L;
+      }
+      long m = 0L;
+      for (int i = 0; i < Math.min(8, asPauseN); i++) {
+         m = Math.max(m, asPauses[i]);
+      }
+      return m;
+   }
+   private static volatile long asRequestBytes; // > 0: a request is pending (the filler limit)
+   private static volatile long asCollections; // collections the thread caused (read by sample() for the attribution)
+   private static long asSeen; // game thread
+   private static volatile long asFillSerial, asNoCollectBytes; // fills done; filler bytes that ran no collection
+   private static long asFillSeen, asNoCollectSeen; // game thread
+   private static Thread asThread;
+   private static Object asSink;
+   public static volatile long asRuns, asNoSwap, asNoCollect, asFillNs, asWaitNs, asPauseOffNs;
+
+   private static long asReqStep = Long.MIN_VALUE; // game thread: the step that posted the last request
+
+   private static void requestAfterSwap() {
+      long step = Pacing.stepStartNs();
+      if (asRequestBytes != 0L || step == asReqStep) {
+         return; // pending, or posted in this step (sample() sees the collection at the next step's start)
+      }
+      asReqStep = step;
+      if (asThread == null) {
+         asThread = new Thread(GcSlack::afterSwapLoop, "pzopt-gc-after-swap");
+         asThread.setDaemon(true);
+         asThread.setPriority(Thread.MAX_PRIORITY);
+         asThread.start();
+      }
+      asRequestBytes = Math.max(1L, Math.min(Math.max(0L, remaining) + 16L * regionBytes, 80L << 20));
+      java.util.concurrent.locks.LockSupport.unpark(asThread);
+   }
+
+   private static void afterSwapLoop() {
+      Pacing.timerSlack1ns();
+      while (true) {
+         long limit = asRequestBytes;
+         if (limit == 0L) {
+            java.util.concurrent.locks.LockSupport.park();
+            continue;
+         }
+         try {
+            long w0 = System.nanoTime();
+            long stopAt = Long.MAX_VALUE;
+            long pauseEst = (long)Math.max(asPauseEwma, 0.8 * asPausePeak);
+            if (HOLD) {
+               // gcSlackQueue=hold: fill while the render thread holds a frame whose swap is far enough away for the filler and the
+               // longest recent pause; a filler that has not reached the collection that pause + 0.2 ms before the swap stops
+               // (garbage stays, the next request's filler is short). No hold with room: keep waiting (a natural collection may
+               // come first, as without the queue); collecting anyway put 6 of 28 pauses over a swap (run pace2-q7)
+               // the room asked for starts at the longest of the last eight pauses + 0.9 ms and relaxes over 200 ms of waiting
+               // to their mean + 0.6 ms (a single long pause asked for holds that never came: 25 of 36 requests of run
+               // pace2-q13 found none in a second, and 14 natural pauses followed)
+               long pHi = asPauseMax() + 300_000L;
+               long pLo = (long)asPauseEwma + 300_000L;
+               long t = -1L, plan = pHi;
+               for (long waited = 0L; waited < 1_000_000_000L && t < 0L; waited = System.nanoTime() - w0) {
+                  plan = pHi - (pHi - Math.min(pHi, pLo)) * Math.min(waited, 200_000_000L) / 200_000_000L;
+                  t = Pacing.waitHoldStart(plan + 600_000L, 10_000_000L);
+               }
+               if (t > 0L) {
+                  stopAt = t - plan - 200_000L;
+               } else {
+                  asNoSwap++;
+                  asRequestBytes = 0L;
+                  continue; // a second without such a hold: drop the request (the game thread posts it again)
+               }
+            } else if (!Pacing.waitHeldSwap(40_000_000L)) {
+               asNoSwap++; // no held swap within 40 ms (late frames): collect now, as the slack would
+            } else {
+               // gcSlackQueue=swap: the filler gets gcSlackQueueFillUs after the swap; one that has not reached the collection by then
+               // stops (the garbage stays, the next request's filler after the next held swap is that much shorter), so the pause
+               // starts within that time of the swap (filling to the collection whatever it took: 2.6 ms after the swap on average,
+               // 7 of 28 pauses then delayed the next frame, run pace2-q6; stopping at the estimate: 1 of 25, pace2-q4)
+               stopAt = System.nanoTime() + Config.GC_SLACK_QUEUE_FILL_US * 1000L;
+            }
+            long t0 = System.nanoTime();
+            asWaitNs += t0 - w0;
+            long c0 = gcCount();
+            int chunk = (int)Math.min((long)Config.GC_SLACK_FILL_CHUNK_KB << 10, regionBytes / 4L);
+            java.lang.invoke.MethodHandle mh = uninit;
+            long filled = 0L, maxIter = 0L, ti = t0, pauseAt = t0;
+            // until the collection comes: the eden estimate is often low (G1 resizes eden at every pause), and a filler that
+            // stops short leaves eden full of garbage for a natural pause a few frames later at any moment (run pace2-q4: 19 of
+            // 75); past the estimate each 32 MB costs ~1 ms more before the pause
+            limit = Math.max(limit, 256L << 20);
+            while (filled < limit && ti < stopAt) {
+               if (mh != null) {
+                  try {
+                     asSink = (Object)mh.invokeExact(byte.class, chunk);
+                  } catch (Throwable t) {
+                     mh = null;
+                     asSink = new byte[chunk];
+                  }
+               } else {
+                  asSink = new byte[chunk];
+               }
+               filled += chunk;
+               long tn = System.nanoTime();
+               if (tn - ti > maxIter) {
+                  maxIter = tn - ti;
+                  pauseAt = ti;
+               }
+               ti = tn;
+               if ((filled & ((1L << 20) - 1L)) == 0L && gcCount() != c0) {
+                  break;
+               }
+            }
+            asSink = null;
+            asPauseOffNs += pauseAt - t0;
+            long t1 = System.nanoTime();
+            asFillNs += t1 - t0;
+            if (gcCount() != c0) {
+               asRuns++;
+               asCollections++;
+               asPauses[asPauseN++ & 7] = maxIter;
+               asPauseEwma += 0.2 * (maxIter - asPauseEwma);
+               asPausePeak = Math.max(asPausePeak * 0.9, maxIter);
+            } else {
+               asNoCollect++;
+               asNoCollectBytes += filled;
+            }
+            asFillSerial++;
+            if (Config.INSTRUMENT) {
+               Log.info("gc slack: collect at " + System.currentTimeMillis() + " ms, " + (filled >> 10) + " KB filler, " + (t1 - t0) / 1000L
+                     + " us with the pause, waited " + (t0 - w0) / 1000L + " us for the swap, pause " + maxIter / 1000L + " us " + (pauseAt - t0) / 1000L + " us after it"
+                     + (stopAt != Long.MAX_VALUE ? ", ended " + (stopAt - (pauseAt + maxIter)) / 1000L + " us before the stop line" : "")
+                     + (gcCount() == c0 ? " (no collection)" : "") + ", mode " + (HOLD ? "in-hold" : "after-swap"));
+            }
+         } catch (Throwable t) {
+            Log.warn("gc slack: after-swap collection failed: " + t);
+         }
+         asRequestBytes = 0L;
       }
    }
 
@@ -468,6 +672,7 @@ public final class GcSlack {
             + " edenCapEstMB=" + (capEst >> 20) + " targetAfter=" + targetAfterUsed + " fillerMB=" + (fillerBytes >> 20) + " fillerAndPauseMs=" + fillerNs / 1_000_000L
             + " pauseEstUs=" + (long)(pauseNs / 1000) + " fillNsPerByte=" + String.format("%.3f", fillNsPerByte)
             + " perStepKB=" + (long)(perStep / 1024)
+            + (AFTER_SWAP ? " queue(" + Config.GC_SLACK_QUEUE + "): runs=" + asRuns + " noSwap=" + asNoSwap + " noCollect=" + asNoCollect + " fillAndPauseMs=" + asFillNs / 1_000_000L + " waitMs=" + asWaitNs / 1_000_000L + " pauseAfterStartUs(mean)=" + (asRuns + asNoCollect > 0 ? asPauseOffNs / 1000L / (asRuns + asNoCollect) : 0L) : "")
             + (Config.GC_SLACK_FIT ? " fit: runs=" + fitRuns + " atStart=" + fitStartRuns + " fillEstUs=" + (long)(fillEstNs / 1000) + " workEstUs=" + (long)(stepEstNs / 1000) + "/" + (long)(workPeakNs / 1000) + " waitSteps=" + fitWaitSteps + " (at start " + fitRenderBound + ", in slack " + fitGameBound + ") waitedMs=" + fitWaitNs / 1_000_000L + " fallbackSteps=" + fallbacks + " swapWaitTimeouts=" + swapWaitTimeouts + " planFail(target/held/pushed/twoIntervals/delayedFrame)=" + java.util.Arrays.toString(Pacing.planFail) + " submitEstUs=" + Pacing.submitEstUs() + " dUs=" + Pacing.queueTargetUs() + " pauseP75Us=" + fitPauseNs() / 1000L : "")
             + collectors();
    }

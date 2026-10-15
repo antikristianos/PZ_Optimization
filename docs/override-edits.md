@@ -7936,3 +7936,33 @@ No other stock code changed for these (IsoChunkMap's producer and SlackWork are 
   end-of-step placement (99 vs 78 pauses), but the step-start placement delays the game thread and the whole runs are not better
   than the baseline; bakeSlackCap halves the frames with 20+ bakes without a frame-time gain (short-period within-run A/B);
   hordePaletteMismatch and renderPrewarmOutlines remove their first-sight costs from the profile (whole runs within the noise).
+
+## Frame queue, round 2 (2026-10-15, worktree `f8-pace2`): GPU-inclusive D, slew, decay, hold spin, GC placement
+
+pzopt only, no override changed; every key off by default (frameQueue itself is off by default).
+- What the metrics measure: the overlay log / goal.py and MangoHud's frametime are swap-return intervals on the render thread
+  (run integ6-lod2: 102 vs 103 frames over 9 ms; swap-call intervals 63; the flips in present.txt 167). With frameQueue the swap
+  call was on the 8.33 ms cadence for 97.9 % of frames, but 8 % of frames were still drawing on the GPU at their swap call (GPU
+  done 0.7-10 ms after it), so the flip came late and NVIDIA's swap blocked until about then: 111 of the 168 on-screen intervals
+  over 9 ms had their swap call on time.
+- `frameQueueGpu`: `Pacing.queueHold` files a frame's slot -> ready sample with its GL timestamp query slot; `collectQueries`
+  adds it to the percentile window when the GPU time comes back, plus the GPU's time past the end of the render submit
+  (`max(0, gpu_done - beforeSwap)`). The render thread is assumed free at the hand-off, as before, so the hold never feeds back.
+- `frameQueueSlewUs`: D moves towards the percentile at most this much per frame (a 15-frame recomputation raised D by 1-4 ms at
+  once: 22 of 63 late swap calls); with a slew the percentile is recomputed every frame.
+- `frameQueueDecayUsPerS`: D falls at most this fast (the 240-frame window forgot a burst in 2 s; D dropped to 7-10 ms in calm
+  stretches and the next slow step was late).
+- `frameQueueSpinUs` (1000 = the old hold): the hold parks to that many us before the target and spins the rest, with the render
+  thread's timer slack at 1 ns.
+- `gcSlackQueue` (off | swap | hold | slack) + `gcSlackQueueFillUs`: where gcSlack's scheduled young collection runs under
+  frameQueue. The v1 placement (the game thread's slack) overlapped the end of the held frame's hold in ~a third of the pauses.
+  `swap` and `hold` run the filler from a `pzopt-gc-after-swap` thread right after a held swap / inside a hold with room;
+  `slack` keeps the game thread's slack but only while the render thread holds a frame whose swap is at least the planned pause
+  + 0.6 ms away (planned with the longest of the last eight pauses + 0.3 ms, relaxed to their mean over ~25 steps of waiting), and
+  stops the filler that far short of the swap. The thread's filler is kept out of gcSlack's eden rate (it inflated it to a
+  collection every step in the first try) and its collections are counted as scheduled.
+- Numbers: Louisville cap 120 with the zombie LOD, goal metric 96.5-96.7 % <= 9 ms / p99 10.6-11.1 (integ6-lod1..3) -> 97.8-98.8 %
+  / p99 9.3-10.5 (pace2-q1..q17 without the two disturbed ones), flips 93.9-94.4 % -> 96.3-97.7 %; step start -> screen 15.5-16.4
+  -> 18.1-20.6 ms mean. Drive-120-south: 98.3 % / p99 9.8 / max 20.8 -> 99.2 % / 8.8 / 17.2, flips 93.2 -> 98.5 %, latency 9.4 ->
+  16.9 ms. `gcSlackQueue=slack`: its own pauses 35 of 35 without a late frame (pace2-q16, q17), but waiting for room lets 4-7
+  natural pauses a run come first; GC-overlapping late frames 8-14 -> 4-5 a run.
