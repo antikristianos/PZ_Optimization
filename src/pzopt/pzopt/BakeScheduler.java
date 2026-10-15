@@ -176,7 +176,7 @@ public final class BakeScheduler {
       if (this.budgetNow < 0) {
          this.budgetNow = max;
       }
-      long cost = Math.max(FrameCap.lastStepNs, Pacing.lastSubmitNs);
+      long cost = Math.max(FrameCap.lastStepNs, Pacing.lastSubmitNs + (Config.BAKE_BUDGET_GPU && GtAb.on(GtAb.BAKE_GPU) ? Pacing.lastGpuPastNs : 0L)); // bakeBudgetGpu (f8-resid): the render side's span to GPU done
       if (cost > intervalNs * Config.BAKE_BUDGET_HIGH_PCT / 100) {
          this.budgetNow = Math.max(min, this.budgetNow / 2);
          this.calmFrames = 0;

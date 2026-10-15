@@ -61,6 +61,9 @@ public final class GtAb {
    public static final long PALETTE_MISMATCH = 1L << 49; // hordePaletteMismatch (tail6 2026-10-14; bit 60 in its worktree; named in parse())
    public static final long CHUNK_PACE = 1L << 51; // chunkHandoffPaceMs (chunk pass f8-chunk 2026-10-13)
    public static final long FRAME_QUEUE = 1L << 48; // frameQueue (f8-twofix 2026-10-14: its cost uncapped and at the cap, within one run; named in parse())
+   public static final long BAKE_GPU = 1L << 54; // bakeBudgetGpu (f8-resid 2026-10-15; named in parse())
+   public static final long BURST_GOVERNOR = 1L << 53; // burstGovernor (f8-resid 2026-10-15; named in parse())
+   public static final long CORE_ISOLATE = 1L << 52; // coreIsolate (f8-resid 2026-10-15: the reserved cores against none, CorePlacement polls the phase; named in parse())
    public static final long VISION_BATCH = 1L << 50; // lightingVisionParallel (chunk pass f8-chunk 2026-10-13; bits 50-55, named in parse())
 
    private static final String[] NAMES = {"renderPrepParallel", "pplPackParallel", "schedulerClassifyParallel", "animalLosFast",
@@ -127,6 +130,15 @@ public final class GtAb {
          if (k.equals("hordePaletteMismatch")) { // tail6
             m |= PALETTE_MISMATCH;
          }
+         if (k.equals("coreIsolate")) { // f8-resid
+            m |= CORE_ISOLATE;
+         }
+         if (k.equals("burstGovernor")) { // f8-resid
+            m |= BURST_GOVERNOR;
+         }
+         if (k.equals("bakeBudgetGpu")) { // f8-resid
+            m |= BAKE_GPU;
+         }
       }
       return m;
    }
@@ -156,7 +168,13 @@ public final class GtAb {
             return; // from the first world frame
          }
          t0 = now;
-         Log.info("gt ab: alternating every " + Config.DEV_GT_ALTERNATE + " ms from epoch_ms " + now + " (on first), keys " + Config.DEV_GT_ALTERNATE_KEYS);
+         if (Config.DEV_GT_PHASE_RANDOM && Config.DEV_GT_ALTERNATE > 0) {
+            // devGtPhaseRandom (f8-resid): the cycle starts at a random point, so a route event at a fixed time after the
+            // world start (Louisville's horde first sight ~22 s in) lands in either phase across runs (an A/A placebo with
+            // 370 / 430 ms periods read 5.0 / 2.6 % "on" vs 1.6 / 1.2 % "off": the first sight fell into "on" in both)
+            t0 -= (long)(Math.random() * 4.0 * Config.DEV_GT_ALTERNATE);
+         }
+         Log.info("gt ab: alternating every " + Config.DEV_GT_ALTERNATE + " ms from epoch_ms " + t0 + " (on first), keys " + Config.DEV_GT_ALTERNATE_KEYS);
       }
       if (Config.DEV_FRAME_SECTIONS) { // tail pass: the OS columns of the frame that just ended (deltas since its start)
          osSample();
@@ -339,6 +357,11 @@ public final class GtAb {
 
    static boolean offPhase2() {
       return off2;
+   }
+
+   /** f8-resid: the key's bit is in an alternation group (only then does its off phase ever come). */
+   public static boolean listed(long bit) {
+      return Config.DEV_GT_ALTERNATE > 0 && (MASK & bit) != 0 || (MASK2 & bit) != 0;
    }
 
    /** False in the off half of an alternation for a listed key: the caller takes its old path this frame. */

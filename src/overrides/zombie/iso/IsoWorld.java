@@ -2690,7 +2690,7 @@ public final class IsoWorld {
          IsoZombie z = (IsoZombie)this.zombieWithModel.get(n);
          if (tcount < 510 && (tcount < tcountMax || pzoptLodKeep > 0 && tcount < tcountMax + pzoptLodKeep && pzopt.ZombieLod.drawnIn3d(z))) { // pzopt: zombieLodDynamic's cap (510 without it); zombieLodHysteresis, a zombie drawn in 3D keeps its model within that many places past the cap
             if (pzoptAddBudget && !z.ghost && !z.hasActiveModel()) { // pzopt: zombieModelAddBudgetUs, a zombie that would get its model now
-               if (pzoptAdds > 0 && System.nanoTime() - pzoptAddT0 > pzopt.Config.ZOMBIE_MODEL_ADD_BUDGET_US * 1000L) { // pzopt: past the frame's budget
+               if (pzoptAdds > 0 && System.nanoTime() - pzoptAddT0 > (pzopt.Pacing.heavyStep() ? Math.min(pzopt.Config.ZOMBIE_MODEL_ADD_BUDGET_US, pzopt.Config.ZOMBIE_MODEL_ADD_BURST_US) : pzopt.Config.ZOMBIE_MODEL_ADD_BUDGET_US) * 1000L) { // pzopt: past the frame's budget (burstGovernor: a heavy step's smaller one)
                   z.setSceneCulled(true); // pzopt: stays a flat sprite this frame, as past the cap below
                   if (z.hasAnimationPlayer()) { // pzopt
                      z.getAnimationPlayer().doBlending = false; // pzopt

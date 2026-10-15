@@ -8003,3 +8003,37 @@ park-then-spin presentPacing=auto has used there by default since 2026-09-25). `
 Tab: "Frame queue: every frame on the cap's beat (adds input delay)" and "Frame queue: count the GPU's drawing time" in
 Performance > Smoothness and pacing > Frame pacing (`frameQueue` also in the Simple view and under "Screen tears or judders"),
 "Spare-time garbage collection under the frame queue" (`gcSlackQueue`) after gcSlack; EFFECTS render +1 for both queue keys.
+
+## Louisville 120: residual late frames (f8-resid, 2026-10-15)
+
+Census of the goal-metric misses (swap-return intervals > 9 ms) of quiet Louisville cap-120 runs with the zombie LOD and the
+pace2 frame-queue set: ~42 a run, of which the game step ~22 (two thirds in the horde's first-sight burst at route seconds
+1.8-2.2 and the second burst at 10.4-10.9), "GPU" ~11 (about half of them a swap call that was on time but blocked 0.5-2 ms
+after the GPU had already finished), GC ~8.
+
+- `lookupMemo` (exact, off): new overrides `zombie/FileGuidTable` and
+  `zombie/core/skinnedmodel/advancedanimation/AnimationVariableHandlePool`. Both answer lookups from a `TreeMap` ordered by
+  `String.CASE_INSENSITIVE_ORDER`, whose every compare folds the case of both strings character by character. The guid table
+  is asked ~20 times for every zombie being dressed (each clothing item's file path), so a spawn or model-add burst spent 8-20
+  ms a second of game thread there. With the key, each lookup first checks a hash memo keyed by the caller's exact string that
+  holds what the tree answered for that string (a "none" marker for a miss). The guid table's two memos are made on first
+  use (the constructor stays stock) and dropped in `loaded()` and `clear()`, the only methods that change its trees; the
+  handle pool's memo lives in `pzopt.LookupMemo` (the class initializer stays stock) and needs no invalidation because the
+  pool only grows and a name's handle is never replaced. The handle pool's lookup still takes the stock lock on a memo miss.
+  Dev check `devLookupMemoCheck`: every memo hit is compared with the tree's answer (resid-memochk: 3.1 M hits, 0 mismatches).
+- `burstGovernor` (timing only, off; `burstLateUs` 1000, `burstWorkPct` 95, `zombieSpawnBurstUs` 150, `zombieModelAddBurstUs`
+  150): a heavy step (it started more than burstLateUs after its cap slot, or the previous step's work before the hand-off
+  took more than burstWorkPct of the interval) gives zombieSpawnSpread's queue (`ZombiePopulationManager.pzoptDrainSpawns`)
+  the smaller budget and a minimum of one creation instead of zombieSpawnMin, and zombieModelAddBudgetUs's promotions in
+  `IsoWorld.sceneCullZombies` the smaller budget; the max-age rule of the spawn queue still creates any zombie that waited
+  zombieSpawnMaxAgeMs. Census in the frame queue's log line.
+- Not override edits, same pass: `bakeBudgetGpu` (timing only, off): bakeBudgetAdaptive's render-side cost becomes the render
+  submit plus the GPU's time past it (frameQueueGpu's timestamps, `Pacing.lastGpuPastNs`), so a frame whose GPU ran long halves
+  the next frames' bake budget. `devGtPhaseRandom` (dev): GtAb's alternation starts at a random point of its cycle; with the
+  cycle anchored at the first world frame, Louisville's horde first sight lands in the same phase every run (an A/A placebo at
+  370 / 430 ms read 5.0 / 2.6 % "on" vs 1.6 / 1.2 % "off"). GtAb `coreIsolate`: CorePlacement polls the phase every 5 ms and
+  swaps coreIsolate's masks for every-CPU masks in the off phase (measured: isolation worse, 1.67 vs 0.75 % outside the bursts).
+- Lock set found (Louisville cap 120, LOD 128, pace2 frame queue): the above plus `-XX:-UseTypeSpeculation`,
+  `lightingStrongFrameMs=9` and a fixed frame-queue depth (`frameQueueMinPct=260` = frameQueueMaxPct): runs resid-cfb6 / cfb7
+  99.53 / 99.03 % <= 9 ms, p99 8.81 / 8.99 ms, p99.9 10.14 / 13.98 ms, max 15.1 / 16.7 ms, 120.0 / 119.9 fps; drive-120-south
+  99.4 % / p99 8.6 (resid-drivef1/2). Step start -> on screen 19.0-19.6 -> 22.0 ms on Louisville, 14-17 -> 22.1 ms on the drive.

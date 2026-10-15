@@ -151,9 +151,24 @@ public final class Pacing {
       stepStartNs = nowNs;
       capIntervalNs = intervalNs;
       stepQueued = QUEUE && intervalNs > 0L && queueAllowed(); // uncapped: false without asking anything
+      if (Config.BURST_GOVERNOR && Overrides.enabled()) { // burstGovernor (f8-resid): is this a heavy step
+         heavy = intervalNs > 0L && (nowNs - slotNs > Config.BURST_LATE_US * 1000L || lastWorkNs > intervalNs * Config.BURST_WORK_PCT / 100L)
+               && GtAb.on(GtAb.BURST_GOVERNOR);
+         if (heavy) {
+            heavySteps++;
+         }
+      }
       if (Config.GC_SLACK_FIT && Config.GC_SLACK && intervalNs > 0L) {
          GcSlack.stepStart(); // gcSlackFit: a due collection at the step's start when the render thread's and this frame's room allow it
       }
+   }
+
+   private static boolean heavy; // game thread only
+   public static long heavySteps, spawnsHeld, addsHeld; // burstGovernor census (game thread)
+
+   /** burstGovernor (f8-resid): the current step is heavy, deferrable work takes its burst budgets. Game thread. */
+   public static boolean heavyStep() {
+      return heavy;
    }
 
    /** Game thread: System.nanoTime() at the start of the current step (bakeDeadlinePct). */
@@ -472,6 +487,8 @@ public final class Pacing {
 
    /** Render thread: the last frame's acquire -> swap-call time before any hold (pzopt.BakeScheduler's adaptive budget). */
    public static volatile long lastSubmitNs;
+   /** frameQueueGpu: GPU done - submit end of the latest frame whose timestamp came back (bakeBudgetGpu). */
+   public static volatile long lastGpuPastNs;
 
    /** Render thread, right before Display.update (the swap): optionally hold the present, then stamp the call. */
    public static void beforeSwap() {
@@ -644,7 +661,7 @@ public final class Pacing {
          if (qLastLogNs != 0L && qFrames > 0) {
             Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d",
                   qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
-                  catchUpSlots, droppedSlots));
+                  catchUpSlots, droppedSlots) + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred : ""));
          }
          qLastLogNs = now;
          qFrames = qHeld = qLate = qHoldNsSum = qTargetNsSum = 0L;
@@ -852,6 +869,7 @@ public final class Pacing {
          if (qGpuPending[i]) { // frameQueueGpu: the frame's slot -> ready time plus its GPU time past the end of its submit
             qGpuPending[i] = false;
             addQueueSample(qCpuLag[i] + Math.max(0L, done - qBefore[i]));
+            lastGpuPastNs = Math.max(0L, done - qBefore[i]); // bakeBudgetGpu (f8-resid): the GPU's time past the end of the latest timed frame's submit
          }
          if (effectiveMode() == GPU && querySim[i] != 0L) {
             addLag(done - querySim[i]);

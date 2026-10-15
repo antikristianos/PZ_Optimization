@@ -368,12 +368,31 @@ public final class CorePlacement {
       slowList = compact(s);
       criticalFastMask = fastMask;
       backgroundMask = slowMask;
+      isoCritical = fastMask; // f8-resid: the isolated masks, kept for the in-run A/B (GtAb coreIsolate)
+      isoBackground = slowMask;
       ratio = 1.0F;
       isolate = true;
       hybrid = true;
    }
 
    private static boolean isolate;
+   /** f8-resid: coreIsolate's own masks; with GtAb's coreIsolate listed the off phase puts every thread on every CPU. */
+   private static long[] isoCritical, isoBackground;
+   private static boolean isoAbOn = true;
+   public static long isoAbSwitches;
+
+   /** f8-resid: in-run A/B of coreIsolate (devGtAlternateKeys=coreIsolate): poll the phase, swap the masks on a change. */
+   private static void isoAbPoll() throws Throwable {
+      boolean on = GtAb.on(GtAb.CORE_ISOLATE) || loading;
+      if (on == isoAbOn) {
+         return;
+      }
+      isoAbOn = on;
+      criticalFastMask = on ? isoCritical : allMask;
+      backgroundMask = on ? isoBackground : allMask;
+      isoAbSwitches++;
+      scan(true);
+   }
 
    private static long[] parseMask(String spec, int words, long[] rank, int max) {
       long[] m = new long[words];
@@ -462,7 +481,15 @@ public final class CorePlacement {
       boolean wasFast = criticalFast;
       while (true) {
          try {
-            Thread.sleep(250);
+            if (isolate && isoCritical != null && GtAb.listed(GtAb.CORE_ISOLATE)) { // f8-resid: poll the A/B phase every 5 ms
+               long until = System.nanoTime() + 250_000_000L;
+               while (System.nanoTime() < until) {
+                  Thread.sleep(5);
+                  isoAbPoll();
+               }
+            } else {
+               Thread.sleep(250);
+            }
             long now = System.nanoTime();
             long wall = now - lastWall;
             lastWall = now;
@@ -665,6 +692,6 @@ public final class CorePlacement {
          return "cores=" + MODE + " (inactive)";
       }
       return "cores=" + MODE + " critical=" + (criticalFast ? "fast" : "efficient") + " fast_ms=" + fastMs + " slow_ms=" + slowMs
-            + " promotions=" + promotions + " demotions=" + demotions + " wide_ms=" + wideMs + String.format(Locale.ROOT, " ratio=%.2f", ratio);
+            + " promotions=" + promotions + " demotions=" + demotions + " wide_ms=" + wideMs + " iso_ab_switches=" + isoAbSwitches + String.format(Locale.ROOT, " ratio=%.2f", ratio);
    }
 }

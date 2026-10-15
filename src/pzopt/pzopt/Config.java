@@ -613,6 +613,22 @@ public final class Config {
    public static final int ZOMBIE_SPAWN_MAX_AGE_MS = Math.max(0, integer("zombieSpawnMaxAgeMs", 1000)); // zombieSpawnSpread: a queued zombie waits at most this long (wall time), so a slow machine's small per-frame budget never thins the horde (the flip / Mac test of 2026-10-06 had half the zombies at route start)
    public static final int ZOMBIE_SPAWN_NEAR = Math.max(0, integer("zombieSpawnNear", 25)); // zombieSpawnSpread: a zombie this close (squares) to a player is created at once, as stock
    public static final int ZOMBIE_SPAWN_MIN = Math.max(1, integer("zombieSpawnMin", 2));
+   /**
+    * burstGovernor (f8-resid 2026-10-15, timing only, off): in a heavy step (it started more than burstLateUs after its cap
+    * slot, or the previous step's work before the hand-off took more than burstWorkPct of the interval) the deferrable
+    * per-frame work gets smaller budgets: zombieSpawnSpread's creations zombieSpawnBurstUs (and one zombie at least instead
+    * of zombieSpawnMin), zombieModelAddBudgetUs's promotions zombieModelAddBurstUs. Louisville's horde first sight is ~45
+    * such steps in a row, ~0.7 ms of spawns and ~0.6 ms of model adds each; the work moves to the lighter steps after.
+    */
+   public static final boolean BURST_GOVERNOR = bool("burstGovernor", false);
+   public static final boolean DEV_GT_PHASE_RANDOM = bool("devGtPhaseRandom", false); // dev (f8-resid): devGtAlternate's cycle starts at a random offset, so fixed-time route events split between the phases across runs
+   public static final boolean BAKE_BUDGET_GPU = bool("bakeBudgetGpu", false); // f8-resid (timing only): bakeBudgetAdaptive's render-side cost is the submit plus the GPU's time past it (frameQueueGpu's timestamps), so a frame whose GPU ran long (the horde in view) halves the next frames' bake budget
+   public static final boolean LOOKUP_MEMO = bool("lookupMemo", false); // f8-resid (exact): pzopt.LookupMemo, exact-string memos in front of FileGuidTable's and AnimationVariableHandlePool's case-insensitive trees (outfit dressing in spawn / model-add bursts)
+   public static final boolean DEV_LOOKUP_MEMO_CHECK = bool("devLookupMemoCheck", false); // dev: every lookupMemo hit compared with the tree's answer (log line "lookup memo: ... mismatches N")
+   public static final int BURST_LATE_US = Math.max(0, integer("burstLateUs", 1000));
+   public static final int BURST_WORK_PCT = Math.max(1, integer("burstWorkPct", 95));
+   public static final int ZOMBIE_SPAWN_BURST_US = Math.max(0, integer("zombieSpawnBurstUs", 150));
+   public static final int ZOMBIE_MODEL_ADD_BURST_US = Math.max(0, integer("zombieModelAddBurstUs", 150));
    public static final boolean LOOT_DEFER = bool("lootDefer", false); // time-sliced loot: a chunk arriving lootDeferDistance squares or more from every player queues its unexplored containers and they roll under lootDeferBudgetUs a frame (pzopt.LootDefer; single player). A downtown chunk's loot roll was up to 32 ms of one frame. Changes the order of random draws (an intended edit)
    public static final int LOOT_DEFER_DISTANCE = Math.max(0, integer("lootDeferDistance", 20));
    public static final int LOOT_DEFER_BUDGET_US = Math.max(0, integer("lootDeferBudgetUs", 400));

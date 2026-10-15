@@ -761,12 +761,20 @@ public final class ZombiePopulationManager {
       // ~2,000 zombies in half a second instead of one 60 ms frame or a horde trickling in over many seconds)
       long backlogNs = (long)((this.pzoptSpTail - this.pzoptSpHead) * this.pzoptSpawnCostNs / Math.max(1, pzopt.Config.ZOMBIE_SPAWN_DRAIN_FRAMES)); // pzopt
       budget = Math.max(budget, Math.min(backlogNs, pzopt.Config.ZOMBIE_SPAWN_MAX_US * 1000L)); // pzopt: never more than zombieSpawnMaxUs a frame
+      int pzoptMin = pzopt.Config.ZOMBIE_SPAWN_MIN; // pzopt
+      if (pzopt.Pacing.heavyStep()) { // pzopt: burstGovernor (f8-resid), a heavy step creates fewer
+         budget = Math.min(budget, pzopt.Config.ZOMBIE_SPAWN_BURST_US * 1000L); // pzopt
+         pzoptMin = 1; // pzopt
+      } // pzopt
       int made = 0; // pzopt
       long pzoptOld = System.nanoTime() - pzopt.Config.ZOMBIE_SPAWN_MAX_AGE_MS * 1_000_000L; // pzopt: an entry older than this goes now, whatever the budget
       while (this.pzoptSpHead < this.pzoptSpTail
-            && (made < pzopt.Config.ZOMBIE_SPAWN_MIN || System.nanoTime() - t0 < budget || this.pzoptSpNs[this.pzoptSpHead] < pzoptOld)) { // pzopt
+            && (made < pzoptMin || System.nanoTime() - t0 < budget || this.pzoptSpNs[this.pzoptSpHead] < pzoptOld)) { // pzopt
          this.pzoptSpawnOne(); // pzopt
          made++; // pzopt
+      } // pzopt
+      if (pzopt.Pacing.heavyStep() && this.pzoptSpHead < this.pzoptSpTail) { // pzopt: burstGovernor census
+         pzopt.Pacing.spawnsHeld++; // pzopt
       } // pzopt
       if (made > 0) { // pzopt: the creation cost, a running mean
          double each = (double)(System.nanoTime() - t0) / made; // pzopt
