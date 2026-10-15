@@ -116,9 +116,20 @@ RACES['boot-load-split'] = dict(RACES['boot-load'], keep_numbers=True, split=Tru
 # frame-rate race over the Louisville horde bench (2026-10-15, the maintainer's New! card): stock vs round 10 with every
 # optimization on (defaults + opt-ins), Enhancements off, both uncapped (stock: frameRate=240, never reached), recorded,
 # no MangoHud. label: '{x}' = ours over stock in route-mean fps; t0: route second where the race clip starts; len: its
-# seconds; crop: x:y:w square of the 5120x2160 screen whose centre both halves show; end_hold: the black results card
+# seconds; end_hold: the black results card. Either crop (x:y:w square of the 5120x2160 screen whose centre both halves
+# show) or path: a crop that follows the walk, keyframes (route s, centre x, centre y, height) in screen px, smoothed
+# (crop_path); fps_window / fps_tick: the live counters. Maintainer, 2026-10-15 evening: follow the bench through the
+# frame drops where it meets the hordes, not a still stretch. The walk: out of the dark building into the first horde's
+# sight (top left, route 1.5-3.5 s: stock 24-34 fps, 118 ms frames; ours 108-143), the street crowd west of the Nite Glo
+# (10-11 s: 31 / 111), the parking-lot horde (19.5-22 s: stock 24-28 fps, 134 ms frames; ours 99-137) and the crowd
+# beside it (23-25 s). avoid: the queue's "job started" notification in the stock recording (route 11.5-16.25 s).
 RACES['louisville-fps'] = dict(kind='fps', label='{x} faster Louisville', cap=('lourace-stock1', 'lourace-opt1'),
-                               words=('STOCK', 'OPTIMIZED'), t0=8.0, len=8.0, crop='1810:330:1500', end_hold=2.5)
+                               words=('STOCK', 'OPTIMIZED'), t0=1.0, len=23.75, end_hold=2.5, fps_window=0.25, fps_tick=4,
+                               path=[(1.0, 2450, 1000, 1900), (2.0, 2150, 1000, 2000), (3.5, 2150, 1000, 2000),
+                                     (5.5, 2450, 1000, 1700), (9.0, 2300, 1000, 1800), (10.5, 2170, 1000, 1800),
+                                     (12.0, 2350, 980, 1700), (17.0, 2450, 980, 1700), (18.5, 2400, 900, 1700), (20.0, 2300, 1330, 1500),
+                                     (21.0, 2250, 1345, 1450), (23.0, 2800, 1000, 1500), (24.75, 2750, 1080, 1500)],
+                               path_sigma=0.5, path_ymax=2070, avoid=[(11.4, 16.4, 2640, 1850, 3110, 2160)])
 FPS_WINDOW, FPS_TICK = 0.5, 4      # fps race: the live counter's window (s) and its updates per second
 THIRDS_HOLD = 2.6                  # triple: seconds the three panes stand side by side
 THEMES = {  # strip, strip text
@@ -700,11 +711,71 @@ def fps_run(d):
     return dict(e=e, f=f, fps=1000 * len(f) / f.sum(), p99=p99, secs=(r1 - r0) / 1000)
 
 
-def live_fps(s, t):
-    """A side's counter at route second t: the frames of the FPS_WINDOW s before the last tick (FPS_TICK a second)."""
-    t = np.floor(t * FPS_TICK + 1e-6) / FPS_TICK
-    f = s['f'][(s['e'] > t - FPS_WINDOW) & (s['e'] <= t)]
+def live_fps(s, t, window=FPS_WINDOW, tick=FPS_TICK):
+    """A side's counter at route second t: the frames of the `window` s before the last tick (`tick` a second)."""
+    t = np.floor(t * tick + 1e-6) / tick
+    f = s['f'][(s['e'] > t - window) & (s['e'] <= t)]
     return 1000 * len(f) / f.sum() if len(f) else 0.0
+
+
+class FollowSide:
+    """One capture read forward from video second t0 at 60 fps, tone-mapped and halved (2560x1080 for the 5K desktop); frame(v)
+    returns the PIL frame at video second v (monotonic calls), for a moving crop (crop_path)."""
+
+    def __init__(self, video, t0, secs, scale=2):
+        w, h = (int(x) for x in subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                                                 'stream=width,height', '-of', 'csv=p=0', video], capture_output=True,
+                                                text=True, check=True).stdout.split()[0].strip(',').split(',')[:2])
+        self.w, self.h, self.scale = w // scale, h // scale, scale
+        self.p = subprocess.Popen(['ffmpeg', '-hide_banner', '-v', 'error', '-ss', f'{t0:.3f}', '-t', f'{secs:.3f}', '-i', video,
+                                   '-vf', f'fps=60,{TONEMAP},scale={self.w}:{self.h}:flags=lanczos,format=rgb24', '-f', 'rawvideo', '-'],
+                                  stdout=subprocess.PIPE)
+        self.t0, self.n, self.i, self.cur = t0, self.w * self.h * 3, -1, None
+
+    def frame(self, v):
+        want = max(0, round((v - self.t0) * 60))
+        while self.i < want:
+            b = self.p.stdout.read(self.n)
+            if len(b) < self.n:
+                break   # past the end: hold the last frame
+            self.cur, self.i = Image.frombuffer('RGB', (self.w, self.h), b, 'raw', 'RGB', 0, 1), self.i + 1
+        return self.cur
+
+    def crop(self, v, box, pw, sh):
+        """The screen-px box (x0, y0, x1, y1) of the frame at v, scaled to pw x sh (float box: sub-pixel pans)."""
+        return np.asarray(self.frame(v).resize((pw, sh), Image.LANCZOS, box=tuple(b / self.scale for b in box)))
+
+    def close(self):
+        self.p.stdout.close()
+        self.p.kill()
+        self.p.wait()
+
+
+def crop_path(c, times, aspect, screen=(5120, 2160)):
+    """Per route second in `times`, the crop box (x0, y0, x1, y1) in screen px: the entry's path keyframes (t, cx, cy, h),
+    linear between them, smoothed with a Gaussian of path_sigma s (no stops at the keyframes, no jumps), width = h * aspect,
+    kept inside the screen and above path_ymax (the hotbar, the cursor); `avoid` boxes (t0, t1, x0, y0, x1, y1) a crop must not
+    touch in that route time (a desktop notification over one recording) are reported."""
+    k = np.array(c['path'], float)
+    fine = np.arange(times[0] - 3, times[-1] + 3, 1 / 60)
+    cx, cy, h = (np.interp(fine, k[:, 0], k[:, i]) for i in (1, 2, 3))
+    sig = c.get('path_sigma', 0.5) * 60
+    g = np.exp(-0.5 * (np.arange(-int(3 * sig), int(3 * sig) + 1) / sig) ** 2)
+    g /= g.sum()
+    cx, cy, h = (np.convolve(np.pad(x, len(g) // 2, mode='edge'), g, 'valid') for x in (cx, cy, h))
+    ymax = c.get('path_ymax', screen[1])
+    boxes = []
+    for t in times:
+        i = min(len(fine) - 1, int(round((t - fine[0]) * 60)))
+        hh = min(h[i], ymax)
+        ww = hh * aspect
+        x0 = min(max(cx[i] - ww / 2, 0), screen[0] - ww)
+        y0 = min(max(cy[i] - hh / 2, 0), ymax - hh)
+        boxes.append((x0, y0, x0 + ww, y0 + hh))
+        for a0, a1, ax0, ay0, ax1, ay1 in c.get('avoid', []):
+            if a0 <= t <= a1 and x0 < ax1 and x0 + ww > ax0 and y0 < ay1 and y0 + hh > ay0:
+                print(f'WARNING: crop at route {t:.2f} s touches the avoid box {ax0}:{ay0}-{ax1}:{ay1}')
+    return boxes
 
 
 def fps_overlay(vals, sw, sh, k, words):
@@ -778,26 +849,44 @@ def fps_race(a, name, cw, strip, label_px, k):
     print(f'== {name}: strip label {label!r} at {label_px} px; ' + '; '.join(f"{w} {os.path.basename(d)} {r['fps']:.1f} fps p99 {r['p99']:.1f} ms route {r['secs']:.2f} s, "
                                     f"route start at video {v:.2f} s" for w, d, r, v in zip(words, caps, runs, vs))
           + f'; ratio {ratio:.3f}; race route {t0:.2f}-{t0 + secs:.2f} s + {c["end_hold"]} s card')
-    sides = [RaceSide(f'{d}/recording.mp4', v + t0, secs + 0.5, c['crop'], None, 0, pw, sh) for d, v in zip(caps, vs)]
+    follow = 'path' in c
+    win, tick = c.get('fps_window', FPS_WINDOW), c.get('fps_tick', FPS_TICK)
+
+    def open_sides(start, length):
+        if follow:
+            return [FollowSide(f'{d}/recording.mp4', v + start, length + 0.5) for d, v in zip(caps, vs)]
+        return [RaceSide(f'{d}/recording.mp4', v + start, length + 0.5, c['crop'], None, 0, pw, sh) for d, v in zip(caps, vs)]
+    sides = None if a.still else open_sides(t0, secs)
     blank = np.zeros((sh, sw - pw, 3), np.uint8)
     cache = {}
 
     def frame(t):
-        fr = [side.frame(v + t) for side, v in zip(sides, vs)]
-        vals = tuple(round(live_fps(r, t)) for r in runs)
+        if follow:   # the same moving box on both recordings at the same route second
+            box = crop_path(c, [t], pw / sh)[0]
+            fr = [side.crop(v + t, box, pw, sh) for side, v in zip(sides, vs)]
+        else:
+            fr = [side.frame(v + t) for side, v in zip(sides, vs)]
+        vals = tuple(round(live_fps(r, t, win, tick)) for r in runs)
         if vals not in cache:
             cache.clear()
             cache[vals] = fps_overlay(vals, sw, sh, k, words)
         return compose(base, np.hstack([fr[0], blank]), np.hstack([blank, fr[1]]), cache[vals], pw, strip)
     end = fps_end(base, runs, ratio, sw, sh, k, words, strip)
-    if a.still:
-        Image.fromarray(frame(t0 + secs / 2)).save(a.still)
+    if a.still:   # --at t,t,...: one still per route second (stem-<t>.png), else the clip's middle
         stem, ext = os.path.splitext(a.still)
+        ats = [float(x) for x in a.at.split(',')] if a.at else [t0 + secs / 2]
+        for t in ats:
+            sides = open_sides(t, 0.2)
+            out = a.still if len(ats) == 1 else f'{stem}-{t:g}{ext}'
+            Image.fromarray(frame(t)).save(out)
+            for side in sides:
+                side.close()
+            print('still', out, f'at route {t:.2f} s', 'crop' if not follow else 'box %.0f:%.0f-%.0f:%.0f' % crop_path(c, [t], pw / sh)[0])
         Image.fromarray(end).save(f'{stem}-end{ext}')
-        for side in sides:
-            side.close()
-        print('still', a.still, f'{stem}-end{ext}', base.shape, f'at route {t0 + secs / 2:.1f} s')
         return
+    if follow:   # print the path once, every second
+        for t in np.arange(t0, t0 + secs + 1e-6, 1.0):
+            print(f'   route {t:5.2f} s: box %.0f:%.0f-%.0f:%.0f' % crop_path(c, [t], pw / sh)[0])
     work = f'build/anim/{name}-{a.theme}-{cw}'
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(f'{work}/frames')
@@ -817,6 +906,7 @@ def main():
     ap.add_argument('--theme', default='light', choices=THEMES)
     ap.add_argument('--still', help='write one composed frame (2 s in, line mid-sweep at a third) to this PNG and stop')
     ap.add_argument('--crf', default='35')
+    ap.add_argument('--at', help='with --still on an fps race: route seconds, comma-separated, one still each')
     ap.add_argument('--len', type=float, default=2 * (SWEEP + HOLD) + END_HOLD, help='clip seconds (default one divider cycle)')
     ap.add_argument('--size', type=int, help='square canvas N x N (the headline animation is 630)')
     ap.add_argument('--gif', action='store_true', help='write workshop-media/template-<name>.gif (gifski) instead of the AVIF')
