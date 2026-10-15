@@ -837,7 +837,7 @@ def fps_race(a, name, cw, strip, label_px, k):
     caps = [run_dir(l) for l in c['cap']]
     runs = [fps_run(d) for d in caps]
     ratio = runs[1]['fps'] / runs[0]['fps']
-    label = a.label or c['label'].format(x=f'{ratio:.1f}x')
+    label = a.label or c['label'].format(x=f'{ratio:.1f}'.removesuffix('.0') + 'x')  # '5x', not '5.0x' (maintainer, 2026-10-15)
     top = round(26 * k)
     while label_px > 20 and ImageFont.truetype(FONT, label_px).getlength(label) > sh - 2 * top:
         label_px -= 1   # a label longer than the strip (22 characters at 630) shrinks until it fits with the padding at both ends
