@@ -2036,6 +2036,7 @@ public final class LightingJNI {
                            this.pzoptWhiten(); // pzopt
                         } // pzopt
 
+                        java.lang.invoke.VarHandle.releaseFence(); // pzopt: playerLosParallel, the refreshed visibility bits are visible to a worker that sees the new tick (pzoptPeekVis)
                         this.updateTick = LightingJNI.updateCounter[this.playerIndex];
                         if ((this.vis & 1) != 0) {
                            // pzopt: lightingReadParallel. On a frame worker the room / meta hooks are recorded for the game thread
@@ -2076,6 +2077,36 @@ public final class LightingJNI {
       /** pzopt: devDrawListTrace, the lighting pass this square's light was last read for. */
       public int pzoptTick() { // pzopt
          return this.updateTick; // pzopt
+      } // pzopt
+
+      /**
+       * pzopt: playerLosParallel, a frame worker. The visibility bits bCouldSee / bCanSee would answer now, when asking them
+       * would not refresh this square: already read in this lighting pass, or the native says it did not change (then
+       * bit 3 is set: stock's read counts it in notDirty). -1 when the read would refresh the square (the game thread
+       * reads it at its place in the loop). Reads only; the native's getSquareDirty is a pure read (lightingReadParallel).
+       */
+      public int pzoptPeekVis() { // pzopt
+         if (this.playerIndex == -1 || !PerformanceSettings.fboRenderChunk || pzopt.LightTrace.CHECK && pzopt.LightTrace.on || pzopt.DrawRecorder.recording) { // pzopt
+            return -1; // pzopt
+         } // pzopt
+         if (this.square.chunk == null) { // pzopt: updateFBORenderChunk does nothing
+            return this.vis & 7; // pzopt
+         } // pzopt
+         int pzoptCounter = LightingJNI.updateCounter[this.playerIndex]; // pzopt
+         int pzoptTick = this.updateTick; // pzopt: the game thread may refresh this square while the batch runs (a serial object on it): its refresh stores the tick last, after a release fence
+         java.lang.invoke.VarHandle.acquireFence(); // pzopt: so a new tick read here comes with the bits that refresh wrote
+         if (pzoptCounter == -1 || pzoptTick == pzoptCounter) { // pzopt: read in this pass already (before the batch or by that refresh): no further refresh this pass
+            return this.vis & 7; // pzopt
+         } // pzopt
+         if (!LightingJNI.getSquareDirty(this.playerIndex, this.square.x, this.square.y, this.square.z + 32)) { // pzopt
+            return this.vis & 7 | 8; // pzopt
+         } // pzopt
+         return -1; // pzopt
+      } // pzopt
+
+      /** pzopt: playerLosParallel, game thread: the notDirty reads the workers' peeks stood in for. */
+      public static void pzoptNotDirty(int count) { // pzopt
+         notDirty += count; // pzopt
       } // pzopt
 
       public int pzoptTraceStale = -1; // pzopt: devDrawListTrace, the traced frame a translucent draw read this square's light before its refresh

@@ -122,6 +122,22 @@ public final class MovingObjectUpdateScheduler {
       } // pzopt
    } // pzopt
 
+   /** pzopt: schedulerFillParallel (f9-los), game thread, in the set's order: pzoptAdd with the object reads the classification task made. */
+   public void pzoptAddTail(IsoMovingObject isoMovingObject, UpdateSchedulerSimulationLevel sim, int index, boolean inPlace, boolean zombie, boolean due) { // pzopt
+      this.simulationLevels[sim.getUpdateOrderIndex()].pzoptAddAt(isoMovingObject, index, inPlace); // pzopt: the bucket add with the worker's reads
+      if (pzopt.Config.INSTRUMENT && zombie) { // pzopt: instrument, zombies per simulation level
+         this.pzoptLevelCount[sim.ordinal()]++; // pzopt
+      } // pzopt
+      if (pzoptSeparateBatch && zombie && due) { // pzopt: separateParallel, as in startFrame
+         pzopt.SeparateBatch.add((IsoZombie)isoMovingObject); // pzopt
+      } // pzopt
+   } // pzopt
+
+   /** pzopt: devSchedFillCheck (f9-los), the bucket of one simulation level. */
+   public MovingObjectUpdateSchedulerUpdateBucket pzoptLevelBucket(int order) { // pzopt
+      return this.simulationLevels[order]; // pzopt
+   } // pzopt
+
    private UpdateSchedulerSimulationLevel getUpdateSchedulerSimulationLevelForObject(IsoMovingObject isoMovingObject, float averageFps) {
       if (this.isEnabled && !GameServer.server) {
          UpdateSchedulerSimulationLevel minSim = isoMovingObject.getMinimumSimulationLevel();

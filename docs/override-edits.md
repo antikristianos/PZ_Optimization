@@ -8037,3 +8037,136 @@ after the GPU had already finished), GC ~8.
   `lightingStrongFrameMs=9` and a fixed frame-queue depth (`frameQueueMinPct=260` = frameQueueMaxPct): runs resid-cfb6 / cfb7
   99.53 / 99.03 % <= 9 ms, p99 8.81 / 8.99 ms, p99.9 10.14 / 13.98 ms, max 15.1 / 16.7 ms, 120.0 / 119.9 fps; drive-120-south
   99.4 % / p99 8.6 (resid-drivef1/2). Step start -> on screen 19.0-19.6 -> 22.0 ms on Louisville, 14-17 -> 22.1 ms on the drive.
+
+## Present-path swap blocks (f9-present, 2026-10-15)
+
+The "swap blocked 0.5-2 ms after the GPU had finished" misses of the Louisville lock runs (~8 a run outside the bursts, plus
+most swap blocks of GPU-late frames) were MangoHud's: run.sh preloads MangoHud with `config/mangohud-benchmark.conf`
+(`full`, every GPU stat over NVML, a log row every frame) and its `glXSwapBuffers` hook is where the render thread waited.
+`devSwapProbe` samples showed the render thread inside the GLX swap in a futex wait or spinning, with Xwayland and KWin
+idle, the driver's worker thread running or in D state on the nvidia kernel driver's rwlock (`os_acquire_rwlock_write`),
+and MangoHud's `mangohud-nvidia` polling thread running / holding `os_acquire_rwlock_read`. The same lock set with
+`run.sh --no-mangohud` (in-game overlay log only, which is what goal.py reads): 0-3 swap blocks a run instead of 48-69, no
+blocks even in frames whose GPU was still busy at the swap call (with MangoHud a third of those blocked), and the "gpu"
+miss class fell from 15-18 to 0-4 a run (f9p-nomh1/2 vs f9p-mh1/2). Native Wayland (EGL) has no swap blocks either, but
+NVIDIA's EGL runs no threaded-optimisation worker, so the render submit took 4.45 ms p50 instead of 1.57 (resid-wl1 vs
+resid-cfb6; GLX with `__GL_THREADED_OPTIMIZATIONS=0`: 3.56) and the render thread held the game thread at the hand-off.
+
+- `devSwapProbe` (dev, off; `devSwapProbeSampleUs` 300, `devSwapProbePeriodUs` 100): `org.lwjglx.opengl.Display.update` and
+  `processMessages` call `pzopt.SwapProbe.mark` at the boundaries of the swap, the event pump, the Keyboard / Mouse polls,
+  the cursor update and the focus query (`glfwGetWindowAttrib(FOCUSED)`, a synchronous `XGetInputFocus` on X11; split off
+  its `setDisplayFocused` line by a mark before and after, the call itself unchanged). One `F` row per frame in
+  `pzopt-swapprobe.out` with each segment's microseconds; a sampler thread reads, while a segment lasts past the threshold,
+  the render thread's `/proc/self/task/TID/syscall` + `wchan` (with the fd's target), Xwayland's and kwin_wayland's main
+  thread state + wchan, and every non-Java thread of the process that is not asleep (`S` rows). Marks outside
+  `update(true)` are ignored. Analysis: f9-present's `probe.py`, `blkgpu.py`, `swapblk.py` (HANDOFF-present.md).
+- Not override edits, same pass: `frameQueueRtHold` (timing only, off; `frameQueueRtPrio` 1): the render thread switches to
+  SCHED_FIFO (with SCHED_RESET_ON_FORK) for frameQueue's hold (1) or the hold and the swap (2), through `sched_setscheduler`
+  on itself (FFM; needs RLIMIT_RTPRIO > 0, refused otherwise and logged once). Only with a short hold spin
+  (`frameQueueSpinUs` != 1000): with the 1 ms spin, the FIFO render thread kept the GL driver's worker off a shared CPU and
+  the next swap waited for it (f9p-rtab1-3: 141-160 swap blocks > 0.5 ms in the FIFO phase, 1-2 outside). The frame-queue
+  log line now counts holds that ended > 0.2 ms after their target. GtAb keys `frameQueueRtHold` (bit 55) and
+  `frameQueueSpin` (bit 39: off phase = the 1 ms spin of waitUntil). devSwapProbe adds `H` rows: a late hold's run-queue
+  wait and on-CPU time from `/proc/thread-self/schedstat`. Of 56 holds that ended > 0.5 ms late (7 runs) 17 overlapped a GC
+  pause (the parked render thread woke into the safepoint); most of the rest waited 0.4-1.7 ms on the run queue.
+
+## The player's line of sight and the scheduler's startFrame on the frame workers (f9-los, 2026-10-15): IsoPlayer, LightingJNI, MovingObjectUpdateScheduler
+
+Asked for after the flip pass (f8-flip): on the Ayaneo Flip (Ryzen AI 9 HX 370, single-thread bound, 11 frame workers mostly
+idle) the Louisville horde spends ~1.1-1.2 ms a frame in `IsoPlayer.updateLOS` even with `playerLosFast`, and ~0.35-0.4 ms in
+`MovingObjectUpdateScheduler.startFrame` with `schedulerClassifyParallel`. Two keys, both off by default, both exact.
+
+### `playerLosParallel` (new `pzopt.PlayerLosBatch`; IsoPlayer, LightingJNI)
+
+- `IsoPlayer.updateLOS`: a third branch beside the stock loop and the `playerLosNative` experiment,
+  `pzoptUpdateLosParallel`. `PlayerLosBatch.start` walks the cell's object set into an array and streams it to the workers
+  in chunks of 64 (one `FrameBatch.runAsync` batch; a first version streamed the chunks during the walk and kept the
+  workers spinning: +3-7 ms of CPU a frame on the flip).
+  Per object a worker computes what the stock loop reads before any side effect: the class filters, the distance (the same
+  `IsoUtils.DistanceTo` float expression), the square, and the could-see / can-see bits. The game thread then runs the stock
+  loop body in the set's order with those answers (`await` per chunk: it waits for the chunk or runs an unclaimed chunk
+  itself, `FrameBatch.helpOne`); the body is the stock body with `bServer` / `bClient` false.
+- An object keeps the stock reads at its place in the loop (flag `SERIAL`) when its square's light would be refreshed by the
+  read (`JNILighting.pzoptPeekVis` answers -1: the refresh writes the square, invalidates its level, runs the room-seen
+  hooks), when it is a zombie that could not or cannot be seen from its square and is in `ClimbThroughWindowState` (the
+  head square: an animation-player read that may replace the player), a corpse reanimated for grappling, or another player
+  (or the player itself).
+- A zombie that neither could nor can be seen ends in stock's "not visible" branch with only `setTargetAlpha(player, 0)`:
+  no spot test (it needs could-see), no alpha snap (it needs a target of 1), the detection range and asleep test only pick
+  the branch. The worker writes that target alpha and marks it `DONE`; the game thread never touches the object (most of
+  the horde out of view). The only stock reader of another object's target alpha inside the loop is a grapple-only corpse
+  reading its grappler's (`grappledBy.getTargetAlpha()`): `PlayerLosBatch.grapplerAlpha` answers with the value from before
+  the worker's write when the grappler comes later in the loop. Not with `isSeeEveryone()` (stock sets alpha and target to
+  1 first).
+- Why nothing the game thread does in the loop changes a later object's worker reads: the loop writes target alphas, the
+  spot test writes the spotting zombie (target, facing, last-seen) and the player (XP, targeted flag), a lazy refresh writes
+  only its own square, positions and squares do not move inside the loop, and the set cannot change (stock would throw).
+  A refresh of a square the workers may be reading at the same moment (a SERIAL object on it): `updateFBORenderChunk` now
+  issues `VarHandle.releaseFence()` before it stores the new tick (marked, behaviour unchanged), and the peek reads the
+  tick, `acquireFence()`, then the bits, so a new tick comes with the bits that refresh wrote; a square whose tick is old
+  and whose native dirty flag is set is never read on a worker.
+- `JNILighting.pzoptPeekVis` (new): the bits `bCouldSee` / `bCanSee` would answer when asking would not refresh the square
+  (no chunk, counter -1, already read in this lighting pass, or the native's `getSquareDirty` false: the native getter is a
+  pure read, lightingReadParallel's disassembly). `pzoptNotDirty(n)` adds the `notDirty` counts the skipped stock reads
+  would have made (two per not-dirty square; the counter is never read).
+- `playerLosFast` can now alternate in-run (ZombAb name `playerLosFast`): a pass after a stock pass rebuilds the identity
+  set first (`PlayerLos.invalidate`: the stock path may have cleared and refilled the stack to the same size).
+- Guards: single player, `PerformanceSettings.fboRenderChunk`, more than one worker, no entity flight / asynchronous batch
+  pending, not inside a batch task. A task that throws turns the rest of its chunk `SERIAL` and the pass off.
+- Rig `devPlayerLosCheck`: at each object's place the game thread re-reads stock's distance, square, could-see / can-see
+  (head squares included) and compares; for a skipped object it checks the reason (physics / vehicle, no square, or stock
+  could and can not see it, no see-everyone, not grapple-only). The reads it repeats refresh nothing (the peek said so).
+
+### `schedulerFillParallel` (pzopt.SchedulerClassify; MovingObjectUpdateScheduler, MovingObjectUpdateSchedulerUpdateBucket, IsoZombie)
+
+With `schedulerClassifyParallel`, what was left of startFrame on the game thread: the missing-square test while walking the
+object set (a field of every object: a cache miss each), its share of the classification batch, and the bucket fill
+(`pzoptAdd` → `bucket.add`: `getID`, the player / vehicle test, the list append, the zombie / frame-mod test of the
+separation queue: more misses on every object). Now:
+- the classification task also tests the square (null: the object is left to the game thread, whose stock steps
+  `setCurrentSquareFromPosition` + classify run after the batch in the set's order; the classification never reads another
+  object's square) and makes every read the fill needs (`getID() % frameMod`, player / vehicle, zombie, due this frame);
+- the game thread then fills in the set's order from those arrays (`MovingObjectUpdateScheduler.pzoptAddTail` →
+  `MovingObjectUpdateSchedulerUpdateBucket.pzoptAddAt`: `add()` with the index and the in-place test given; then the
+  instrument count and the separation queue as `pzoptAdd`), touching no object;
+- `IsoZombie.getMinimumSimulationLevel` (new override, active only with this key and ecsLookupFast): IsoGameCharacter's rule
+  with the state machine component from the `ecsLookupFast` field instead of IsoMovingObject's `tryGetECSComponent` (the
+  component map's hash probe was ~70 % of the classification on the flip, asprof f8f-asp). The component is registered
+  once in the constructor and never replaced; with the field still empty the stock path answers. The scheduler is the only
+  caller in the game.
+- First tries, dropped: the set streamed to the workers during the walk (`FrameBatch.runStream`: eleven workers spinning on
+  unpublished chunks for the whole walk, more CPU on a power-limited laptop, -0.02 ms) and one fill task per simulation level
+  (one level holds most of the horde: 1,080-2,066 at full, 374-1,914 at 1/16 a frame on the flip).
+- Rigs: `devSchedFillCheck` compares every list of every level's bucket (order, size, in-place count) with a serial fill of
+  the same classification, and every zombie's memoised minimum level with the stock lookup; `devSchedCheck` keeps checking
+  the classification itself.
+
+### Exactness and results (f9-los, 2026-10-15)
+
+Rigs (Louisville horde route, both keys on): flip f9l-chk2 / chk4 and desktop f9l-desk-chk: `devPlayerLosCheck` 0 mismatches in
+10.3 M + 10.2 M + 14.9 M checks, `devSchedCheck` 0 in 9.0 M + 8.8 M + 12.8 M, `devSchedFillCheck` 0 in 115 k + 111 k + 159 k bucket
+lists and 0 in 17.5 M + 25.4 M memoised minimum levels. **Timing-only:** flip f9l-chk1 (1 in 10.3 M) and chk3 (2 in 9.6 M) had a
+square the worker found "not dirty" (the native's `getSquareDirty` false, tick of an older pass) that the native reported dirty
+later in the same loop, so stock's read at the object's place refreshed it (could/can bits of one object differ for that frame).
+The native's flag changed while the game thread was in the loop: the lighting thread (`LightingThread`, `DoLightingUpdateNew`)
+runs beside the game thread, so stock's own answer for such a square depends on when its read happens; the worker's answer is
+stock's at a few microseconds earlier. Everything else the workers read is fixed for the loop.
+
+Flip (Ryzen AI 9 HX 370, balanced, Louisville uncapped, round-8 "now" args, 11 workers). In-run A/Bs (pzopt-gtab.out, route
+window; periods 770 / 530 ms in ab5 — a 500 ms group in ab1-ab4 aliased with something on a 1 s cycle and showed whole-frame
+deltas far beyond its own section's):
+
+| run | key | its section off -> on (ms) | frame wall on - off (ms) |
+|---|---|---|---|
+| f9l-ab1 (2x2) | playerLosFast | player 1.117 -> 1.101 (parallel off), 0.504 -> 0.361 (parallel on) | (500 ms group, not used) |
+| f9l-ab3 / ab4 / ab5 | playerLosParallel | player 1.13 -> 0.42, 1.07 -> 0.39, 1.25 -> 0.42; scheduler update -0.67 / -0.67 / -0.68 | -0.40 / -0.59 / -0.72 (ab5 paired 2 s bins -0.83 +- 0.78) |
+| f9l-ab4 / ab5 | schedulerFillParallel | startFrame 0.435 -> 0.317, 0.430 -> 0.326 | ab5 -0.36 (paired -0.11 +- 0.94) |
+
+Whole runs (devFrameSections on, Tctl < 60 C before each, alternating order): playerLosFast on (def) 74.8 / 70.4 / 79.7 fps,
+off (nofast) 74.2 / 79.1 fps (a third, nofast4, 49 fps, was slow from the settle window on in every section: discarded) — player
+1.17 vs 1.18-1.21 ms; + playerLosParallel 82.1 / 84.1 fps (p50 11.2-11.5, p99 22.7-22.9 ms, player 0.38-0.40 ms); + both 85.9 /
+84.7 fps (p50 10.9-11.2, p99 21.8-22.0, p99.9 27.0-30.1 ms, player 0.38-0.39, startFrame 0.315-0.318 ms); game thread 94-95 %,
+CPU 28 %, GPU 30 %, socket 37-38 W (36 with the keys off). Desktop (round-8 lock set, cap 120): both keys on f9l-desk-on2 99.3 %
+<= 9 ms, p99 8.9, p99.9 13.3, max 16.5 ms vs keys off f9l-desk-off 99.2 %, 8.9, 16.2, 17.8 (quiet runs, ext 0.28 / 0.31,
+strongMarks 5.8k, settle frames clean); in-run at the cap (f9l-desk-ab): player 0.354 -> 0.167 ms, startFrame 0.229 -> 0.174 ms,
+game-thread CPU -0.06 / -0.11 ms, process CPU +2.4 ms a frame for the LOS batch.

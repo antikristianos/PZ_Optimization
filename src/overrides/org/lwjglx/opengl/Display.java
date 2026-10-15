@@ -354,9 +354,12 @@ public class Display {
 
    public static void update(boolean processMessages) {
       try {
+         pzopt.SwapProbe.mark(pzopt.SwapProbe.CALL); // pzopt: devSwapProbe, where Display.update's time goes
          pzopt.VsyncLock.beforeSwap(); // pzopt: vsyncLock, the swap interval the cap asks for
          pzopt.LowLatency.beforeSwap(); // pzopt: reflexSleep, how long the swap blocks (vsync)
+         pzopt.SwapProbe.mark(pzopt.SwapProbe.SWAP_BEGIN); // pzopt: devSwapProbe
          swapBuffers();
+         pzopt.SwapProbe.mark(pzopt.SwapProbe.SWAP_END); // pzopt: devSwapProbe
          pzopt.InputLag.swapped(); // pzopt: harness input-lag probe (--flag inputlag=1), the frame's swap returned
          pzopt.DriveJitter.swapped(); // pzopt: devDriveJitter, the swap of the frame acquired last
          pzopt.LowLatency.afterSwap(); // pzopt: gpuMaxFrames, fence the frame and wait for the GPU queue to drain
@@ -366,8 +369,10 @@ public class Display {
       }
 
       if (processMessages) {
+         pzopt.SwapProbe.mark(pzopt.SwapProbe.POLL_BEGIN); // pzopt: devSwapProbe
          processMessages();
       }
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.RET); // pzopt: devSwapProbe
    }
 
    private static void updateMouseCursor() {
@@ -404,9 +409,12 @@ public class Display {
 
    public static void processMessages() {
       GLFW.glfwPollEvents();
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.POLL_END); // pzopt: devSwapProbe
       Keyboard.poll();
       Mouse.poll();
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.INPUT_END); // pzopt: devSwapProbe
       updateMouseCursor();
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.CURSOR_END); // pzopt: devSwapProbe
       pzopt.InputLag.afterEvents(); // pzopt: harness input-lag probe, what glfwPollEvents delivered
       if (latestResized) {
          latestResized = false;
@@ -422,7 +430,9 @@ public class Display {
          displayResized = false;
       }
 
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.FOCUS_BEGIN); // pzopt: devSwapProbe
       setDisplayFocused(GLFW.glfwGetWindowAttrib(Display.Window.handle, 131073) == 1);
+      pzopt.SwapProbe.mark(pzopt.SwapProbe.FOCUS_END); // pzopt: devSwapProbe
    }
 
    public static void swapBuffers() throws LWJGLException {

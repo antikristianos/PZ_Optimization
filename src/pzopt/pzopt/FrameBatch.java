@@ -364,6 +364,16 @@ public final class FrameBatch {
       }
    }
 
+   /** Game thread: the asynchronous batch {@link #runAsync} just started (the token of {@link #isPending}), or null. */
+   public static Object pendingBatch() {
+      return pending;
+   }
+
+   /** Game thread: true while {@code token} is still the pending batch (f9-los: an in-order consumer helps only its own stream). */
+   public static boolean isPending(Object token) {
+      return token != null && token == pending;
+   }
+
    /** Game thread: true while the stream {@code token} is pending and unsealed. */
    public static boolean streamOpen(Object token) {
       return token != null && token == pending && !((Batch) token).sealed;

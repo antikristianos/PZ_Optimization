@@ -580,7 +580,7 @@ public final class Pacing {
    /** frameQueueGpu: per query slot, the frame's CPU slot -> ready time and its beforeSwap time, until its GPU timestamp is read. */
    private static final long[] qCpuLag = new long[QUERIES], qBefore = new long[QUERIES];
    private static final boolean[] qGpuPending = new boolean[QUERIES];
-   private static long qFrames, qHeld, qLate, qHoldNsSum, qTargetNsSum, qLastLogNs;
+   private static long qFrames, qHeld, qLate, qHoldNsSum, qTargetNsSum, qLastLogNs, qOver, qOverMaxNs;
    private static BufferedWriter qLog;
    private static long qFlushNs;
 
@@ -641,12 +641,27 @@ public final class Pacing {
       qFrames++;
       qTargetNsSum += qTargetNs;
       if (target > now) {
-         if (Config.FRAME_QUEUE_SPIN_US != 1000) {
+         // frameQueueSpinUs (in-run A/B: devGtAlternateKeys=frameQueueSpin, off phase = the 1 ms spin of waitUntil)
+         boolean shortSpin = Config.FRAME_QUEUE_SPIN_US != 1000 && GtAb.on(GtAb.FQ_SPIN);
+         // frameQueueRtHold only with a short spin: a SCHED_FIFO thread spinning 1 ms keeps a CFS thread that shares its CPU
+         // (often the GL driver's worker, woken next to it) off the CPU, and the next swap waits for that worker (f9p-rtab1-3:
+         // 150 swap blocks > 0.5 ms in the FIFO phase vs 2 outside it)
+         rtHeld = shortSpin && Config.FRAME_QUEUE_RT_HOLD > 0 && GtAb.on(GtAb.RT_HOLD) && rtEnter();
+         SwapProbe.holdBegin(); // devSwapProbe: the render thread's run-queue wait during the hold
+         if (shortSpin) {
             holdUntil(target); // frameQueueSpinUs: park (timer slack 1 ns) to the last frameQueueSpinUs, spin the rest
          } else {
             waitUntil(target);
          }
          long after = System.nanoTime();
+         if (rtHeld && Config.FRAME_QUEUE_RT_HOLD == 1) {
+            rtExit(); // frameQueueRtHold=1: back to SCHED_OTHER before the swap
+         }
+         SwapProbe.holdEnd(after - target);
+         if (after - target > 200_000L) {
+            qOver++; // the hold ended late (the render thread had no CPU when its deadline came)
+            qOverMaxNs = Math.max(qOverMaxNs, after - target);
+         }
          waitNs = after - now;
          now = after;
          qHeld++;
@@ -659,12 +674,12 @@ public final class Pacing {
       }
       if (now - qLastLogNs > 10_000_000_000L) {
          if (qLastLogNs != 0L && qFrames > 0) {
-            Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d",
+            Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d, holds ended > 0.2 ms late %d (max %.2f ms)%s",
                   qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
-                  catchUpSlots, droppedSlots) + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred : ""));
+                  catchUpSlots, droppedSlots, qOver, qOverMaxNs / 1e6, Config.FRAME_QUEUE_RT_HOLD > 0 ? ", rt holds " + rtHolds + (rtState < 0 ? " (unavailable)" : "") : "") + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred : ""));
          }
          qLastLogNs = now;
-         qFrames = qHeld = qLate = qHoldNsSum = qTargetNsSum = 0L;
+         qFrames = qHeld = qLate = qHoldNsSum = qTargetNsSum = qOver = qOverMaxNs = rtHolds = 0L;
          catchUpSlots = droppedSlots = 0L;
       }
       return now;
@@ -883,6 +898,9 @@ public final class Pacing {
 
    /** Render thread, after Display.update returned. */
    public static void afterSwap() {
+      if (rtHeld) {
+         rtExit(); // frameQueueRtHold=2: SCHED_FIFO from the hold to the swap's return
+      }
       if (Config.GC_SLACK_FIT || GcSlack.AFTER_SWAP) {
          rtSwapRetNs = System.nanoTime(); // gcSlackFit / gcSlackAfterSwap: the render thread is free until its next acquire
       }
@@ -991,6 +1009,67 @@ public final class Pacing {
          }
       } catch (Throwable t) {
          Log.warn("limiterSleep: no timer slack change (" + t + ")");
+      }
+   }
+
+   // --- frameQueueRtHold (f9-present, render thread) --------------------------------------------
+   private static final int SCHED_OTHER = 0, SCHED_FIFO = 1, SCHED_RESET_ON_FORK = 0x40000000;
+   private static java.lang.invoke.MethodHandle schedSetscheduler;
+   private static java.lang.foreign.MemorySegment schedParam;
+   /** 0 = not tried, 1 = works, -1 = refused (RLIMIT_RTPRIO 0 / no FFM): stays off. */
+   private static int rtState;
+   private static boolean rtHeld;
+   private static long rtHolds;
+
+   /**
+    * frameQueueRtHold: the calling (render) thread to SCHED_FIFO at frameQueueRtPrio. A woken RT thread preempts any CFS
+    * thread on its CPU (or the kernel pushes it to a CPU running a lower class), so the hold's park ends when its timer fires
+    * instead of when the CPU frees up. SCHED_RESET_ON_FORK: a thread started meanwhile does not inherit the policy.
+    */
+   private static boolean rtEnter() {
+      if (rtState < 0) {
+         return false;
+      }
+      try {
+         if (rtState == 0) {
+            java.lang.foreign.Linker l = java.lang.foreign.Linker.nativeLinker();
+            schedSetscheduler = l.downcallHandle(l.defaultLookup().find("sched_setscheduler").orElseThrow(),
+                  java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT,
+                        java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.ADDRESS));
+            schedParam = java.lang.foreign.Arena.global().allocate(java.lang.foreign.ValueLayout.JAVA_INT);
+         }
+         schedParam.set(java.lang.foreign.ValueLayout.JAVA_INT, 0L, Config.FRAME_QUEUE_RT_PRIO);
+         int r = (int) schedSetscheduler.invokeExact(0, SCHED_FIFO | SCHED_RESET_ON_FORK, schedParam);
+         if (r != 0) {
+            rtState = -1;
+            Log.warn("frameQueueRtHold: sched_setscheduler(SCHED_FIFO " + Config.FRAME_QUEUE_RT_PRIO + ") refused (RLIMIT_RTPRIO?); off");
+            return false;
+         }
+         if (rtState == 0) {
+            Log.info("frameQueueRtHold: the render thread holds its frames at SCHED_FIFO " + Config.FRAME_QUEUE_RT_PRIO
+                  + (Config.FRAME_QUEUE_RT_HOLD == 2 ? " until the swap returns" : ""));
+         }
+         rtState = 1;
+         rtHolds++;
+         return true;
+      } catch (Throwable t) {
+         rtState = -1;
+         Log.warn("frameQueueRtHold: unavailable (" + t + "); off");
+         return false;
+      }
+   }
+
+   private static void rtExit() {
+      rtHeld = false;
+      try {
+         schedParam.set(java.lang.foreign.ValueLayout.JAVA_INT, 0L, 0);
+         int r = (int) schedSetscheduler.invokeExact(0, SCHED_OTHER | SCHED_RESET_ON_FORK, schedParam);
+         if (r != 0) {
+            rtState = -1;
+            Log.warn("frameQueueRtHold: could not return to SCHED_OTHER (" + r + "); off");
+         }
+      } catch (Throwable t) {
+         rtState = -1;
       }
    }
 

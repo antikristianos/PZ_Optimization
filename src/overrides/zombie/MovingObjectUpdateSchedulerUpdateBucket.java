@@ -80,6 +80,18 @@ public final class MovingObjectUpdateSchedulerUpdateBucket {
       } // pzopt: entityUpdateStream
    }
 
+   /**
+    * pzopt: schedulerFillParallel (f9-los): add() with its two reads of the object made beforehand by the classification task
+    * on a frame worker (index = getID() % frameMod, inPlace = a player or a vehicle), so the game thread's fill touches no object.
+    */
+   public void pzoptAddAt(IsoMovingObject o, int index, boolean inPlace) { // pzopt
+      this.buckets[index].add(o); // pzopt
+      if (inPlace) { // pzopt: entityUpdateStream
+         this.pzoptInPlace[index]++; // pzopt
+         this.pzoptInPlaceList[index].add(o); // pzopt: entityUpdateStreamHoist
+      } // pzopt
+   } // pzopt
+
    public void update(int frameCounter) {
       GameTime.getInstance().perObjectMultiplier = this.frameMod;
       List<IsoMovingObject> fullSimulation = this.buckets[frameCounter % this.frameMod];

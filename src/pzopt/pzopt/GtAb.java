@@ -61,6 +61,8 @@ public final class GtAb {
    public static final long PALETTE_MISMATCH = 1L << 49; // hordePaletteMismatch (tail6 2026-10-14; bit 60 in its worktree; named in parse())
    public static final long CHUNK_PACE = 1L << 51; // chunkHandoffPaceMs (chunk pass f8-chunk 2026-10-13)
    public static final long FRAME_QUEUE = 1L << 48; // frameQueue (f8-twofix 2026-10-14: its cost uncapped and at the cap, within one run; named in parse())
+   public static final long FQ_SPIN = 1L << 39; // frameQueueSpinUs (f9-present 2026-10-15; off phase = the 1 ms spin; named in parse())
+   public static final long RT_HOLD = 1L << 55; // frameQueueRtHold (f9-present 2026-10-15; named in parse())
    public static final long BAKE_GPU = 1L << 54; // bakeBudgetGpu (f8-resid 2026-10-15; named in parse())
    public static final long BURST_GOVERNOR = 1L << 53; // burstGovernor (f8-resid 2026-10-15; named in parse())
    public static final long CORE_ISOLATE = 1L << 52; // coreIsolate (f8-resid 2026-10-15: the reserved cores against none, CorePlacement polls the phase; named in parse())
@@ -135,6 +137,12 @@ public final class GtAb {
          }
          if (k.equals("burstGovernor")) { // f8-resid
             m |= BURST_GOVERNOR;
+         }
+         if (k.equals("frameQueueSpin")) { // f9-present
+            m |= FQ_SPIN;
+         }
+         if (k.equals("frameQueueRtHold")) { // f9-present
+            m |= RT_HOLD;
          }
          if (k.equals("bakeBudgetGpu")) { // f8-resid
             m |= BAKE_GPU;

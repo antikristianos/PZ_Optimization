@@ -6588,6 +6588,30 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
       return pzopt.Overrides.enabled() && pzopt.Config.ECS_LOOKUP_FAST;
    }
 
+   /**
+    * pzopt: schedulerFillParallel (f9-los). IsoGameCharacter's rule with the state machine component from the ecsLookupFast
+    * field instead of IsoMovingObject's tryGetECSComponent (the component map's hash probe: ~70 % of the scheduler's
+    * classification on the flip). The component is registered once in the constructor and never replaced, so both find
+    * the same object; the answer is the same.
+    */
+   @Override
+   public zombie.UpdateSchedulerSimulationLevel getMinimumSimulationLevel() { // pzopt
+      if (!pzopt.Config.SCHEDULER_FILL_PARALLEL || !pzoptEcsFast() || !pzopt.ZombAb.on(pzopt.ZombAb.SCHED_FILL)) { // pzopt
+         return super.getMinimumSimulationLevel(); // pzopt
+      } // pzopt
+      StateMachineComponent pzoptComponent = this.pzoptStateMachineComponent; // pzopt: filled by the first ecsLookupFast accessor (the constructor's)
+      if (pzoptComponent == null) { // pzopt
+         return super.getMinimumSimulationLevel(); // pzopt
+      } // pzopt
+      zombie.UpdateSchedulerSimulationLevel pzoptLevel = this.isDead() || this.isRagdollSimulationActive() || this.isFalling() // pzopt: IsoGameCharacter.getMinimumSimulationLevel
+         ? zombie.UpdateSchedulerSimulationLevel.FULL // pzopt
+         : pzoptComponent.getMinimumSimulationLevel(); // pzopt: IsoMovingObject's tryGetECSComponent finds this same component
+      if (pzopt.Config.DEV_SCHED_FILL_CHECK) { // pzopt: devSchedFillCheck, against the stock lookup
+         pzopt.SchedulerClassify.minLevelChecked(pzoptLevel == super.getMinimumSimulationLevel()); // pzopt
+      } // pzopt
+      return pzoptLevel; // pzopt
+   } // pzopt
+
    // pzopt: actionGroupCache. updateInternal asks ActionGroup for the "zombie" and "zombie-crawler" groups by name on
    // every zombie on every frame; the lookup lower-cases the name into a new String and probes a HashMap for a group
    // that is loaded once at startup and never replaced. The two groups are resolved here on first use instead.
