@@ -7966,3 +7966,40 @@ pzopt only, no override changed; every key off by default (frameQueue itself is 
   -> 18.1-20.6 ms mean. Drive-120-south: 98.3 % / p99 9.8 / max 20.8 -> 99.2 % / 8.8 / 17.2, flips 93.2 -> 98.5 %, latency 9.4 ->
   16.9 ms. `gcSlackQueue=slack`: its own pauses 35 of 35 without a late frame (pace2-q16, q17), but waiting for room lets 4-7
   natural pauses a run come first; GC-overlapping late frames 8-14 -> 4-5 a run.
+
+## Frame queue on by default at a frame cap (maintainer, 2026-10-15; integration round 7, worktree `integ-r7`)
+
+pzopt only (Pacing, FrameCap, Config, the tab Lua), no override changed. Maintainer's decision: the frame queue is on whenever
+a frame cap is set, with f8-pace2's settings: `frameQueue=true`, `frameQueueGpu=true`, `frameQueueSlewUs=500`,
+`frameQueueDecayUsPerS=1000`, `frameQueueMaxPct=260`, `gcSlackQueue=slack` (gcSlack itself has been on since 2026-10-14).
+`frameQueueSpinUs` stays 1000 (the old hold: pace2 measured no effect of a shorter spin). Price: input delay, +3-7 ms step start
+-> screen at a 120 cap (drive-120-south: 10.9 ms mean with presentPacing, 14.2 with the queue and these settings; Louisville
+horde ~20 ms), for an even cadence (drive frames within 9 ms 92.3 % in pace-drv-cap-base on the round-2 build, 97.5 % with the round-1 queue, 99.5 % in pace2-drv2).
+
+Where it acts: `Pacing.stepStart` decides per capped step (`stepQueued`, game thread) and the frame carries it through the
+hand-off ring (`ringQueued` -> `frameQueued` on the render thread); `beforeSwap` takes the queue only for such a frame, every
+other frame takes presentPacing's path exactly as before the change. `Pacing.queueAllowed` keeps the queue out of:
+- uncapped steps: `stepStart(now, 0)` short-circuits before any check; nothing else runs per frame (the GcSlack queue
+  modes only add a volatile store per swap);
+- menus, the pause menu and the loading screen (`GameWindow.isIngameState()`, `GameLoadingState`, `FrameCap.pauseMenuUp()`):
+  the menu cap gains nothing from an even beat and the cursor should not lag; the loading screen's long frames also filled D's
+  window (samples up to 250 ms), so D started the world at its 260 % ceiling and decayed for ~10 s. Menu frames feed no
+  samples, so D carries over from the last world frames;
+- vsync on a fixed refresh (`Display.isVSyncEnabledPzopt() && !Vrr.active()`): the swap already waits for the vblank; a hold
+  only moves a frame to a later vblank (delay, no cadence gain), and with the cap at or above the refresh the hold stacks on
+  the swap's own block. With variable refresh vsync only matters above the range, so the queue stays on there;
+- a cap that is only vrrCap's (`FrameCap.vrrOnlyCapNow()`: the player chose Uncapped and VRR caps the frames): an uncapped
+  player is unaffected. With the player's own cap under VRR the queue replaces presentPacing=auto's hold (one hold either way,
+  never both: `beforeSwap` returns after `queueHold`);
+- macOS, Metal bridge or not: Apple's compositor presents on the refresh grid like vsync, the bridge paces its own presents
+  (presentPacing=auto is off there too), and the queue was never measured on a Mac;
+- `reflexSleep` (opt-in): it drives the hand-off queue towards empty, the frame queue keeps it about two frames deep.
+The state changes are logged once each: `frame queue state: on (capped world)` / `frame queue state: off (<reason>)`.
+Not restricted: every in-game cap of the combo (24-500 fps; D is a percentage of the interval: at 30 fps its 60 % floor holds
+a frame at least 20 ms after its slot, at 300-500 fps the 260 % ceiling is 5-9 ms; not measured at those caps), split screen (one hand-off
+per frame for all players: nothing per player in the queue), Windows (the hold waits with `Pacing.waitUntil`, the same
+park-then-spin presentPacing=auto has used there by default since 2026-09-25). `gcSlackQueue=slack` only acts while
+`Pacing.queueActive()` (now also `stepQueued`), else gcSlack's own rule as before.
+Tab: "Frame queue: every frame on the cap's beat (adds input delay)" and "Frame queue: count the GPU's drawing time" in
+Performance > Smoothness and pacing > Frame pacing (`frameQueue` also in the Simple view and under "Screen tears or judders"),
+"Spare-time garbage collection under the frame queue" (`gcSlackQueue`) after gcSlack; EFFECTS render +1 for both queue keys.

@@ -591,7 +591,7 @@ public final class Config {
     * for the filler and the pause before its swap: the render thread only waits there, and the game step it delays has its D) |
     * slack (the game thread's slack as before, but only while the render thread's hold has that room).
     */
-   public static final String GC_SLACK_QUEUE = string("gcSlackQueue", "off");
+   public static final String GC_SLACK_QUEUE = string("gcSlackQueue", "slack"); // slack by default with the frame queue since 2026-10-15 (maintainer; runs pace2-q16 / q17: its own pauses 35 / 35 without a late frame)
    /** gcSlackQueue=swap: how long after the held swap the filler may run before it stops short of the collection (us). */
    public static final int GC_SLACK_QUEUE_FILL_US = Math.max(100, integer("gcSlackQueueFillUs", 800));
    public static final boolean GC_SLACK_FIT = bool("gcSlackFit", false); // gcSlack v2 (tail6 2026-10-14, needs frameQueue): a scheduled collection runs only where the filler plus the expected pause (p75 of the last 8 measured) delay no swap of the frame queue and drop no limiter slot (pzopt.Pacing.planPause): at a step start, or in the slack right after the render thread's swap (the game thread waits for it); otherwise it waits for a later step until eden is about to run out (urgent). GtAb key gcSlackFit (bit 59) alternates it within a run
@@ -1085,14 +1085,17 @@ public final class Config {
    public static final int PRESENT_PACING_PCT = Math.max(50, Math.min(100, integer("presentPacingPct", 90)));
    public static final int PRESENT_PACING_MARGIN_US = Math.max(0, integer("presentPacingMarginUs", 200));
    /**
-    * Paced frame queue at a frame cap (f8-pace, 2026-10-13; off by default: it adds up to a frame of latency). Every capped
+    * Paced frame queue at a frame cap (f8-pace, 2026-10-13; ON by default since 2026-10-15, maintainer: it adds input latency for
+    * an even cadence: +3-7 ms step start -> swap over presentPacing, and frameQueueGpu + the decay another 3-5 ms on the
+    * Louisville horde / 5-7 ms on the 120 km/h drive (step start -> screen ~20 / 14-17 ms at the 120 cap); only while
+    * a world is played, never uncapped, in menus, with vsync on a fixed refresh, on macOS or with reflexSleep: Pacing.queueAllowed). Every capped
     * step serves one slot of the limiter's grid (start + k / cap); the render thread presents frame k at slot k + D, D a high
     * percentile ({@code frameQueuePct}) of how long frames take from their slot to "ready to swap" without the hold (the
     * game thread's hand-off arrival + the render submit), so a slow game step is absorbed by the slack of the frames around
     * it instead of reaching the screen.
     * Replaces presentPacing at the cap while on (pzopt.Pacing).
     */
-   public static final boolean FRAME_QUEUE = bool("frameQueue", false);
+   public static final boolean FRAME_QUEUE = bool("frameQueue", true);
    public static final int FRAME_QUEUE_PCT = Math.max(50, Math.min(100, integer("frameQueuePct", 99)));
    public static final int FRAME_QUEUE_MARGIN_US = Math.max(0, integer("frameQueueMarginUs", 300));
    /**
@@ -1100,31 +1103,31 @@ public final class Config {
     * frames: past ~230 % the game thread starts to wait at the hand-off (300 %: 1.3 ms a frame on the Louisville cap, run
     * pace-cap-fqdeep) but the share of frames within 9 ms still rose (p97 / 230 %: 81.7 %, p99 / 300 %: 83.3 %).
     */
-   public static final int FRAME_QUEUE_MAX_PCT = Math.max(50, Math.min(400, integer("frameQueueMaxPct", 300)));
+   public static final int FRAME_QUEUE_MAX_PCT = Math.max(50, Math.min(400, integer("frameQueueMaxPct", 260))); // 260 by default since 2026-10-15 (f8-pace2: above ~2.5 intervals the game thread waits at the hand-off)
    /** frameQueue: the shortest D in percent of the cap interval. */
    public static final int FRAME_QUEUE_MIN_PCT = Math.max(0, Math.min(400, integer("frameQueueMinPct", 60)));
    /**
-    * frameQueue (f8-pace2, 2026-10-15; off by default): D's samples include the frame's GPU completion. The swap of an on-time
+    * frameQueue (f8-pace2, 2026-10-15; on by default with the queue since 2026-10-15, maintainer): D's samples include the frame's GPU completion. The swap of an on-time
     * frame goes at its slot + D, but the flip waits for the GPU: on the Louisville cap with the zombie LOD 8 % of the frames were
     * still drawing at their swap call (GPU done 0.7-10 ms after it), so 111 of the 168 on-screen intervals over 9 ms had their
     * swap call on the cadence (run integ6-lod2, present.txt), and the overlay / MangoHud frame time (swap return) blocked with
     * them. A sample is then the frame's slot -> ready time plus how long the GPU took past the end of the render submit (GL
     * timestamp, read a few frames later); without GL timestamps the CPU sample stays.
     */
-   public static final boolean FRAME_QUEUE_GPU = bool("frameQueueGpu", false);
+   public static final boolean FRAME_QUEUE_GPU = bool("frameQueueGpu", true);
    /**
     * frameQueue: the most D may change from one frame to the next, in us (0 = D jumps to each new percentile). A jump of D
     * makes one present interval longer by the jump: 22 of the 63 swap-call intervals over 9 ms of run integ6-lod2 were D rising
     * 1-4 ms at a 15-frame recomputation. 500 keeps every interval within 8.33 +- 0.5 ms while D moves. With a slew the
     * percentile is also recomputed every frame (else every 15), so D starts rising the frame a burst's first samples arrive.
     */
-   public static final int FRAME_QUEUE_SLEW_US = Math.max(0, integer("frameQueueSlewUs", 0));
+   public static final int FRAME_QUEUE_SLEW_US = Math.max(0, integer("frameQueueSlewUs", 500)); // 500 by default since 2026-10-15 (maintainer)
    /**
     * frameQueue: how fast D may fall, in us per second (0 = D follows the 240-frame percentile down at once). The percentile
     * window forgets a burst in 2 s, so D fell to 7-10 ms in calm stretches and the next slow step was late (27 of the 63
     * late swap calls of integ6-lod2 were game steps past a low D).
     */
-   public static final int FRAME_QUEUE_DECAY_US_PER_S = Math.max(0, integer("frameQueueDecayUsPerS", 0));
+   public static final int FRAME_QUEUE_DECAY_US_PER_S = Math.max(0, integer("frameQueueDecayUsPerS", 1000)); // 1000 by default since 2026-10-15 (maintainer)
    /**
     * frameQueue: how long before its swap target the holding render thread stops parking and spins (us; 1000 = the old hold,
     * Pacing.waitUntil). Any other value also sets the render thread's timer slack to 1 ns, so a short spin still wakes on time.

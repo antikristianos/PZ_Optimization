@@ -13,7 +13,9 @@ import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL32;
 import org.lwjgl.opengl.GL33;
 import org.lwjgl.opengl.GLCapabilities;
+import zombie.GameWindow;
 import zombie.ZomboidFileSystem;
+import zombie.gameStates.GameLoadingState;
 
 /**
  * Frame pacing for variable refresh rate displays.
@@ -69,6 +71,7 @@ public final class Pacing {
    private static final long[] ring = new long[RING];
    private static final long[] ringSlot = new long[RING]; // frameQueue: the limiter slot each pushed frame serves
    private static final long[] ringPush = new long[RING]; // frameQueue: when the game thread arrived at the hand-off
+   private static final boolean[] ringQueued = new boolean[RING]; // frameQueue: the pushed frame's step ran under the queue
    private static volatile int head; // written by the game thread
    private static volatile int tail; // written by the render thread
 
@@ -76,6 +79,10 @@ public final class Pacing {
    private static volatile long stepSlotNs;
    /** Game thread: the limiter's frame interval in ns, 0 when uncapped. */
    private static volatile long capIntervalNs;
+   /** Game thread: the current step's frame goes through the frame queue (capped and {@link #queueAllowed}). */
+   private static volatile boolean stepQueued;
+   /** Game thread: why the queue is off for the current capped step ("" = on), logged when it changes. */
+   private static String queueOffReason = null;
 
    // --- render thread -------------------------------------------------------------------------
    /** The configured mode after the GL checks (AUTO stays AUTO); {@link #effectiveMode()} resolves AUTO per frame. */
@@ -85,6 +92,7 @@ public final class Pacing {
    private static long frameSimNs;
    private static long frameSlotNs;
    private static long framePushNs;
+   private static boolean frameQueued;
    private static long acquireNs;
    private static long swapCallNs;
    private static long waitNs;
@@ -142,6 +150,7 @@ public final class Pacing {
       AnimalPreload.drain(); // animalPreload (tail pass): preloaded action groups into the game's map
       stepStartNs = nowNs;
       capIntervalNs = intervalNs;
+      stepQueued = QUEUE && intervalNs > 0L && queueAllowed(); // uncapped: false without asking anything
       if (Config.GC_SLACK_FIT && Config.GC_SLACK && intervalNs > 0L) {
          GcSlack.stepStart(); // gcSlackFit: a due collection at the step's start when the render thread's and this frame's room allow it
       }
@@ -165,6 +174,7 @@ public final class Pacing {
       ring[h & (RING - 1)] = stepStartNs;
       ringSlot[h & (RING - 1)] = stepSlotNs;
       ringPush[h & (RING - 1)] = System.nanoTime();
+      ringQueued[h & (RING - 1)] = stepQueued;
       head = h + 1;
    }
 
@@ -179,14 +189,16 @@ public final class Pacing {
          frameSimNs = ring[t & (RING - 1)];
          frameSlotNs = ringSlot[t & (RING - 1)];
          framePushNs = ringPush[t & (RING - 1)];
+         frameQueued = ringQueued[t & (RING - 1)];
          tail = t + 1;
       } else {
          frameSimNs = stepStartNs;
          frameSlotNs = stepSlotNs;
          framePushNs = acquireNs;
+         frameQueued = stepQueued;
       }
       // gcSlackFit: the render thread's schedule for the game thread (when its next swap goes, how much render work is left)
-      rtTargetNs = QUEUE && capIntervalNs > 0L && frameSlotNs != 0L && qTargetNs > 0L ? frameSlotNs + qTargetNs : 0L;
+      rtTargetNs = QUEUE && frameQueued && capIntervalNs > 0L && frameSlotNs != 0L && qTargetNs > 0L ? frameSlotNs + qTargetNs : 0L;
       rtAcquireNs = acquireNs;
    }
 
@@ -253,8 +265,49 @@ public final class Pacing {
 
    /** frameQueue is holding frames now (capped, D learned). */
    static boolean queueActive() {
-      return QUEUE && capIntervalNs > 0L && qTargetNs > 0L;
+      return QUEUE && stepQueued && capIntervalNs > 0L && qTargetNs > 0L;
    }
+
+   /**
+    * frameQueue (on by default at a frame cap since 2026-10-15, maintainer), game thread at a capped step's start: whether this
+    * step's frame goes through the queue. It does only while a world is being played; it stays out where the hold would add
+    * delay for nothing or fight another pacer (docs/override-edits.md, "Frame queue on by default"):
+    * <ul>
+    * <li>menus, the pause menu and the loading screen: nothing there needs an even cadence, and the cursor should not lag; the
+    * loading screen's long frames would also fill D's window with samples of up to 250 ms;</li>
+    * <li>vsync on without variable refresh: the swap already waits for the vblank, so the hold only moves frames to a later
+    * vblank (more delay, the cadence is the display's);</li>
+    * <li>the cap is only vrrCap's (the player chose Uncapped and variable refresh caps it): an uncapped player keeps
+    * presentPacing;</li>
+    * <li>macOS: the compositor presents on the display's refresh grid like vsync, and the Metal bridge (macPresent) paces its
+    * own presents; never measured there;</li>
+    * <li>reflexSleep: it drives the hand-off queue towards empty, the frame queue keeps it about two frames deep.</li>
+    * </ul>
+    * A frame outside the queue takes presentPacing's path, as before.
+    */
+   private static boolean queueAllowed() {
+      String why;
+      if (!GameWindow.isIngameState() || GameWindow.states.current instanceof GameLoadingState || FrameCap.pauseMenuUp()) {
+         why = "menu";
+      } else if (MAC_OS || MacPresent.active()) {
+         why = "macOS";
+      } else if (org.lwjglx.opengl.Display.isVSyncEnabledPzopt() && !Vrr.active()) {
+         why = "vsync";
+      } else if (LowLatency.REFLEX) {
+         why = "reflexSleep";
+      } else if (FrameCap.vrrOnlyCapNow()) {
+         why = "uncapped (variable refresh cap only)";
+      } else {
+         why = "";
+      }
+      if (!why.equals(queueOffReason)) {
+         queueOffReason = why;
+         Log.info(why.isEmpty() ? "frame queue state: on (capped world)" : "frame queue state: off (" + why + "), presentPacing applies");
+      }
+      return why.isEmpty();
+   }
+
+   private static final boolean MAC_OS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 
    /**
     * gcSlackAfterSwap, its own thread: waits until the render thread has swapped a frame it held to its slot + D (on time), so
@@ -453,7 +506,7 @@ public final class Pacing {
          collectQueries(now);
          issueQuery(frame);
       }
-      if (QUEUE && interval > 0L && frameSlotNs != 0L && GtAb.on(GtAb.FRAME_QUEUE)) { // (GtAb: devGtAlternateKeys=frameQueue alternates it within a run; the render thread reads the phase the game thread set for its current step)
+      if (QUEUE && frameQueued && interval > 0L && frameSlotNs != 0L && GtAb.on(GtAb.FRAME_QUEUE)) { // (GtAb: devGtAlternateKeys=frameQueue alternates it within a run; the render thread reads the phase the game thread set for its current step)
          swapCallNs = queueHold(now, interval);
          return;
       }

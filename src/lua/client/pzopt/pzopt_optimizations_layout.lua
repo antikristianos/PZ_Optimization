@@ -13,7 +13,7 @@ PzoptSettingsLayout = {
           cats = {
             { id = "smooth", title = "Smoothness and pacing", blurb = "Even frame delivery, variable refresh and input latency.",
               subs = {
-                { title = "Frame pacing", keys = { "presentPacing", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
+                { title = "Frame pacing", keys = { "presentPacing", "frameQueue", "frameQueueGpu", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
                 { title = "Variable refresh", keys = { "vrr", "vrrCap", "macGlCore", "macGlTimerQueries", "macPresent" } },
                 { title = "Input latency", keys = { "inputLatch", "keyboardFresh", "reflexSleep", "reflexBoost", "reflexCapFps",
                     "vblankLock", "gpuMaxFrames", "frameStartGate", "vsyncAdaptive", "cursorLatch", "aimHoldMs" } },
@@ -144,7 +144,7 @@ PzoptSettingsLayout = {
         { "Boot", "load" }, { "World load", "load" },
     },
 
-    simple = { "presentPacing", "vrr", "vrrCap", "inputLatch", "reflexSleep", "cursorLatch", "vehicleSmooth", "driveLookSmooth",
+    simple = { "presentPacing", "frameQueue", "vrr", "vrrCap", "inputLatch", "reflexSleep", "cursorLatch", "vehicleSmooth", "driveLookSmooth",
         "chunkGridWidth", "parallel", "driveTreeCutaway", "treesInChunkTexture", "windowsInChunkTexture", "bakeScheduler", "zoomRetain",
         "zoomEase", "persistentVbo", "bloodBake", "lightInfoChunkGate", "cutawayFast", "roofHideDebounceFrames", "fogPass", "rainTiles",
         "puddleCache", "animBonesParallel", "actionEvalParallel", "charDrawPrep", "zombieLodDynamic", "playerLosFast", "noLoadingScreen",
@@ -191,7 +191,7 @@ PzoptSettingsLayout = {
         { title = "Screen tears or judders",
           cause = "Borderless never gets variable refresh, and frames reach the screen unevenly.",
           why = "A borderless window does not count as fullscreen for the desktop, so G-SYNC / FreeSync stay off, and frames reach the screen as soon as they are ready. These make the window count as fullscreen, keep the frame rate inside the display's range and hand frames over at even steps (judder 3.1 to 0.95 ms).",
-          keys = { "vrr", "vrrCap", "presentPacing", "borderlessFullscreen" } },
+          keys = { "vrr", "vrrCap", "presentPacing", "frameQueue", "borderlessFullscreen" } },
         { title = "Menus and inventory are slow",
           cause = "Every window redraws every frame, with or without a change.",
           why = "An open inventory took the Lua UI from 2 to 12 % of the game thread in stock. These redraw only what changed, the moment you act, and keep the map's labels while the view stays.",
