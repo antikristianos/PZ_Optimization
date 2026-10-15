@@ -38,6 +38,12 @@ A RACES name (2026-10-06, boot and load) is a real-time race from launch: stock 
 uncaptured runs' mean boot (-> Continue) and load (-> world visible); a live clock per side freezes when its world shows. The
 divider runs one cycle while both boot, holds on ours past its finish, then on stock past its finish, and sweeps back.
 `python3 harness/efficiency-anim.py --size 630 [--still png] boot-load`.
+
+A RACES entry with kind='fps' (2026-10-15, the Louisville New! card) is a frame-rate race over the bench route: stock | ours
+from two desktop `--record` runs, the same crop in two fixed halves (stock left, ours right, white separator), both
+recordings synced on route time (the route is time-driven; route start = the quit-to-black at route end minus the route's
+length), a live fps counter per side from its own pzopt-overlay.out (FPS_WINDOW s of frames, updated FPS_TICK times a
+second), then a black end card with each side's route-mean fps and the ratio. `--still png` = one race frame + the end card.
 """
 import argparse
 import json
@@ -107,6 +113,13 @@ RACES['boot-load-clocks'] = dict(RACES['boot-load'], keep_numbers=True)
 # no sweep (maintainer, 2026-10-06): each side its own half of the scene (the crop's centre at half the width), a fixed
 # separator between them, both clocks always on screen
 RACES['boot-load-split'] = dict(RACES['boot-load'], keep_numbers=True, split=True)
+# frame-rate race over the Louisville horde bench (2026-10-15, the maintainer's New! card): stock vs round 10 with every
+# optimization on (defaults + opt-ins), Enhancements off, both uncapped (stock: frameRate=240, never reached), recorded,
+# no MangoHud. label: '{x}' = ours over stock in route-mean fps; t0: route second where the race clip starts; len: its
+# seconds; crop: x:y:w square of the 5120x2160 screen whose centre both halves show; end_hold: the black results card
+RACES['louisville-fps'] = dict(kind='fps', label='{x} faster Louisville', cap=('lourace-stock1', 'lourace-opt1'),
+                               words=('STOCK', 'OPTIMIZED'), t0=8.0, len=8.0, crop='1810:330:1500', end_hold=2.5)
+FPS_WINDOW, FPS_TICK = 0.5, 4      # fps race: the live counter's window (s) and its updates per second
 THIRDS_HOLD = 2.6                  # triple: seconds the three panes stand side by side
 THEMES = {  # strip, strip text
     'dark': ((240, 240, 244), (11, 11, 14)),
@@ -579,8 +592,11 @@ class RaceSide:
     def __init__(self, video, t0, secs, crop, mask, mask_s, sw, sh):
         x, y, w = (int(v) for v in crop.split(':'))
         cw = round(w * sw / sh)
-        mx, my, mw, mh = (int(v) for v in mask.split(':'))
-        vf = (f'fps=60,{TONEMAP},drawbox=x={mx}:y={my}:w={mw}:h={mh}:color=black:t=fill:enable=\'lt(t,{mask_s - t0:.3f})\','
+        box = ''
+        if mask:   # None: nothing to black out
+            mx, my, mw, mh = (int(v) for v in mask.split(':'))
+            box = f'drawbox=x={mx}:y={my}:w={mw}:h={mh}:color=black:t=fill:enable=\'lt(t,{mask_s - t0:.3f})\','
+        vf = (f'fps=60,{TONEMAP},{box}'
               f'crop={cw}:{w}:{x + (w - cw) // 2}:{y},scale={sw}:{sh}:flags=lanczos,format=rgb24')
         self.p = subprocess.Popen(['ffmpeg', '-hide_banner', '-v', 'error', '-ss', f'{t0:.3f}', '-t', f'{secs:.3f}', '-i', video,
                                    '-vf', vf, '-f', 'rawvideo', '-'], stdout=subprocess.PIPE)
@@ -603,6 +619,8 @@ class RaceSide:
 
 def race(a, name, cw, strip, label_px, k):
     c = RACES[name]
+    if c.get('kind') == 'fps':
+        return fps_race(a, name, cw, strip, label_px, k)
     sw = cw - strip
     sh = a.size or int(round(sw * 9 / 16))
     sh -= sh % 2
@@ -658,6 +676,139 @@ def race(a, name, cw, strip, label_px, k):
     for side in sides:
         side.close()
     print(f'== {name}: {len(seq)} frames {base.shape[1]}x{base.shape[0]}')
+    encode(a, work, base.shape, a.out or (f'workshop-media/template-{name}.gif' if a.gif else f'workshop-media/{name}.avif'))
+
+
+def fps_run(d):
+    """A run's presented frames in the route window (pzopt-overlay.out): route second of each frame, its ms, the route mean
+    fps (frames over their summed frame time, as harness/slowframes/goal.py), p99 and the route's length."""
+    r0, r1 = route_window(d)
+    rows = [l.strip().split(',') for l in open(f'{d}/pzopt-overlay.out') if l.strip()]
+    head = rows[0]
+    ie, ift = head.index('epoch_ms'), head.index('frametime')
+    e, f = [], []
+    for r in rows[1:]:
+        try:
+            ee, ff = int(r[ie]), float(r[ift])
+        except (ValueError, IndexError):
+            continue
+        if r0 <= ee <= r1:
+            e.append((ee - r0) / 1000)
+            f.append(ff)
+    e, f = np.array(e), np.array(f)
+    p99 = float(np.sort(f)[min(len(f) - 1, int(0.99 * len(f)))])   # goal.py's percentile, so the card matches its table
+    return dict(e=e, f=f, fps=1000 * len(f) / f.sum(), p99=p99, secs=(r1 - r0) / 1000)
+
+
+def live_fps(s, t):
+    """A side's counter at route second t: the frames of the FPS_WINDOW s before the last tick (FPS_TICK a second)."""
+    t = np.floor(t * FPS_TICK + 1e-6) / FPS_TICK
+    f = s['f'][(s['e'] > t - FPS_WINDOW) & (s['e'] <= t)]
+    return 1000 * len(f) / f.sum() if len(f) else 0.0
+
+
+def fps_overlay(vals, sw, sh, k, words):
+    """Race layers: the bottom gradient, per side its caption and live fps (stock grey bottom left, ours white bottom right),
+    always shown (the halves are fixed)."""
+    g = np.zeros((sh, sw, 4), np.uint8)
+    rows = int(sh * 0.30)
+    g[sh - rows:, :, 3] = (np.linspace(0, 1, rows) ** 1.6 * 200).astype(np.uint8)[:, None]
+    layers = [(g, None)]
+    F = lambda px: ImageFont.truetype(FONT, max(11, round(px * k)))
+    cap, big, unit = F(15), F(64), F(32)
+    pad = round(26 * k)
+    img = Image.new('RGBA', (sw, sh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    for v, col, word, right in ((vals[0], BEFORE, words[0], False), (vals[1], AFTER, words[1], True)):
+        y = sh - pad
+        num, gap = f'{v:.0f}', round(8 * k)
+        wn, wu = d.textlength(num, font=big), d.textlength('fps', font=unit)
+        x0 = sw - pad - (wn + gap + wu) if right else pad
+        d.text((x0, y), num, font=big, fill=col, anchor='ls')
+        d.text((x0 + wn + gap, y), 'fps', font=unit, fill=col, anchor='ls')
+        y -= big.size + round(14 * k)
+        d.text((sw - pad if right else pad, y + round(4 * k)), word, font=cap, fill=CAPTION, anchor='rs' if right else 'ls')
+    layers.append((np.asarray(img), None))
+    return layers
+
+
+def fps_end(base, runs, ratio, sw, sh, k, words, strip):
+    """The black results card: the ratio on top, each side's route-mean fps and p99 below (stock grey left, ours white right)."""
+    fr = base.copy()
+    img = Image.new('RGB', (sw, sh), (0, 0, 0))
+    d = ImageDraw.Draw(img)
+    F = lambda px: ImageFont.truetype(FONT, max(11, round(px * k)))
+    cap, big, unit, sec, huge = F(15), F(64), F(32), F(22), F(150)
+    d.text((sw // 2, round(sh * 0.30)), f'{ratio:.1f}x', font=huge, fill=AFTER, anchor='ms')
+    d.text((sw // 2, round(sh * 0.30) + round(44 * k)), 'faster, route average', font=sec, fill=CAPTION, anchor='ms')
+    for s, col, word, cx in ((runs[0], BEFORE, words[0], sw // 4), (runs[1], AFTER, words[1], sw * 3 // 4)):
+        y = round(sh * 0.66)
+        d.text((cx, y), word, font=cap, fill=CAPTION, anchor='ms')
+        y += round(16 * k) + big.size
+        num, gap = f"{s['fps']:.0f}", round(8 * k)
+        wn, wu = d.textlength(num, font=big), d.textlength('fps', font=unit)
+        x0 = cx - (wn + gap + wu) / 2
+        d.text((x0, y), num, font=big, fill=col, anchor='ls')
+        d.text((x0 + wn + gap, y), 'fps', font=unit, fill=col, anchor='ls')
+        y += round(16 * k) + sec.size
+        d.text((cx, y), f"p99 {s['p99']:.1f} ms", font=sec, fill=col, anchor='ms')
+    x = sw // 2
+    d.line((x, round(sh * 0.60), x, round(sh * 0.90)), fill=(60, 60, 66), width=1)
+    fr[:, strip:] = np.asarray(img)
+    return fr
+
+
+def fps_race(a, name, cw, strip, label_px, k):
+    c = RACES[name]
+    sw = cw - strip
+    sh = a.size or int(round(sw * 9 / 16))
+    sh -= sh % 2
+    caps = [run_dir(l) for l in c['cap']]
+    runs = [fps_run(d) for d in caps]
+    ratio = runs[1]['fps'] / runs[0]['fps']
+    label = a.label or c['label'].format(x=f'{ratio:.1f}x')
+    top = round(26 * k)
+    while label_px > 20 and ImageFont.truetype(FONT, label_px).getlength(label) > sh - 2 * top:
+        label_px -= 1   # a label longer than the strip (22 characters at 630) shrinks until it fits with the padding at both ends
+    base = np.asarray(chrome(a.theme, label, sh, cw, strip, label_px, top)).copy()
+    vs = [route_start_in_video(d) for d in caps]
+    t0, secs = c['t0'], c['len']
+    words = c.get('words', ('STOCK', 'OPTIMIZED'))
+    pw = sw // 2
+    print(f'== {name}: strip label {label!r} at {label_px} px; ' + '; '.join(f"{w} {os.path.basename(d)} {r['fps']:.1f} fps p99 {r['p99']:.1f} ms route {r['secs']:.2f} s, "
+                                    f"route start at video {v:.2f} s" for w, d, r, v in zip(words, caps, runs, vs))
+          + f'; ratio {ratio:.3f}; race route {t0:.2f}-{t0 + secs:.2f} s + {c["end_hold"]} s card')
+    sides = [RaceSide(f'{d}/recording.mp4', v + t0, secs + 0.5, c['crop'], None, 0, pw, sh) for d, v in zip(caps, vs)]
+    blank = np.zeros((sh, sw - pw, 3), np.uint8)
+    cache = {}
+
+    def frame(t):
+        fr = [side.frame(v + t) for side, v in zip(sides, vs)]
+        vals = tuple(round(live_fps(r, t)) for r in runs)
+        if vals not in cache:
+            cache.clear()
+            cache[vals] = fps_overlay(vals, sw, sh, k, words)
+        return compose(base, np.hstack([fr[0], blank]), np.hstack([blank, fr[1]]), cache[vals], pw, strip)
+    end = fps_end(base, runs, ratio, sw, sh, k, words, strip)
+    if a.still:
+        Image.fromarray(frame(t0 + secs / 2)).save(a.still)
+        stem, ext = os.path.splitext(a.still)
+        Image.fromarray(end).save(f'{stem}-end{ext}')
+        for side in sides:
+            side.close()
+        print('still', a.still, f'{stem}-end{ext}', base.shape, f'at route {t0 + secs / 2:.1f} s')
+        return
+    work = f'build/anim/{name}-{a.theme}-{cw}'
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(f'{work}/frames')
+    n_race, n_end = round(secs * 60), round(c['end_hold'] * 60)
+    for i in range(n_race):
+        Image.fromarray(frame(t0 + i / 60)).save(f'{work}/frames/f{i:05d}.png', compress_level=1)
+    for side in sides:
+        side.close()
+    for i in range(n_race, n_race + n_end):
+        Image.fromarray(end).save(f'{work}/frames/f{i:05d}.png', compress_level=1)
+    print(f'== {name}: {n_race} race + {n_end} card frames {base.shape[1]}x{base.shape[0]}')
     encode(a, work, base.shape, a.out or (f'workshop-media/template-{name}.gif' if a.gif else f'workshop-media/{name}.avif'))
 
 
