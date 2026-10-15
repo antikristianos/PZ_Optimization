@@ -7,12 +7,14 @@ import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.model.ModelInstanceTextureCreator;
 
 /**
- * zombieFirstSightSprite (f8-sight pass 2026-10-14; approved by the maintainer as an opt-in, off by default): when a horde
+ * zombieFirstSightSprite (f8-sight pass 2026-10-14; on by default since 2026-10-15, maintainer, round 11): when a horde
  * comes into view, ~130-370 zombies take a 3D model within a second and each makes its clothing composite on the render
  * thread in the frame it is first drawn (~120 us each, up to 88 in one frame: 10 ms). Stock draws nothing of a zombie
  * until its composite is made (ModelSlotRenderData.checkReady: not ready and nothing ready from before).
  *
- * <p>With the key on (and zombieLodDynamic, whose crossfade it uses), the cull loop (nearest first) grants the first
+ * <p>With the key on (with or without zombieLodDynamic: without it, round 11, the cull loop runs only the LOD's crossfade
+ * clock and fade, {@code ZombieLod.clock / sightFade / endFade}, and the sprite is lit only for the new zombies,
+ * {@link #newSprite}), the cull loop (nearest first) grants the first
  * composites of the frame up to {@code zombieCompositeBudgetUs} of render-thread time (the count follows the measured
  * cost of one, at least one a frame); a zombie past it is drawn this frame as its lit flat sprite (the LOD's atlas
  * sprite at {@code zombieLodSpriteLight}) and its model draw skips the composite (ModelSlotRenderData.pzoptSkipTexture:
@@ -45,10 +47,19 @@ public final class FirstSight {
    private static volatile long costNs = 120_000L;
 
    public static boolean active() {
-      return ON && ZombieLod.active();
+      return ON && !zombie.network.GameServer.server && !zombie.network.GameClient.client; // (round 11: no longer needs zombieLodDynamic; single player as the LOD)
    }
 
-   /** Cull loop, once a frame before the loop (zombieLodDynamic on). */
+   /**
+    * zombieLodSpriteLight without zombieLodDynamic: this zombie's flat sprite shows a new zombie, lit like the LOD's sprites:
+    * drawn under its model while it waits for its first composite or fades in, or put off its model this frame by
+    * zombieModelAddBudgetUs (IsoWorld.sceneCullZombies stamps {@code pzoptAddWait}).
+    */
+   public static boolean newSprite(IsoZombie z) {
+      return z.pzoptLodSpriteAlpha > 0.0F || z.pzoptAddWait == frame && frame != 0;
+   }
+
+   /** Cull loop, once a frame before the loop (zombieLodDynamic on, or {@link #active} without it). */
    public static void beginCull() {
       if (!ON) {
          return;

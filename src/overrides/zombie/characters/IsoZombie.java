@@ -239,6 +239,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    public int pzoptSightRank; // pzopt: zombieFirstSightSprite, this zombie's place in the cull loop's nearest-first order
    public int pzoptSightPend = -1; // pzopt: zombieFirstSightSprite, the cull pass in which this zombie waited for its first composite (drawn as its sprite)
    public int pzoptSightDefer = -1; // pzopt: zombieFirstSightSprite, the cull pass (pzopt.FirstSight.frame) in which this zombie's first clothing composite waits (drawn as its sprite)
+   public int pzoptAddWait; // pzopt: zombieFirstSightSprite (round 11), the cull pass (pzopt.FirstSight.frame) in which zombieModelAddBudgetUs put off this zombie's 3D model (its sprite is lit; 0 = never)
    public float pzoptLodSpriteScale = 1.0F; // pzopt: renderTextureInsteadOfModel's alpha factor (the sprite share while a crossfade draws it under the model)
    public IsoGridSquare pzoptOutlineSquare; // pzopt: occluded outlines, the square the occluder test ran for (OccludedOutline.classify)
    public long pzoptOutlineNs; // pzopt: occluded outlines, when it ran
@@ -1809,7 +1810,7 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
                - 1.0F;
          }
 
-         float pzoptLit = pzopt.ZombieLod.spriteLight(); // pzopt: zombieLodSpriteLight, the flat sprite in the square's light instead of black (0 = stock)
+         float pzoptLit = pzopt.ZombieLod.spriteLight(this); // pzopt: zombieLodSpriteLight, the flat sprite in the square's light instead of black (0 = stock; without zombieLodDynamic only a new zombie's, zombieFirstSightSprite)
          tex.render(x, y, this.getZ(), sx, sy, pzoptLit > 0.0F ? inf.r * pzoptLit : 0.0F, pzoptLit > 0.0F ? inf.g * pzoptLit : 0.0F, pzoptLit > 0.0F ? inf.b * pzoptLit : 0.0F, this.getAlpha(playerIndex) * this.pzoptLodSpriteScale); // pzopt: zombieLodFadeMs, the sprite's share during a crossfade (1 otherwise)
       }
 

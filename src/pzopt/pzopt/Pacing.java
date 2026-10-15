@@ -634,7 +634,7 @@ public final class Pacing {
          System.arraycopy(qWin, 0, qSorted, 0, qCount);
          Arrays.sort(qSorted, 0, qCount);
          long d = qSorted[Math.min(qCount - 1, qCount * Config.FRAME_QUEUE_PCT / 100)] + Config.FRAME_QUEUE_MARGIN_US * 1000L;
-         long lo = interval * Config.FRAME_QUEUE_MIN_PCT / 100L;
+         long lo = interval * queueMinPct(interval) / 100L;
          long hi = interval * Config.FRAME_QUEUE_MAX_PCT / 100L;
          d = Math.max(lo, Math.min(hi, d));
          if (Config.FRAME_QUEUE_DECAY_US_PER_S > 0 && qWantNs > 0L) {
@@ -694,8 +694,8 @@ public final class Pacing {
       }
       if (now - qLastLogNs > 10_000_000_000L) {
          if (qLastLogNs != 0L && qFrames > 0) {
-            Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d, holds ended > 0.2 ms late %d (max %.2f ms)%s",
-                  qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
+            Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f, floor %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d, holds ended > 0.2 ms late %d (max %.2f ms)%s",
+                  qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, interval * queueMinPct(interval) / 100L / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
                   catchUpSlots, droppedSlots, qOver, qOverMaxNs / 1e6, Config.FRAME_QUEUE_RT_HOLD > 0 ? ", rt holds " + rtHolds + (rtState < 0 ? " (unavailable)" : "") : "") + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred + ", heavy-step add holds (candidates) " + heavyAddHolds : ""));
          }
          qLastLogNs = now;
@@ -703,6 +703,18 @@ public final class Pacing {
          catchUpSlots = droppedSlots = 0L;
       }
       return now;
+   }
+
+   /**
+    * frameQueue: D's floor in percent of the cap interval. frameQueueMinPct (the fixed D, 260 %) at caps of
+    * frameQueueFixedMinFps (100) or more; below it frameQueueLowCapMinPct (60 %, the adaptive queue): 2.6 intervals are
+    * 43 ms at a 60 fps cap and 87 ms at 30 (maintainer 2026-10-15).
+    */
+   static int queueMinPct(long intervalNs) {
+      if (Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 && intervalNs > 0L && Math.round(1.0e9 / intervalNs) < Config.FRAME_QUEUE_FIXED_MIN_FPS) {
+         return Config.FRAME_QUEUE_LOW_CAP_MIN_PCT;
+      }
+      return Config.FRAME_QUEUE_MIN_PCT;
    }
 
    /** frameQueue: one slot -> ready sample into the percentile window. */
@@ -844,7 +856,7 @@ public final class Pacing {
          }
          if (QUEUE) {
             Log.info("pacing: frameQueue on (p" + Config.FRAME_QUEUE_PCT + " + " + Config.FRAME_QUEUE_MARGIN_US + " us, D " + Config.FRAME_QUEUE_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT
-               + " % of the cap interval, limiter catch-up " + CATCH_UP + " slots, GPU samples " + (Config.FRAME_QUEUE_GPU && timestamps) + ", slew "
+               + " % of the cap interval" + (Config.FRAME_QUEUE_FIXED_MIN_FPS > 0 ? " at caps of " + Config.FRAME_QUEUE_FIXED_MIN_FPS + " fps or more, " + Config.FRAME_QUEUE_LOW_CAP_MIN_PCT + ".." + Config.FRAME_QUEUE_MAX_PCT + " % below" : "") + ", limiter catch-up " + CATCH_UP + " slots, GPU samples " + (Config.FRAME_QUEUE_GPU && timestamps) + ", slew "
                + Config.FRAME_QUEUE_SLEW_US + " us/frame, decay " + Config.FRAME_QUEUE_DECAY_US_PER_S + " us/s); presentPacing applies uncapped only");
          }
          if (MODE != OFF) {

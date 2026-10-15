@@ -8284,3 +8284,60 @@ p99.9 9.30, max 16.7. Player-like Louisville (fresh-install JVM flags, empty opt
 frameQueueMinPct=60 109.0 / 109.6 fps, p99 27.8 / 27.3: without the LOD the fixed D costs ~2 fps and ~5-8 ms of p99 (the other
 new keys gain ~1 fps). Uncapped player-like: 124.5 fps, crashed=0. aotCache cycle with aotNoIndy: record wrote a 127 MB cache
 (28,018 MethodTrainingData), the next launch "Using AOT-linked classes: true", "aot: running from the AOT cache", no hs_err.
+
+### Round 11 (maintainer 2026-10-15, worktree `integ-r11`): fixed frame-queue D only at high caps, burst parents on
+
+Two further decisions of the maintainer:
+
+1. **The fixed D only at caps of 100 fps or more.** New keys `frameQueueFixedMinFps` (100) and `frameQueueLowCapMinPct` (60):
+   `pzopt.Pacing.queueMinPct(interval)` returns `frameQueueMinPct` (260, with frameQueueMaxPct 260 a fixed D of 2.6 intervals,
+   21.67 ms at 120 fps) when the cap in force rounds to frameQueueFixedMinFps or more, else `frameQueueLowCapMinPct`, i.e. the
+   adaptive queue of before (D = p99 of slot -> ready + margin between 60 % and 260 % of the interval: floors 10 ms at 60 fps and
+   20 ms at 30 fps instead of a fixed 43 / 87 ms). The cap is read per frame (the interval queueHold gets), so a cap changed in game
+   moves between the two rules at once (slew and decay smooth the step). `frameQueueFixedMinFps=0` = frameQueueMinPct at every cap.
+   The 10 s console line "frame queue: ... D x ms (p99 of slot -> ready, last y, floor z)" now names the floor in force; the
+   start-up line names both ranges. Tab (Frame pacing): "Frame queue: fixed holding time from (fps)" (0 / 60 / 100 / 144) and
+   "Frame queue: shortest holding time at low caps (% of a frame)" (Everything view); the frameQueueMinPct tip says where it applies.
+   Test: `tests/pzopt/PacingQueueFloorTest` (120 / 240 / 100 -> 260, 99 / 60 / 30 -> 60).
+
+2. **The burst parents on by default (timing only):** `zombieSpawnSpread` false -> true, `zombieModelAddBudgetUs` 0 -> 500,
+   `zombieFirstSightSprite` false -> true. With them round 10's pacing keys act for players (zombieSpawnSlackBudgetUs 1500,
+   zombieSpawnHeavyMin 0, zombieSpawnMaxAgeMs 3000, zombieSpawnAgedCapUs 600, zombieModelAddHeavyEvery 4,
+   zombieCompositeMaxPerFrame 3, and burstGovernor's spawn / model-add budgets). `zombieSpawnSpread` creates the zombies the native
+   population turns real from a queue (a zombie within 25 squares of a player and the first 3 s of a load at once, as stock; none
+   waits past zombieSpawnMaxAgeMs), so zombies appear a few frames later, never fewer; `zombieModelAddBudgetUs` puts the 3D model of
+   zombies past 500 us of model building a frame off to the next frames (nearest first); `zombieFirstSightSprite` spreads the first
+   clothing composites and draws the waiting zombie as its lit sprite.
+
+   **zombieFirstSightSprite without zombieLodDynamic** (code change, needed for players: the key was inert unless the zombie LOD
+   was on, and the LOD stays off by default). `FirstSight.active()` no longer asks for `ZombieLod.active()` (single player only, as
+   before). In `IsoWorld.sceneCullZombies` without the LOD the cull loop keeps the stock counts (510 models, numberZombiesBlended)
+   and only runs the crossfade machinery the first sight uses: `ZombieLod.clock()` (the crossfade clock) and
+   `FirstSight.beginCull()` before the loop, `ZombieLod.sightFade(z)` for a zombie in the 3D places (advances a first-sight fade-in,
+   nothing else; the LOD's sprite <-> model fades past the cap are not started), `ZombieLod.endFade(z)` for a zombie that drops out
+   of the 3D places or off the model list (no fade-out: stock pops), and `FirstSight.won(z, rank)` for the nearest-first composite
+   grants. The sprite light: `ZombieLod.spriteLight(IsoZombie)` (IsoZombie.renderTextureInsteadOfModel) gives every flat sprite
+   zombieLodSpriteLight (60 %) of its square's light with the LOD, as before; without it only a new zombie's sprite
+   (`FirstSight.newSprite`: drawn under its model while it waits for the first composite or fades in, or put off its model this frame
+   by zombieModelAddBudgetUs, stamped in the cull loop as `IsoZombie.pzoptAddWait`); the stock far sprites past the 510 nearest stay
+   black. Edited lines carry `// pzopt:` markers (IsoWorld.sceneCullZombies, IsoZombie field + renderTextureInsteadOfModel).
+
+   Tab: "Zombie creation queue: new zombies spread over frames" (zombieSpawnSpread, new) and "Horde first sight: 3D models given per
+   frame (us)" (zombieModelAddBudgetUs, new: 0 / 250 / 500 / 1000) in the "Horde first sight" subcategory; the zombieFirstSightSprite
+   tip lost "needs zombie detail follows the frame cap" and "off by default"; burstGovernor's tip says both budgets are on.
+
+Verification (desktop, 2026-10-15 22:05-22:30; build audit 9,152 compared / 965 edited / 0 mismatches, tests green incl.
+PacingQueueFloorTest). Lock check (round 10's lock set less zombieFirstSightSprite / zombieSpawnSpread / zombieModelAddBudgetUs,
+now defaults): first set i11-l1..l4 119.36 / 119.56 / 119.28 / 119.76 fps, 98.99 / 99.16 / 98.79 / 99.43 % <= 9 ms (l1 and l3
+missed by 0.01 / 0.21 points with external load ext 2.7 / 3.2 cores: kswapd, ZFS; l2 / l4 passed at ext 1.7 / 1.2); second
+set i11-l5..l8 4 of 4 locked: 119.84-119.88 fps, 99.60-99.77 %, p99 8.38-8.42, p99.9 14.1-16.7, max 16.68-16.79, ext 0.3-0.5,
+crashed=0, strongMarks 5.8-5.9k, settle roofs uniform black. drive-120-south i11-d1: 119.94 fps, 99.89 %, p99 8.36, p99.9 9.18,
+max 14.3. Player-like Louisville (fresh-install JVM flags, empty options file, no LOD) at cap 120: i11-p120 / p120b 114.6 / 116.8 fps,
+91.9 / 94.8 % <= 9 ms, p99 16.7 / 15.7, p99.9 22.1 / 18.7, max 23.6 / 20.1 ms, 0 frames > 33 ms (round 10: 106.5 / 107.5 fps,
+89.8 / 91.7 %, p99 36.0 / 32.4, max 140 / 141, 26-28 frames > 33 ms). Same build with the three parents off (i11-p120off): 111.1 fps,
+93.7 %, p99 21.5, p99.9 88.1, max 255 ms, 21 > 33 ms; with only zombieFirstSightSprite off (i11-p120nofs): 116.2 fps, 94.6 %,
+p99 16.7, p99.9 27.9, max 33.7. Uncapped i11-punc 126.3 fps (round 10: 124.5). Low caps: i11-p60 59.96 fps, p99 17.31, max 29.2,
+jitter 0.10 ms, console D 42.5 -> 34.6 -> 24.6 -> 24.4 ms with floor 10.00 ms (slot -> ready p99 ~25 ms); i11-p30 30.03 fps, p99
+33.36, max 33.4, jitter 0.02 ms, D 86.3 -> 80.7 -> 70.7 -> 60.7 ms with floor 20.00 ms (the adaptive D falls at frameQueueDecayUsPerS,
+1 ms/s, from the 260 % clamp it reached at the world's start). Visual (route s0.9-1.8 crops): the new zombies waiting for their model
+are lit sprites; with first sight off the zombieModelAddBudgetUs waits were black silhouettes (i11-p120nofs).

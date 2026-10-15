@@ -66,9 +66,35 @@ public final class ZombieLod {
       return frameNs;
    }
 
-   /** zombieLodSpriteLight: the factor on the square's light the flat sprite is drawn in (0 = stock: black). */
-   public static float spriteLight() {
-      return Config.ZOMBIE_LOD_SPRITE_LIGHT > 0 && active() ? Config.ZOMBIE_LOD_SPRITE_LIGHT / 100.0F : 0.0F;
+   /**
+    * zombieLodSpriteLight: the factor on the square's light this zombie's flat sprite is drawn in (0 = stock: black). With
+    * zombieLodDynamic every flat sprite; without it (zombieFirstSightSprite alone, round 11) only a new zombie's sprite while
+    * it waits for its first composite or its model ({@link FirstSight#newSprite}): the stock far sprites stay black.
+    */
+   public static float spriteLight(IsoZombie z) {
+      if (Config.ZOMBIE_LOD_SPRITE_LIGHT <= 0) {
+         return 0.0F;
+      }
+      return active() || FirstSight.active() && FirstSight.newSprite(z) ? Config.ZOMBIE_LOD_SPRITE_LIGHT / 100.0F : 0.0F;
+   }
+
+   /** zombieFirstSightSprite without zombieLodDynamic (round 11): once a frame before the cull loop, the crossfades' clock. */
+   public static void clock() {
+      frameNs = System.nanoTime();
+   }
+
+   /** zombieFirstSightSprite without zombieLodDynamic: a zombie in the cull loop's 3D places; a first-sight crossfade advances. */
+   public static void sightFade(IsoZombie z) {
+      if (z.pzoptLodFade != 0) {
+         factors(z);
+      }
+   }
+
+   /** zombieFirstSightSprite without zombieLodDynamic: a zombie drawn without its model this frame drops any crossfade. */
+   public static void endFade(IsoZombie z) {
+      if (z.pzoptLodFade != 0 || z.pzoptLodSpriteAlpha != 0.0F) {
+         clear(z);
+      }
    }
 
    /** zombieLodHysteresis: whether this zombie is drawn in 3D right now (it keeps its model a few places past the cap). */

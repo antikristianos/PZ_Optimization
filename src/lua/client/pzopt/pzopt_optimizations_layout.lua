@@ -13,7 +13,7 @@ PzoptSettingsLayout = {
           cats = {
             { id = "smooth", title = "Smoothness and pacing", blurb = "Even frame delivery, variable refresh and input latency.",
               subs = {
-                { title = "Frame pacing", keys = { "presentPacing", "frameQueue", "frameQueueGpu", "frameQueueMinPct", "frameQueueMaxPct", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
+                { title = "Frame pacing", keys = { "presentPacing", "frameQueue", "frameQueueGpu", "frameQueueMinPct", "frameQueueMaxPct", "frameQueueFixedMinFps", "frameQueueLowCapMinPct", "limiterSleep", "frameClockSmooth", "borderlessFullscreen" } },
                 { title = "Variable refresh", keys = { "vrr", "vrrCap", "macGlCore", "macGlTimerQueries", "macPresent" } },
                 { title = "Input latency", keys = { "inputLatch", "keyboardFresh", "reflexSleep", "reflexBoost", "reflexCapFps",
                     "vblankLock", "gpuMaxFrames", "frameStartGate", "vsyncAdaptive", "cursorLatch", "aimHoldMs" } },
@@ -66,7 +66,7 @@ PzoptSettingsLayout = {
                 { title = "Detail by distance", keys = { "zombieLodDynamic", "zombieSimLodTiles", "zombieSimLodSteps", "zombieCheckSpread",
                     "zombieLodMin3d", "zombieLodMinBlend", "zombieLodUncappedFps", "zombieLodFixed3d", "zombieLodHysteresis", "zombieLodFadeMs", "zombieLodSpriteLight",
                     "zombieFirstSightSprite", "zombieCompositeBudgetUs", "zombieCompositeMaxPerFrame" } },
-                { title = "Horde first sight", keys = { "burstGovernor", "burstLateUs", "burstWorkPct", "zombieSpawnBurstUs", "zombieModelAddBurstUs",
+                { title = "Horde first sight", keys = { "zombieSpawnSpread", "zombieModelAddBudgetUs", "burstGovernor", "burstLateUs", "burstWorkPct", "zombieSpawnBurstUs", "zombieModelAddBurstUs",
                     "zombieModelAddHeavyEvery", "zombieSpawnSlackBudgetUs", "zombieSpawnHeavyMin", "zombieSpawnMaxAgeMs", "zombieSpawnAgedCapUs" } },
               } },
             { id = "load", title = "Boot and loading", blurb = "From launch to the menu, and from Continue to the world.",
@@ -164,7 +164,7 @@ PzoptSettingsLayout = {
         "curtainDepthNudgePct", "lightingGlobalDeltaPct", "fogScalePct", "weatherFxScalePct", "macGlTimerQueries", "gameThreadProfileHz",
         "overlayRefreshMs", "overlayGraphHz", "overlayFlameDepth", "overlayTexture",
         "burstLateUs", "burstWorkPct", "zombieSpawnBurstUs", "zombieModelAddBurstUs", "zombieModelAddHeavyEvery", "zombieSpawnSlackBudgetUs",
-        "zombieSpawnHeavyMin", "zombieSpawnAgedCapUs", "zombieCompositeMaxPerFrame", "frameQueueMaxPct" },
+        "zombieSpawnHeavyMin", "zombieSpawnAgedCapUs", "zombieCompositeMaxPerFrame", "frameQueueMaxPct", "frameQueueLowCapMinPct" },
     expertPatterns = { "Budget$", "MaxFrames$", "Ms$", "Frames$", "Threads$", "Divisor$", "Hz$", "Kb$", "Mb$", "Slots$", "Delta$",
         "Interval", "Px$", "Steps$", "Tiles$", "Sec$", "Spread$", "PerSec$", "Min3d$", "MinBlend$", "UncappedFps$", "^dev" },
 

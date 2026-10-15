@@ -2677,7 +2677,12 @@ public final class IsoWorld {
          tcountMax = Math.min(tcountMax, pzopt.ZombieLod.max3d()); // pzopt
          pzoptLodKeep = pzopt.Config.ZOMBIE_LOD_HYSTERESIS; // pzopt
          pzoptBlended = pzopt.ZombieLod.blended(pzoptBlended); // pzopt
+      } else if (pzopt.FirstSight.active()) { // pzopt: zombieFirstSightSprite without zombieLodDynamic (round 11): stock counts, only the crossfade clock
+         pzopt.ZombieLod.clock(); // pzopt
+         pzopt.FirstSight.beginCull(); // pzopt: this frame's composite grants
       } // pzopt
+      boolean pzoptSight = pzopt.FirstSight.active(); // pzopt: zombieFirstSightSprite (with or without the LOD)
+      boolean pzoptSightOnly = pzoptSight && !pzopt.ZombieLod.active(); // pzopt: ... without zombieLodDynamic
       PerformanceSettings.animationSkip = 0;
       // pzopt: zombieModelAddBudgetUs (2026-10-05, Louisville 120 fps pass). A zombie getting a 3D model builds its model
       // instance and every clothing model in ModelManager.Add; when many win a slot at once (a turn, a crowd coming into
@@ -2697,6 +2702,7 @@ public final class IsoWorld {
                      z.getAnimationPlayer().doBlending = false; // pzopt
                   } // pzopt
                   pzoptAddsDeferred++; // pzopt
+                  if (pzoptSight) z.pzoptAddWait = pzopt.FirstSight.frame; // pzopt: zombieFirstSightSprite, a new zombie waiting for its model: its sprite is lit (round 11)
                   continue; // pzopt: its model slot goes to the next zombie this frame
                } // pzopt
                if (pzoptAdds == 0) { // pzopt
@@ -2708,8 +2714,9 @@ public final class IsoWorld {
                count++;
                tcount++;
                if (pzopt.ZombieLod.active()) pzopt.ZombieLod.won(z); // pzopt: zombieLodFadeMs, a zombie getting its model back fades it in
+               else if (pzoptSightOnly) pzopt.ZombieLod.sightFade(z); // pzopt: zombieFirstSightSprite without the LOD, its model's fade-in over the sprite
                z.setSceneCulled(false);
-               if (pzopt.FirstSight.ON && pzopt.ZombieLod.active()) pzopt.FirstSight.won(z, tcount); // pzopt: zombieFirstSightSprite, its place in the nearest-first order of first composites
+               if (pzoptSight) pzopt.FirstSight.won(z, tcount); // pzopt: zombieFirstSightSprite, its place in the nearest-first order of first composites
                if (z.legsSprite != null && z.legsSprite.modelSlot != null) {
                   if (count > PerformanceSettings.zombieAnimationSpeedFalloffCount) {
                      c++;
@@ -2742,6 +2749,7 @@ public final class IsoWorld {
             } // pzopt
          } else {
             if (pzopt.ZombieLod.active()) pzopt.ZombieLod.lost(z); // pzopt: zombieLodFadeMs, no fade (or done)
+            else if (pzoptSightOnly) pzopt.ZombieLod.endFade(z); // pzopt: zombieFirstSightSprite without the LOD, no fade-out (stock pops past the 510 nearest)
             z.setSceneCulled(true);
             if (z.hasAnimationPlayer()) {
                z.getAnimationPlayer().doBlending = false;
@@ -2754,6 +2762,8 @@ public final class IsoWorld {
          if (z.hasActiveModel()) {
             z.setSceneCulled(true);
          }
+
+         if (pzoptSightOnly) pzopt.ZombieLod.endFade(z); // pzopt: zombieFirstSightSprite without the LOD, a zombie off the model list drops its crossfade
 
          if (z.hasAnimationPlayer()) {
             z.getAnimationPlayer().doBlending = false;
