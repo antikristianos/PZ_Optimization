@@ -628,6 +628,10 @@ public final class Config {
    public static final int BURST_LATE_US = Math.max(0, integer("burstLateUs", 1000));
    public static final int BURST_WORK_PCT = Math.max(1, integer("burstWorkPct", 95));
    public static final int ZOMBIE_SPAWN_BURST_US = Math.max(0, integer("zombieSpawnBurstUs", 150));
+   public static final int ZOMBIE_SPAWN_AGED_CAP_US = Math.max(0, integer("zombieSpawnAgedCapUs", 0)); // zombieSpawnSpread (f9-burst, timing only): the queued zombies past zombieSpawnMaxAgeMs are created under this much time a frame (a heavy step: zombieSpawnBurstUs) instead of all at once, unless they waited 3x zombieSpawnMaxAgeMs (0 = all at once, as before)
+   public static final int ZOMBIE_SPAWN_SLACK_BUDGET_US = Math.max(0, integer("zombieSpawnSlackBudgetUs", 0)); // zombieSpawnSpread (f9-burst, timing only): at a frame cap the in-frame spawn budget is the last step's unused interval less this margin (us), up to zombieSpawnMaxUs, instead of zombieSpawnBudgetUs / the backlog rule; 0 = off
+   public static final int ZOMBIE_SPAWN_HEAVY_MIN = Math.max(0, integer("zombieSpawnHeavyMin", 1)); // burstGovernor (f9-burst, timing only): the zombies a heavy step creates from the spawn queue at least (1 as before; 0 = none unless aged)
+   public static final int ZOMBIE_MODEL_ADD_HEAVY_EVERY = Math.max(0, integer("zombieModelAddHeavyEvery", 0)); // burstGovernor (f9-burst, timing only): in a run of heavy steps only every Nth one gives zombies their 3D model (the others none; they stay flat sprites a frame longer); 0 = every heavy step adds within zombieModelAddBurstUs, as before
    public static final int ZOMBIE_MODEL_ADD_BURST_US = Math.max(0, integer("zombieModelAddBurstUs", 150));
    public static final boolean LOOT_DEFER = bool("lootDefer", false); // time-sliced loot: a chunk arriving lootDeferDistance squares or more from every player queues its unexplored containers and they roll under lootDeferBudgetUs a frame (pzopt.LootDefer; single player). A downtown chunk's loot roll was up to 32 ms of one frame. Changes the order of random draws (an intended edit)
    public static final int LOOT_DEFER_DISTANCE = Math.max(0, integer("lootDeferDistance", 20));
@@ -845,6 +849,7 @@ public final class Config {
    public static final boolean DEV_COMBINER_CENSUS = bool("devCombinerCensus", false); // dev (tail2): TextureCombiner requests / reuses / new / destroyed / pooled per size and its render-thread time, a console line every 10 s
    public static final boolean ZOMBIE_FIRST_SIGHT_SPRITE = bool("zombieFirstSightSprite", false); // f8-sight pass 2026-10-14 (approved by the maintainer as an opt-in, off by default; needs zombieLodDynamic): a zombie whose clothing composite is not made yet is drawn as its lit flat sprite while the composites are spread over frames under zombieCompositeBudgetUs (nearest first), then its model crossfades in like the LOD's (pzopt.FirstSight)
    public static final int ZOMBIE_COMPOSITE_BUDGET_US = Math.max(0, integer("zombieCompositeBudgetUs", 1000)); // zombieFirstSightSprite: render-thread time per frame for first clothing composites (at least one a frame; the count follows the measured cost of one)
+   public static final int ZOMBIE_COMPOSITE_MAX_PER_FRAME = Math.max(0, integer("zombieCompositeMaxPerFrame", 0)); // zombieFirstSightSprite (f9-burst, timing only): at most this many first clothing composites a frame (0 = only zombieCompositeBudgetUs): each composite also costs ~0.2 ms of GPU, which the render-thread budget does not see (0.6-1.5 ms of GPU in the bursts' heavy frames, gpuSections moving.composite)
    public static final boolean RENDER_PREWARM = bool("renderPrewarm", true); // f8-sight pass 2026-10-14, on by default (maintainer, 2026-10-14): once the world exists, the render thread makes what the first zombie drawn in 3D would make (the horde batch's programs and buffers, the atlas batch's buffer, the composite shaders, the combiner pool's VRAM query) : the Louisville route's first sight was a 27 ms render-thread frame (exact: the same objects, made earlier)
    public static final boolean RENDER_PREWARM_OUTLINES = bool("renderPrewarmOutlines", true); // on by default (maintainer, 2026-10-15) renderPrewarm (tail6 2026-10-14): also the outline pass's three screen-sized framebuffers and three programs (ModelOutlines' lazy setup, a 10-11 ms render-thread frame at its first use on the Louisville route); costs their VRAM from the start even if no outline is ever drawn
    public static final int DEV_PREWARM_PARTS = integer("devPrewarmParts", 15); // dev: renderPrewarm's parts (1 horde batch programs / buffers, 2 atlas batch buffer, 4 combiner pool VRAM query + composite sizes, 8 composite shaders)
@@ -1061,6 +1066,25 @@ public final class Config {
    public static final boolean AOT_CACHE = bool("aotCache", true);
    /** dev: let a harness run drive the aotCache cycle (normally inert there: run.sh owns the launcher JSON). */
    public static final boolean DEV_AOT_CACHE_HARNESS = bool("devAotCacheHarness", false);
+   /**
+    * aotCache (f9-burst, 2026-10-15): the record / use launches also carry -XX:+UnlockDiagnosticVMOptions
+    * -XX:-AOTInvokeDynamicLinking. With the game's Zulu 25.0.1 every recording session's cache assembly (the child JVM the
+    * JDK starts at exit) died in ArchiveHeapWriter::compute_ptrmap ("Metadata ... should have been archived": an archived
+    * invokedynamic / lambda object refers to a class the AOT cache excludes, the pre-Java-6 trove and lwjgl.util classes),
+    * so no player ever got a cache: hs_err_pid*.log in the game folder at every second quit, and the launcher went record
+    * -> use (cache missing) -> record forever. Without AOT-linked invokedynamic the assembly succeeds and keeps the classes
+    * and all method profiles (28,423 MethodTrainingData from a Louisville session). Off by default: the stock form.
+    */
+   public static final boolean AOT_NO_INDY = bool("aotNoIndy", false);
+   /**
+    * f9-burst (2026-10-15): the 128 generic zombie bodies of DeadBodyAtlas (the flat sprites of atlas / LOD zombies) are
+    * requested a few a frame once the world exists, instead of in the frames a horde first comes into view (pzopt.BodyAtlasPrewarm;
+    * exact: the same cached textures, made earlier). Off by default.
+    */
+   public static final boolean DEV_ZOMBIE_GROUP_CENSUS = bool("devZombieGroupCensus", false); // dev (f9-burst): ZombieGroupManager's groups / members / timing every 10 s in the console (also on in instrumented runs)
+   public static final boolean BODY_ATLAS_PREWARM = bool("bodyAtlasPrewarm", false);
+   public static final int BODY_ATLAS_PREWARM_PER_FRAME = Math.max(1, integer("bodyAtlasPrewarmPerFrame", 2));
+   public static final int BODY_ATLAS_PREWARM_DELAY_FRAMES = Math.max(0, integer("bodyAtlasPrewarmDelayFrames", 60));
    public static final boolean ANIM_CLIP_CACHE = bool("animClipCache", true);
    /** auto = honour options.ini (frameRate / uncappedFPS); true / false force the frame cap off / on for a run. */
    public static final String UNCAPPED_FPS = string("uncappedFps", "auto");

@@ -157,7 +157,8 @@ public final class FirstSight {
 
    /** ModelSlotRenderData.checkReady (render thread): the frame's first composites already took the budget (at least one is made a frame). */
    public static boolean overBudget() {
-      if (frameComposites > 0 && frameCompositeNs >= BUDGET_NS) {
+      if (frameComposites > 0 && (frameCompositeNs >= BUDGET_NS
+            || Config.ZOMBIE_COMPOSITE_MAX_PER_FRAME > 0 && frameComposites >= Config.ZOMBIE_COMPOSITE_MAX_PER_FRAME)) { // f9-burst: also a count cap (the composites' GPU time is not in the render-thread budget)
          renderWaits++;
          return true;
       }
@@ -184,6 +185,7 @@ public final class FirstSight {
 
    /** ModelSlotRenderData.checkReady, before a texture creator's render(). */
    public static void composing() {
+      if (TIMING) GpuSections.markNow("moving.composite", false); // (gpuSections, f9-burst: the clothing composites' own GPU time, nested in moving)
       c0 = combines;
       t0n = newTex;
       f0 = newFbo;
@@ -191,6 +193,7 @@ public final class FirstSight {
 
    /** ModelSlotRenderData.checkReady, after a texture creator's render(). */
    public static void composed(long ns, boolean rendered) {
+      GpuSections.markNow("moving.composite", true);
       if (CENSUS && ns > 2_000_000L && slowLogged < 40) {
          slowLogged++;
          Log.info("first sight: slow composite " + ns / 1000L + " us, rendered " + rendered + ", combines " + (combines - c0) + ", new textures " + (newTex - t0n) + ", new framebuffers " + (newFbo - f0) + ", frame composites before " + frameComposites);

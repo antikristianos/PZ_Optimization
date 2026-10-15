@@ -156,6 +156,9 @@ public final class Pacing {
                && GtAb.on(GtAb.BURST_GOVERNOR);
          if (heavy) {
             heavySteps++;
+            heavyRun++;
+         } else {
+            heavyRun = 0;
          }
       }
       if (Config.GC_SLACK_FIT && Config.GC_SLACK && intervalNs > 0L) {
@@ -169,6 +172,23 @@ public final class Pacing {
    /** burstGovernor (f8-resid): the current step is heavy, deferrable work takes its burst budgets. Game thread. */
    public static boolean heavyStep() {
       return heavy;
+   }
+
+   private static int heavyRun; // heavy steps in a row, this one included (game thread)
+   public static long heavyAddHolds; // census: heavy steps whose model adds were held (zombieModelAddHeavyEvery)
+
+   /**
+    * zombieModelAddHeavyEvery (f9-burst): this heavy step gives no zombie its 3D model; one heavy step in N still does, so a
+    * scene that stays heavy keeps upgrading its zombies. Called once per step from IsoWorld.sceneCullZombies (the first
+    * would-be add). Game thread.
+    */
+   public static boolean heavyAddHold() {
+      int n = Config.ZOMBIE_MODEL_ADD_HEAVY_EVERY;
+      if (n <= 0 || !heavy || heavyRun % n == 0) {
+         return false;
+      }
+      heavyAddHolds++;
+      return true;
    }
 
    /** Game thread: System.nanoTime() at the start of the current step (bakeDeadlinePct). */
@@ -676,7 +696,7 @@ public final class Pacing {
          if (qLastLogNs != 0L && qFrames > 0) {
             Log.info(String.format(Locale.ROOT, "frame queue: %d frames, D %.2f ms (p%d of slot -> ready, last %.2f), held %d (%.2f ms mean), late %d, catch-up slots %d, dropped slots %d, holds ended > 0.2 ms late %d (max %.2f ms)%s",
                   qFrames, qTargetNsSum / 1e6 / qFrames, Config.FRAME_QUEUE_PCT, qTargetNs / 1e6, qHeld, qHeld > 0 ? qHoldNsSum / 1e6 / qHeld : 0.0, qLate,
-                  catchUpSlots, droppedSlots, qOver, qOverMaxNs / 1e6, Config.FRAME_QUEUE_RT_HOLD > 0 ? ", rt holds " + rtHolds + (rtState < 0 ? " (unavailable)" : "") : "") + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred : ""));
+                  catchUpSlots, droppedSlots, qOver, qOverMaxNs / 1e6, Config.FRAME_QUEUE_RT_HOLD > 0 ? ", rt holds " + rtHolds + (rtState < 0 ? " (unavailable)" : "") : "") + (Config.BURST_GOVERNOR ? "; burst governor: heavy steps " + heavySteps + ", spawn frames held " + spawnsHeld + ", model adds deferred " + zombie.iso.IsoWorld.pzoptAddsDeferred + ", heavy-step add holds (candidates) " + heavyAddHolds : ""));
          }
          qLastLogNs = now;
          qFrames = qHeld = qLate = qHoldNsSum = qTargetNsSum = qOver = qOverMaxNs = rtHolds = 0L;
@@ -754,6 +774,11 @@ public final class Pacing {
    }
 
    /** The limiter's current frame interval (0 = uncapped). */
+   /** The last step's work before its hand-off (ns; frameQueue / pacing active). Game thread. */
+   public static long lastWorkNs() {
+      return lastWorkNs;
+   }
+
    public static long capIntervalNs() {
       return capIntervalNs;
    }

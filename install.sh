@@ -134,10 +134,16 @@ reset_aot() {
 import json,sys
 p=sys.argv[1]; j=json.load(open(p)); jar="pzopt/aot/pzopt.jar"
 cp=j.get("classpath",[]); args=j.get("vmArgs",[])
-aot=[a for a in args if a.startswith("-XX:AOTCache") or a.startswith("-Xlog:aot=info:file=pzopt/aot/")]
+aot=[a for a in args if a.startswith("-XX:AOTCache") or a.startswith("-Xlog:aot=info:file=pzopt/aot/") or a=="-XX:-AOTInvokeDynamicLinking"]
 if jar in cp or aot:
     j["classpath"]=["."]+[e for e in cp if e not in (".",jar)]
-    j["vmArgs"]=[a for a in args if a not in aot]
+    na=[]
+    for a in args:
+        if a in aot:
+            if a=="-XX:-AOTInvokeDynamicLinking" and na and na[-1]=="-XX:+UnlockDiagnosticVMOptions": na.pop()  # aotNoIndy pair
+            continue
+        na.append(a)
+    j["vmArgs"]=na
     json.dump(j,open(p,"w"),indent="\t"); print("launcher: AOT-cache form put back to the loose classes")
 PYEOF
     elif [[ -f "$JSON.pzopt-backup" ]] && grep -q 'pzopt/aot/' "$JSON"; then

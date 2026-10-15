@@ -8170,3 +8170,52 @@ CPU 28 %, GPU 30 %, socket 37-38 W (36 with the keys off). Desktop (round-8 lock
 <= 9 ms, p99 8.9, p99.9 13.3, max 16.5 ms vs keys off f9l-desk-off 99.2 %, 8.9, 16.2, 17.8 (quiet runs, ext 0.28 / 0.31,
 strongMarks 5.8k, settle frames clean); in-run at the cap (f9l-desk-ab): player 0.354 -> 0.167 ms, startFrame 0.229 -> 0.174 ms,
 game-thread CPU -0.06 / -0.11 ms, process CPU +2.4 ms a frame for the LOS batch.
+
+## Louisville 120: the first-sight and cutaway bursts, GC (f9-burst, 2026-10-15)
+
+Every key below is off by default.
+
+- `bodyAtlasPrewarm` (exact; `bodyAtlasPrewarmPerFrame` 2, `bodyAtlasPrewarmDelayFrames` 60): `zombie/iso/IsoWorld`, one
+  call (`pzopt.BodyAtlasPrewarm.tick()`) right before `DeadBodyAtlas.instance.render()` in the render phase. A zombie drawn as
+  a flat sprite (`IsoZombie.renderTextureInsteadOfModel`: the zombie LOD's atlas zombies) takes its picture from one of
+  DeadBodyAtlas's 128 generic zombie bodies (sex x idle / walktoward x direction x animation frame 0-3), made the first time
+  any zombie asks for it: a render job that poses the generic zombie on the game thread (`RenderJob.renderMain`) and draws it
+  into the atlas, a zombie whose texture is not ready yet is not drawn. On the Louisville route nearly all were made in the
+  frames the horde first came into view. The tick makes the same `getBodyTexture(female, "zombie", state, dir, frame,
+  trackTime)` calls (trackTime as renderTextureInsteadOfModel computes it) a few a frame once the world has run 60 frames.
+  The generic body parameters carry no world state (`BodyParams.init` with a human visual: ambient 1, no lights, outside, the
+  shared `CharacterTextureVisual` of each sex), so each texture is the one the later call would have made; only the moment
+  and the atlas slot of later entries change.
+- `zombieSpawnAgedCapUs` (timing only; 0 = before): `zombie/popman/ZombiePopulationManager.pzoptDrainSpawns`, the queued far
+  zombies past `zombieSpawnMaxAgeMs` were all created in the frame they aged; now they stop after this much time a frame (a
+  burstGovernor heavy step: after `zombieSpawnBurstUs`), unless they waited three times `zombieSpawnMaxAgeMs`. Census: the
+  "zombie spawn spread" line counts the zombies created only because they had aged (`aged`).
+- `zombieSpawnSlackBudgetUs` (timing only; 0 = before): the same method, at a frame cap the frame's spawn budget is what the
+  last step left of the cap interval (`Pacing.lastWorkNs`) less this margin, up to `zombieSpawnMaxUs`, instead of
+  `zombieSpawnBudgetUs` / the backlog rule; with no room left no zombie is created that frame (the max-age rule still
+  applies). The route's spawn queue (up to ~390 far zombies after the first chunk rows) was drained at 600 us a frame right
+  through the horde's first sight (0.5-0.65 ms of the burst frames); census: all of those were budget creations, none aged.
+- `zombieSpawnHeavyMin` (timing only; 1 = before): the same method, a burstGovernor heavy step created at least one queued
+  zombie; 0 lets it create none (aged ones still go under zombieSpawnAgedCapUs).
+- `zombieModelAddHeavyEvery` (timing only; 0 = before): `zombie/iso/IsoWorld.sceneCullZombies`, a zombie that would get its
+  3D model (`ModelManager.Add`, then its texture creator's init and clothing composite) in a burstGovernor heavy step waits
+  as a flat sprite unless this is every Nth heavy step in a row (`Pacing.heavyAddHold`); before, every heavy step still gave
+  at least one zombie its model. Census `heavy-step add holds (candidates)` in the frame queue's log line.
+- Not an override edit: `zombieCompositeMaxPerFrame` (timing only; 0 = before): `pzopt.FirstSight.overBudget` also stops a
+  frame's first clothing composites at this count; each one costs ~0.2 ms of GPU that zombieCompositeBudgetUs's render-thread
+  budget does not see (gpuSections sub-section `moving.composite`, new: 0.6-1.5 ms of GPU in the bursts' heavy frames).
+- Found on the way: `bakeRecordParallel` is not exact on integ-r8: `devBakeRecordCheck=8` on the Louisville lock set counted 31
+  mismatches in 86,519 entries (684 checks; "draw flags flipped ... singleCol false/true" on street floor tiles) plus 2 info
+  mismatches. It stays off (it also showed no burst gain).
+- `zombie/ai/ZombieGroupManager.preupdate`: census only (instrumented runs or `devZombieGroupCensus`): `pzopt.ZombieGroupCensus`
+  logs the group count, members (sum / largest), the free pool and the slowest sweep every 10 s ("zombie groups:"). Reason:
+  f9p-L12 spent ~16 % of its game thread in ZombieGroup.update for the whole route and failed the lock with 33-46 ms steps at
+  the first sight; no other of 17 runs had that frame in its game-thread profile.
+- Not override edits: `aotNoIndy` (`pzopt.AotCache`): the record / use launcher forms also carry
+  `-XX:+UnlockDiagnosticVMOptions -XX:-AOTInvokeDynamicLinking`, stripped together on a reset (AotCache, `scripts/pzopt.sh`,
+  `install.sh`; `install.ps1` strips the second flag only). With the game's Zulu 25.0.1 every recording session's AOT cache
+  assembly (the JVM's child at exit) died in `ArchiveHeapWriter::compute_ptrmap` ("Metadata ... should have been archived":
+  an archived invokedynamic object refers to a class the cache excludes, the pre-Java-6 trove / lwjgl.util classes); the
+  game folder holds such hs_err files from the maintainer's sessions of 2026-10-10 and 10-12, so aotCache never produced a
+  cache and its launcher went record -> use (cache missing) -> record. Without AOT-linked invokedynamic the assembly works
+  and keeps all method profiles (28,423 MethodTrainingData from one Louisville session).

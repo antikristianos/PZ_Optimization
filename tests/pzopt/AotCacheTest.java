@@ -77,6 +77,14 @@ public class AotCacheTest {
       JSONObject stock = new JSONObject(STOCK);
       Check.check(j.getJSONArray("classpath").similar(stock.getJSONArray("classpath")), "loose classpath back: " + j.getJSONArray("classpath"));
       Check.check(j.getJSONArray("vmArgs").similar(stock.getJSONArray("vmArgs")), "stock options back: " + j.getJSONArray("vmArgs"));
+
+      // aotNoIndy (f9-burst): its unlock + -AOTInvokeDynamicLinking pair goes with the reset
+      JSONObject k = new JSONObject(STOCK);
+      k.getJSONArray("vmArgs").put(AotCache.OPT_UNLOCK_DIAG).put(AotCache.OPT_NO_INDY).put("-XX:AOTCache=" + AotCache.CACHE);
+      Files.writeString(game.resolve("ProjectZomboid64.json"), k.toString(), StandardCharsets.UTF_8);
+      Check.check(AotCache.resetLauncher(game), "aotNoIndy form is reset");
+      j = read(game);
+      Check.check(j.getJSONArray("vmArgs").similar(stock.getJSONArray("vmArgs")), "aotNoIndy pair stripped: " + j.getJSONArray("vmArgs"));
       System.out.println("AotCacheTest: jar, record, use, reset ok");
    }
 

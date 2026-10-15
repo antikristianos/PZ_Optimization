@@ -171,7 +171,7 @@ function Reset-Aot {
   if (Test-Path -LiteralPath $Json) {
     $j = Get-Content -LiteralPath $Json -Raw | ConvertFrom-Json
     $jar = 'pzopt/aot/pzopt.jar'
-    $aot = @($j.vmArgs | Where-Object { $_ -like '-XX:AOTCache*' -or $_ -like '-Xlog:aot=info:file=pzopt/aot/*' })
+    $aot = @($j.vmArgs | Where-Object { $_ -like '-XX:AOTCache*' -or $_ -like '-Xlog:aot=info:file=pzopt/aot/*' -or $_ -eq '-XX:-AOTInvokeDynamicLinking' })  # aotNoIndy: its -XX:+UnlockDiagnosticVMOptions stays (harmless alone)
     if ((@($j.classpath) -contains $jar) -or $aot.Count -gt 0) {
       $j.classpath = @('.') + @($j.classpath | Where-Object { $_ -ne '.' -and $_ -ne $jar })
       $j.vmArgs = @($j.vmArgs | Where-Object { $aot -notcontains $_ })
