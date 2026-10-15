@@ -200,13 +200,13 @@ function Reset-Gc {
     $script:gcChanged = $true
     return ,$a
   }
-  # jitSteady (marker -Dpzopt.jit=steady): the JIT trap-limit flags it added
+  # jitSteady (marker -Dpzopt.jit=steady): the JIT trap-limit flags and -XX:-UseTypeSpeculation it added
   $jm = '-Dpzopt.jit=steady'
   $fixJit = {
     param($a)
     $a = @($a)
     if (-not ($a -contains $jm)) { return ,$a }
-    $a = @($a | Where-Object { $_ -ne $jm -and $_ -notlike '-XX:PerMethodTrapLimit=*' -and $_ -notlike '-XX:PerBytecodeTrapLimit=*' })
+    $a = @($a | Where-Object { $_ -ne $jm -and $_ -notlike '-XX:PerMethodTrapLimit=*' -and $_ -notlike '-XX:PerBytecodeTrapLimit=*' -and $_ -ne '-XX:-UseTypeSpeculation' })
     $script:gcChanged = $true
     return ,$a
   }

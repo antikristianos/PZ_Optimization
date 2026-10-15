@@ -42,8 +42,13 @@ import org.json.JSONObject;
 public final class GcChoice {
    static final String MARKER = "-Dpzopt.gc=g1";
    static final String JIT_MARKER = "-Dpzopt.jit=steady";
-   /** jitSteady: the flags that follow JIT_MARKER; the undo removes every argument with one of these prefixes. */
-   static final String[] JIT_FLAGS = {"-XX:PerMethodTrapLimit=0", "-XX:PerBytecodeTrapLimit=0"};
+   /**
+    * jitSteady: the flags that follow JIT_MARKER; the undo removes every argument that sets one of these flags (by name).
+    * -XX:-UseTypeSpeculation since 2026-10-15 (maintainer; f8-resid): C2 no longer speculates on profiled argument / return
+    * types, which removed the ~45 speculative-type deoptimizations of a Louisville route (IsoPlayer.updateLOS deoptimized at
+    * the horde's first sight).
+    */
+   static final String[] JIT_FLAGS = {"-XX:PerMethodTrapLimit=0", "-XX:PerBytecodeTrapLimit=0", "-XX:-UseTypeSpeculation"};
    static final String MARKER_PAUSE = "-Dpzopt.gc=g1,pause";
    private static final String ZGC = "-XX:+UseZGC";
    private static final String G1 = "-XX:+UseG1GC";
@@ -198,9 +203,9 @@ public final class GcChoice {
          if (indexOf(args, JIT_MARKER) >= 0) {
             return;
          }
-         for (String f : JIT_FLAGS) {
-            if (prefixIndex(args, f.substring(0, f.indexOf('=') + 1)) >= 0) {
-               return; // the player tunes this flag himself
+         for (int i = 0; i < args.length(); i++) {
+            if (isJitFlag(args.optString(i))) {
+               return; // the player tunes one of these flags himself
             }
          }
          args.put(JIT_MARKER);
@@ -218,11 +223,7 @@ public final class GcChoice {
          }
          for (int i = args.length() - 1; i >= 0; i--) {
             String a = args.optString(i);
-            boolean ours = a.equals(JIT_MARKER);
-            for (String f : JIT_FLAGS) {
-               ours |= a.startsWith(f.substring(0, f.indexOf('=') + 1));
-            }
-            if (ours) {
+            if (a.equals(JIT_MARKER) || isJitFlag(a)) {
                args.remove(i);
             }
          }
@@ -294,6 +295,20 @@ public final class GcChoice {
          changed[0] = true;
       });
       return changed[0];
+   }
+
+   /** Whether {@code a} sets one of JIT_FLAGS' flags (any value, either sign). */
+   static boolean isJitFlag(String a) {
+      String n = flagName(a);
+      if (n == null) {
+         return false;
+      }
+      for (String f : JIT_FLAGS) {
+         if (n.equals(flagName(f))) {
+            return true;
+         }
+      }
+      return false;
    }
 
    /** The flag name of a -XX argument (-XX:+Name, -XX:-Name, -XX:Name=value), or null. */

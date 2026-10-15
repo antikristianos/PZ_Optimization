@@ -177,7 +177,7 @@ import json, sys
 j = json.load(open(sys.argv[1])); args = list(j.get("vmArgs", []))
 for v in j.values():
     if isinstance(v, dict): args += v.get("vmArgs", [])
-bad = [a for a in args if a.startswith("-Dpzopt.") or a.startswith("-XX:AOTCache") or "pzopt/aot" in a or "TrapLimit" in a]
+bad = [a for a in args if a.startswith("-Dpzopt.") or a.startswith("-XX:AOTCache") or "pzopt/aot" in a or "TrapLimit" in a or a == "-XX:-UseTypeSpeculation" or a == "-XX:-AOTInvokeDynamicLinking"]
 bad += [e for e in j.get("classpath", []) if "pzopt" in e]
 print("ok" if not bad else "left: " + " ".join(bad))
 EOF

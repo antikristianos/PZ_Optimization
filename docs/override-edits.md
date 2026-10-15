@@ -8219,3 +8219,68 @@ Every key below is off by default.
   game folder holds such hs_err files from the maintainer's sessions of 2026-10-10 and 10-12, so aotCache never produced a
   cache and its launcher went record -> use (cache missing) -> record. Without AOT-linked invokedynamic the assembly works
   and keeps all method profiles (28,423 MethodTrainingData from one Louisville session).
+
+## Defaults 2026-10-15 (maintainer; integration round 10, worktree `integ-r10`)
+
+No override changed: Config defaults, GcChoice's jitSteady flags, the installers' undo lists, run.sh's mirror of the player
+JVM flags, the tab Lua and two tests. The maintainer approved for players (the keys are described in the f8-resid, f9-burst
+and f9-los sections above):
+
+| key | was | now | kind |
+|---|---|---|---|
+| `playerLosParallel` | false | true | exact (devPlayerLosCheck; single player only, the key stays inert on a server) |
+| `schedulerFillParallel` | false | true | exact (devSchedFillCheck; with schedulerClassifyParallel, on since 2026-09-27) |
+| `lookupMemo` | false | true | exact (devLookupMemoCheck) |
+| `bodyAtlasPrewarm` | false | true | exact (the same atlas textures, made earlier) |
+| `aotNoIndy` | false | true | fix: the players' aotCache (on by default) finally gets a cache (`-XX:+UnlockDiagnosticVMOptions -XX:-AOTInvokeDynamicLinking` on the record and use launches) |
+| `burstGovernor` (burstLateUs 1000, burstWorkPct 95, zombieSpawnBurstUs 150, zombieModelAddBurstUs 150 unchanged) | false | true | timing only |
+| `zombieSpawnSlackBudgetUs` | 0 | 1500 | timing only (acts with zombieSpawnSpread) |
+| `zombieSpawnHeavyMin` | 1 | 0 | timing only (zombieSpawnSpread + burstGovernor) |
+| `zombieSpawnMaxAgeMs` | 1000 | 3000 | timing only (zombieSpawnSpread) |
+| `zombieSpawnAgedCapUs` | 0 | 600 | timing only (zombieSpawnSpread) |
+| `zombieModelAddHeavyEvery` | 0 | 4 | timing only (zombieModelAddBudgetUs > 0 + burstGovernor) |
+| `zombieCompositeMaxPerFrame` | 0 | 3 | timing only (zombieFirstSightSprite) |
+| `bakeBudgetGpu` | false | true | timing only |
+| `lightingStrongFrameMs` | 0 | 9 | timing only |
+| `frameQueueMinPct` | 60 | 260 | timing only: with frameQueueMaxPct 260 (default since round 7) a fixed D of 2.6 cap intervals |
+| JVM `-XX:-UseTypeSpeculation` | - | in jitSteady's flags | timing only (C2 code shape; no semantic change) |
+
+Already default before this round and unchanged: `frameQueue`, `frameQueueGpu`, `frameQueueSlewUs=500`,
+`frameQueueDecayUsPerS=1000`, `frameQueueMaxPct=260`, `gcSlackQueue=slack`, `gcSlack` (slew and decay only act while D moves, so
+they are inert with the fixed D). Not made default (left as they were): the zombie LOD keys, `zombieFirstSightSprite`,
+`bakeRecordParallel`, `frameQueueRtHold`, the core-isolation keys, the desktop lock's GC flags (8 GB heap, MaxGCPauseMillis=5 ...),
+and the lock's other opt-ins (`zombieSpawnSpread`, `zombieModelAddBudgetUs`, `lootDefer`, `zombieReuseSpread`, `tileRecordParallel`,
+`glNoSync`, `animalLosWalk`, `animalPreload`, `combinerPool`, `pacingQueryBuffer`). So for players the spawn / model-add pacing
+keys and `zombieCompositeMaxPerFrame` are inert until those parents are turned on; `burstGovernor` itself then only counts
+heavy steps.
+
+Where the JVM flag goes: `GcChoice.JIT_FLAGS` (jitSteady, on by default, written into the launcher JSON's top-level and
+per-platform vmArgs after the marker `-Dpzopt.jit=steady` on Linux and Windows; the macOS app bundle's Info.plist is never
+edited, so Mac players get neither the jit flags, the tuned G1 set nor the AOT cache, as before). The undo (GcChoice, scripts/pzopt.sh,
+install.sh, install.ps1, Uninstall) removes every argument that sets one of JIT_FLAGS' flags once the marker is there; an older
+install's marker with only the two trap-limit flags is upgraded at the next boot (apply() undoes, then writes the three). A
+player's own `-XX:±UseTypeSpeculation` or trap-limit flag keeps the section stock. run.sh adds the same three flags to every
+optimized run (as it already did for the trap limits), so harness runs measure what players get. `-XX:+IgnoreUnrecognizedVMOptions`
+stays in the tuned-G1 set (gcG1Tuned) and covers a later Java without one of these flags.
+
+Price of the fixed D: every capped world frame reaches the screen 2.6 cap intervals after its slot (21.7 ms at 120 fps; at a
+60 fps cap 43 ms, at 30 fps 87 ms; the old 60 % floor let D drop to 10 / 20 ms there). f8-resid measured +0.44 points of frames
+within 9 ms for about +2.5 ms mean latency at the 120 cap; lower caps were not measured.
+
+Tab entries added (Performance pages): bakeBudgetGpu (Bake budgets), lookupMemo (Cheaper checks), bodyAtlasPrewarm (Drawing the
+horde), zombieCompositeMaxPerFrame (Detail by distance), a "Horde first sight" subcategory (burstGovernor, burstLateUs,
+burstWorkPct, zombieSpawnBurstUs, zombieModelAddBurstUs, zombieModelAddHeavyEvery, zombieSpawnSlackBudgetUs, zombieSpawnHeavyMin,
+zombieSpawnMaxAgeMs, zombieSpawnAgedCapUs), frameQueueMinPct / frameQueueMaxPct (Frame pacing), aotNoIndy (Boot);
+playerLosParallel and schedulerFillParallel placed under "On other cores"; lightingStrongFrameMs gained the choice 9; the
+jitSteady tip names the type-speculation flag.
+
+Verification (desktop, 2026-10-15 ~21:25-21:50, build audit 9,152 compared / 0 mismatches, tests green): the round-9 lock set with
+every now-default key removed from the run arguments (left: frameCapFps=120, the zombie LOD props, zombieFirstSightSprite, the
+lock's non-default opt-ins and GC flags, --no-mangohud; -XX:-UseTypeSpeculation now from run.sh's jitSteady flags) locked in
+4 of 4 consecutive runs (i10-l1..l4: 119.56-119.92 fps, 99.06-99.73 % <= 9 ms, p99 8.41-8.97, p99.9 11.76-16.68, max 15.2-17.1;
+crashed=0, strongMarks 5.7-6.1k, strongPastBudget 0, settle roofs uniform black). drive-120-south at the cap: 99.82 %, p99 8.37,
+p99.9 9.30, max 16.7. Player-like Louisville (fresh-install JVM flags, empty options file, no LOD, cap 120): new defaults
+106.5 / 107.5 fps, p99 36.0 / 32.4 ms vs the previous defaults 108.3 / 108.5 fps, p99 29.6 / 31.7; the new defaults with
+frameQueueMinPct=60 109.0 / 109.6 fps, p99 27.8 / 27.3: without the LOD the fixed D costs ~2 fps and ~5-8 ms of p99 (the other
+new keys gain ~1 fps). Uncapped player-like: 124.5 fps, crashed=0. aotCache cycle with aotNoIndy: record wrote a 127 MB cache
+(28,018 MethodTrainingData), the next launch "Using AOT-linked classes: true", "aot: running from the AOT cache", no hs_err.

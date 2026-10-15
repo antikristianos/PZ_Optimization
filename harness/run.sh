@@ -517,7 +517,7 @@ rm -f "$ASPROF_OUT"
 # optimized run gets the same flags here; --prop jitSteady=false or enabled=false (a stock run) goes without
 jit_steady=1; [[ -f "$PZ_DIR/pzopt-installed.txt" ]] || jit_steady=0   # no pzopt installed: a stock game, stock flags
 for p in "${props[@]}"; do [[ "$p" == "jitSteady=false" || "$p" == "enabled=false" ]] && jit_steady=0; done
-(( jit_steady )) && vmargs+=("-Dpzopt.jit=steady" "-XX:PerMethodTrapLimit=0" "-XX:PerBytecodeTrapLimit=0")
+(( jit_steady )) && vmargs+=("-Dpzopt.jit=steady" "-XX:PerMethodTrapLimit=0" "-XX:PerBytecodeTrapLimit=0" "-XX:-UseTypeSpeculation")  # = GcChoice.JIT_FLAGS (UseTypeSpeculation since 2026-10-15)
 # gcHeap / gcHeapFixed / gcPreTouch: pzopt.GcChoice writes them into the player's launcher JSON, never a run's, so the
 # same flags go in here (the JVM takes the last -Xmx / -Xms); gcHeap=auto (the default, 2026-10-05) is 4096 MB, 8192 with
 # 30 --mod ids or more, at most half the RAM. Not in a stock run, not when the run passes its own --vmarg -Xmx.

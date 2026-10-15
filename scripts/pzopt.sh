@@ -142,7 +142,7 @@ def fix(a):
 if "vmArgs" in j: j["vmArgs"]=fix(j["vmArgs"])
 for v in j.values():
     if isinstance(v,dict) and "vmArgs" in v: v["vmArgs"]=fix(v["vmArgs"])
-J="-Dpzopt.jit=steady"; JP=("-XX:PerMethodTrapLimit=","-XX:PerBytecodeTrapLimit=")
+J="-Dpzopt.jit=steady"; JP=("-XX:PerMethodTrapLimit=","-XX:PerBytecodeTrapLimit=","-XX:-UseTypeSpeculation")
 def fixj(a):
     if J not in a: return a
     ch[0]=True; return [x for x in a if x!=J and not x.startswith(JP)]

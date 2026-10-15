@@ -69,7 +69,11 @@ public class AotCacheTest {
       AotCache.writeLauncher(game, "-XX:AOTCache=" + AotCache.CACHE);
       j = read(game);
       Check.check(has(j, "-XX:AOTCache=" + AotCache.CACHE) && !has(j, "-XX:AOTCacheOutput=" + AotCache.CACHE), "use replaces record");
-      Check.check(j.getJSONArray("vmArgs").length() == 5, "no duplicated options: " + j.getJSONArray("vmArgs"));
+      Check.check(j.getJSONArray("vmArgs").length() == 5 + (pzopt.Config.AOT_NO_INDY ? 2 : 0), "no duplicated options: " + j.getJSONArray("vmArgs"));
+      // aotNoIndy (on by default since 2026-10-15): the unlock + -AOTInvokeDynamicLinking pair, in that order, in the cache form
+      JSONArray va = j.getJSONArray("vmArgs");
+      int ni = va.toList().indexOf(AotCache.OPT_NO_INDY);
+      Check.check(!pzopt.Config.AOT_NO_INDY || ni > 0 && AotCache.OPT_UNLOCK_DIAG.equals(va.getString(ni - 1)), "aotNoIndy pair written: " + va);
       Check.check(j.getJSONArray("classpath").length() == 2, "no duplicated jar");
 
       Check.check(AotCache.resetLauncher(game), "cache form is reset");

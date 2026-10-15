@@ -62,6 +62,17 @@ public class GcChoiceTest {
       check(own.getJSONArray("vmArgs").toString().equals(ownBefore), "a player's own trap-limit flag: the section is left alone");
       GcChoice.jitToStock(own);
       check(own.getJSONArray("vmArgs").toList().contains("-XX:PerMethodTrapLimit=50"), "undo keeps the player's own flag");
+      // -XX:-UseTypeSpeculation (2026-10-15): one of the jitSteady flags; a player's own +UseTypeSpeculation keeps the section stock
+      check(java.util.Arrays.asList(GcChoice.JIT_FLAGS).contains("-XX:-UseTypeSpeculation"), "jitSteady carries -XX:-UseTypeSpeculation");
+      JSONObject ownTs = new JSONObject(STOCK.replace("\"-XX:-OmitStackTraceInFastThrow\"", "\"-XX:-OmitStackTraceInFastThrow\",\"-XX:+UseTypeSpeculation\""));
+      String ownTsBefore = ownTs.getJSONArray("vmArgs").toString();
+      GcChoice.jitToSteady(ownTs);
+      check(ownTs.getJSONArray("vmArgs").toString().equals(ownTsBefore), "a player's own UseTypeSpeculation: the section is left alone");
+      // an older install's marker with only the two trap-limit flags is upgraded by apply()'s undo + redo
+      JSONObject old = new JSONObject(STOCK.replace("\"-XX:-OmitStackTraceInFastThrow\"", "\"-XX:-OmitStackTraceInFastThrow\",\"" + GcChoice.JIT_MARKER + "\",\"-XX:PerMethodTrapLimit=0\",\"-XX:PerBytecodeTrapLimit=0\""));
+      GcChoice.jitToStock(old);
+      GcChoice.jitToSteady(old);
+      check(old.getJSONArray("vmArgs").toList().contains("-XX:-UseTypeSpeculation") && old.getJSONArray("vmArgs").toList().stream().filter(GcChoice.JIT_MARKER::equals).count() == 1, "old jit form upgraded: " + old.getJSONArray("vmArgs"));
       // gcHeap / gcHeapFixed / gcPreTouch: -Xmx replaced in place, -Xms and pre-touch added, all undone exactly
       JSONObject h = new JSONObject(STOCK);
       GcChoice.heapToPzopt(h, 6144, true, true);
