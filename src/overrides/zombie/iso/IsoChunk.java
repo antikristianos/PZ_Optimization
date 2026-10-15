@@ -147,6 +147,7 @@ public final class IsoChunk {
    // per-frame map lookup FBORenderCell.calculateOccludingSquares used for clean levels (cutawayFast)
    public final long[] pzoptOccluderMask = new long[64];
    public long pzoptOccluderMaskSet;
+   public long pzoptQueuedNs; // pzopt: f8-handoff census, when the chunk was queued for its hand-off (loadGridSquare)
    public Object[] pzoptTlOrder; // pzopt: translucentOrderCache, per player and level the kept translucent square order
    public int pzoptLosFrame; // pzopt: losLightPrefetch, the prefetch frame pzoptLosTask belongs to
    public int[] pzoptLosTask; // pzopt: losLightPrefetch, per level (z + 32): this frame's task index, -1 none
@@ -2593,6 +2594,9 @@ public final class IsoChunk {
       }
 
       if (dz == 0) {
+         if (pzopt.HandoffRecalc.capture) { // pzopt: handoffRecalcFast, a deferred setBlockedGridPointers of either square lands before this direct write
+            pzopt.HandoffRecalc.flush2(sq, sq2); // pzopt
+         } // pzopt
          switch (dir) {
             case E:
                if (sq2 == null) {
@@ -2853,6 +2857,113 @@ public final class IsoChunk {
          }
       }
 
+      // pzopt: handoffRecalcFast / handoffRecalcParallel (f8-handoff 2026-10-14): the recalc phase (the new squares' and the border
+      // squares' recalc against the loaded neighbours) moved unchanged to pzoptRecalcPhase; pzopt.HandoffRecalc removes its repeats
+      // (one property recompute per square, the last blocked-grid pointer call per square) and serves the pair bits computed on the
+      // frame workers beforehand. devHandoffRecalcCheck runs it both ways and compares.
+      boolean pzoptFast = pzopt.Config.HANDOFF_RECALC_FAST && pzopt.Overrides.enabled() && pzopt.GtAb.on(pzopt.GtAb.HANDOFF_FAST) // pzopt
+         && !GameClient.client && !GameServer.server; // pzopt
+      boolean pzoptPar = pzoptFast && pzopt.Config.HANDOFF_RECALC_PARALLEL && pzopt.GtAb.on(pzopt.GtAb.HANDOFF_PARALLEL); // pzopt
+      GameProfiler profiler = GameProfiler.getInstance(); // pzopt: (stock line, now also before the phase)
+      if (pzoptFast && pzopt.Config.DEV_HANDOFF_RECALC_CHECK) { // pzopt
+         ArrayList<IsoGridSquare> pzoptNew = new ArrayList<>(newSquareList); // pzopt
+         pzopt.HandoffRecalc.Snapshot pzoptPre = pzopt.HandoffRecalc.checkTake(this.wx, this.wy, minLevel2, maxLevel2); // pzopt
+         pzopt.HandoffRecalc.checkMark(); // pzopt
+         pzopt.HandoffRecalc.checkTimeStart(); // pzopt
+         try { // pzopt
+            pzopt.HandoffRecalc.begin(this.wx, this.wy, this.minLevel, this.maxLevel, minLevel2, maxLevel2, newSquareList, true, pzoptPar); // pzopt
+            this.pzoptRecalcPhase(); // pzopt
+         } finally { // pzopt
+            pzopt.HandoffRecalc.end(); // pzopt
+         } // pzopt
+         pzopt.HandoffRecalc.checkTimeFast(); // pzopt
+         pzopt.HandoffRecalc.Snapshot pzoptFastRun = pzopt.HandoffRecalc.checkTake(this.wx, this.wy, minLevel2, maxLevel2); // pzopt
+         pzopt.HandoffRecalc.checkRestore(pzoptPre); // pzopt
+         newSquareList.clear(); // pzopt
+         newSquareList.addAll(pzoptNew); // pzopt
+         pzopt.HandoffRecalc.checkTimeStart(); // pzopt
+         pzopt.HandoffRecalc.beginRecord(); // pzopt
+         try { // pzopt
+            this.pzoptRecalcPhase(); // pzopt: the stock run, its result stays
+         } finally { // pzopt
+            pzopt.HandoffRecalc.endRecord(); // pzopt
+         } // pzopt
+         pzopt.HandoffRecalc.checkTimeStock(); // pzopt
+         pzopt.HandoffRecalc.checkCompare(pzoptFastRun, pzopt.HandoffRecalc.checkTake(this.wx, this.wy, minLevel2, maxLevel2), this.wx, this.wy); // pzopt
+      } else { // pzopt
+         try { // pzopt
+            pzopt.HandoffRecalc.begin(this.wx, this.wy, this.minLevel, this.maxLevel, minLevel2, maxLevel2, newSquareList, pzoptFast, pzoptPar); // pzopt
+            this.pzoptRecalcPhase(); // pzopt
+         } finally { // pzopt
+            pzopt.HandoffRecalc.end(); // pzopt
+         } // pzopt
+      } // pzopt
+      ProfileArea var67; // pzopt: (stock local, the phase's profile area moved with it)
+
+
+      this.fixObjectAmbientEmittersOnAdjacentChunks(chunkE, chunkS);
+      if (chunkW != null) {
+         chunkW.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkN != null) {
+         chunkN.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkE != null) {
+         chunkE.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkS != null) {
+         chunkS.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkNW != null) {
+         chunkNW.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkNE != null) {
+         chunkNE.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkSE != null) {
+         chunkSE.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      if (chunkSW != null) {
+         chunkSW.checkLightingLater_AllPlayers_AllLevels();
+      }
+
+      for (int pn = 0; pn < IsoPlayer.numPlayers; pn++) {
+         LosUtil.cachecleared[pn] = true;
+      }
+
+      IsoLightSwitch.chunkLoaded(this);
+      var67 = profiler.profile("Recreate Level Cutaway");
+
+      try {
+         for (int z = this.minLevel; z <= this.maxLevel; z++) {
+            this.getCutawayData().recreateLevel(z);
+         }
+      } catch (Throwable var28) {
+         if (var67 != null) {
+            try {
+               var67.close();
+            } catch (Throwable var26) {
+               var28.addSuppressed(var26);
+            }
+         }
+
+         throw var28;
+      }
+
+      if (var67 != null) {
+         var67.close();
+      }
+   }
+
+   /** pzopt: handoffRecalcFast, the stock recalc phase of loadInMainThread moved here unchanged (run twice by devHandoffRecalcCheck). */
+   private void pzoptRecalcPhase() { // pzopt
       for (int i = 0; i < newSquareList.size(); i++) {
          IsoGridSquare sq = newSquareList.get(i);
          sq.RecalcAllWithNeighbours(true);
@@ -2967,67 +3078,7 @@ public final class IsoChunk {
       if (var67 != null) {
          var67.close();
       }
-
-      this.fixObjectAmbientEmittersOnAdjacentChunks(chunkE, chunkS);
-      if (chunkW != null) {
-         chunkW.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkN != null) {
-         chunkN.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkE != null) {
-         chunkE.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkS != null) {
-         chunkS.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkNW != null) {
-         chunkNW.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkNE != null) {
-         chunkNE.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkSE != null) {
-         chunkSE.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      if (chunkSW != null) {
-         chunkSW.checkLightingLater_AllPlayers_AllLevels();
-      }
-
-      for (int pn = 0; pn < IsoPlayer.numPlayers; pn++) {
-         LosUtil.cachecleared[pn] = true;
-      }
-
-      IsoLightSwitch.chunkLoaded(this);
-      var67 = profiler.profile("Recreate Level Cutaway");
-
-      try {
-         for (int z = this.minLevel; z <= this.maxLevel; z++) {
-            this.getCutawayData().recreateLevel(z);
-         }
-      } catch (Throwable var28) {
-         if (var67 != null) {
-            try {
-               var67.close();
-            } catch (Throwable var26) {
-               var28.addSuppressed(var26);
-            }
-         }
-
-         throw var28;
-      }
-
-      if (var67 != null) {
-         var67.close();
-      }
-   }
+   } // pzopt
 
    private void fixObjectAmbientEmittersOnAdjacentChunks(IsoChunk chunkE, IsoChunk chunkS) {
       if (!GameServer.server) {
@@ -3861,6 +3912,7 @@ public final class IsoChunk {
 
    public void doLoadGridsquare() {
       this.preventHotSave = true;
+      pzopt.HandoffParts.start(); // pzopt: hand-off census (instrumented runs)
       if (this.jobType == IsoChunk.JobType.SoftReset) {
          this.spawnedRooms.clear();
       }
@@ -3868,6 +3920,8 @@ public final class IsoChunk {
       if (!GameServer.server) {
          this.loadInMainThread();
       }
+
+      pzopt.HandoffParts.mark(0); // pzopt: hand-off census, loadInMainThread
 
       int cellX = PZMath.fastfloor(this.wx / 32.0F);
       int cellY = PZMath.fastfloor(this.wy / 32.0F);
@@ -3905,6 +3959,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(1); // pzopt: hand-off census, vehicles, zone stories, ranch animals, grass, horde survivor
       this.proceduralZombieSquares.clear();
       this.update();
       this.addRagdollControllers();
@@ -3926,6 +3981,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(2); // pzopt: hand-off census, update (vehicle stories), ragdolls, corpse count, flies, walls, corpses / blood
       LoadGridsquarePerformanceWorkaround.init(this.wx, this.wy);
       int chunksPerWidth = 8;
       if (!GameClient.client) {
@@ -3959,6 +4015,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(3); // pzopt: hand-off census, vehicles added to the world
       this.treeCount = 0;
       this.scavengeZone = null;
       this.numberOfWaterTiles = 0;
@@ -4014,6 +4071,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(4); // pzopt: hand-off census, square loop: objects addToWorld, erosion, map objects, rats, LoadGridsquare events
       if (this.jobType != IsoChunk.JobType.SoftReset) {
          ErosionMain.ChunkLoaded(this);
       }
@@ -4023,6 +4081,7 @@ public final class IsoChunk {
       }
 
       ReanimatedPlayers.instance.addReanimatedPlayersToChunk(this);
+      pzopt.HandoffParts.mark(5); // pzopt: hand-off census, erosion chunk, global objects, reanimated players
       Guard.assertGameThread("pathfinding registration (chunk load)"); // pzopt: dev-build check, see design Decision 6
       if (this.jobType != IsoChunk.JobType.SoftReset) {
          MapCollisionData.instance.addChunkToWorld(this);
@@ -4038,6 +4097,7 @@ public final class IsoChunk {
          LootRespawn.chunkLoaded(this);
       }
 
+      pzopt.HandoffParts.mark(6); // pzopt: hand-off census, collision, populations, pathfinding, generators, loot respawn
       if (!GameServer.server) {
          ArrayList<IsoRoomLight> roomLightsWorld = IsoWorld.instance.currentCell.roomLights;
 
@@ -4079,6 +4139,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(7); // pzopt: hand-off census, room lights, randomized buildings, visibility polygon
       for (int zz = this.minLevel; zz <= this.maxLevel; zz++) {
          for (int x = 0; x < 8; x++) {
             for (int y = 0; y < 8; y++) {
@@ -4087,6 +4148,7 @@ public final class IsoChunk {
          }
       }
 
+      pzopt.HandoffParts.mark(8); // pzopt: hand-off census, loot fill (LoadGridsquarePerformanceWorkaround)
       this.checkAdjacentChunks();
 
       try {
@@ -4134,6 +4196,7 @@ public final class IsoChunk {
       frameDelay = (frameDelay + 1) % 5;
       this.preventHotSave = false;
       LuaEventManager.triggerEvent("LoadChunk", this);
+      pzopt.HandoffParts.mark(9); // pzopt: hand-off census, adjacent chunks, MP state, LoadChunk event
    }
 
    private void loadGridSquareIfNeeded(IsoGridSquare square) {

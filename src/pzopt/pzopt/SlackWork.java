@@ -26,6 +26,16 @@ public final class SlackWork {
 
       /** Run the next job (it learns its own cost). */
       void runNext();
+
+      /** Frames after which the next job runs whatever its cost (f8-handoff: the chunk hand-off may set its own). */
+      default int maxWaitFrames() {
+         return Config.SLACK_MAX_WAIT_FRAMES;
+      }
+
+      /** An overdue job runs in the next slack, light frame or not (f8-handoff: the chunk hand-off may ask for it). */
+      default boolean forceAnyFrame() {
+         return false;
+      }
    }
 
    private static final java.util.ArrayList<Producer> PRODUCERS = new java.util.ArrayList<>();
@@ -87,9 +97,10 @@ public final class SlackWork {
                continue;
             }
             int age = p.nextAgeFrames();
+            int maxWait = p.maxWaitFrames(); // f8-handoff: per producer (the global slackMaxWaitFrames unless it sets its own)
             // overdue: into a light frame (half the interval still free) at once, into any frame only at four times the wait
-            if (!ranForced && age >= Config.SLACK_MAX_WAIT_FRAMES
-                  && (deadlineNs - now >= Pacing.capIntervalNs() / 2 || age >= 4 * Config.SLACK_MAX_WAIT_FRAMES)) {
+            if (!ranForced && age >= maxWait
+                  && (p.forceAnyFrame() || deadlineNs - now >= Pacing.capIntervalNs() / 2 || age >= 4 * maxWait)) {
                best = p;
                force = true;
                break;

@@ -1366,6 +1366,7 @@ public final class IsoWorld {
 
    private void GenerateTilePropertyLookupTables() {
       TilePropertyAliasMap.instance.Generate(PropertyValueMap);
+      pzopt.PropIds.generated(); // pzopt: propIdCache, the property ids may have changed
       PropertyValueMap.clear();
    }
 

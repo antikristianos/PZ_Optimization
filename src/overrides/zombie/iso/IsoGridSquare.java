@@ -319,6 +319,9 @@ public final class IsoGridSquare {
    private static long torchTimer;
    public boolean solidFloorCached;
    public boolean solidFloor;
+   public int pzoptHrStamp; // pzopt: handoffRecalcFast, the hand-off recalc phase this square's properties were last recomputed in
+   public int pzoptHrPend; // pzopt: handoffRecalcFast, the phase with a deferred setBlockedGridPointers pending
+   public int pzoptHrPath; // pzopt: handoffRecalcFast, the pathMatrix at that deferred call
    private boolean cacheIsFree;
    private boolean cachedIsFree;
    public IsoChunk chunk;
@@ -7550,6 +7553,9 @@ public final class IsoGridSquare {
 
    public void RecalcPropertiesIfNeeded() {
       if (this.propertiesDirty) {
+         if (pzopt.HandoffRecalc.capture && pzopt.HandoffRecalc.skipProps(this)) { // pzopt: handoffRecalcFast (once per hand-off phase; recorded on a worker)
+            return; // pzopt
+         } // pzopt
          this.RecalcProperties();
       }
    }
@@ -7563,7 +7569,17 @@ public final class IsoGridSquare {
          DebugLog.log("ERROR");
       }
 
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcParallel, the bit precomputed on the frame workers
+         int pzoptM = pzopt.HandoffRecalc.memo(this, square, pzopt.HandoffRecalc.COLLIDE); // pzopt
+         if (pzoptM >= 0) { // pzopt
+            this.collideMatrix = setMatrixBit(this.collideMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, pzoptM == 1); // pzopt
+            return; // pzopt
+         } // pzopt
+      } // pzopt
       boolean b = this.CalculateCollide(square, false, false, false, false, getter);
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcMemo, kept for the pair's repeats in this hand-off
+         pzopt.HandoffRecalc.store(this, square, pzopt.HandoffRecalc.COLLIDE, b); // pzopt
+      } // pzopt
       this.collideMatrix = setMatrixBit(this.collideMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, b);
    }
 
@@ -7572,7 +7588,17 @@ public final class IsoGridSquare {
    }
 
    public void ReCalculatePathFind(IsoGridSquare square, IsoGridSquare.GetSquare getter) {
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcParallel
+         int pzoptM = pzopt.HandoffRecalc.memo(this, square, pzopt.HandoffRecalc.PATH); // pzopt
+         if (pzoptM >= 0) { // pzopt
+            this.pathMatrix = setMatrixBit(this.pathMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, pzoptM == 1); // pzopt
+            return; // pzopt
+         } // pzopt
+      } // pzopt
       boolean b = this.CalculateCollide(square, false, true, false, false, getter);
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcMemo
+         pzopt.HandoffRecalc.store(this, square, pzopt.HandoffRecalc.PATH, b); // pzopt
+      } // pzopt
       this.pathMatrix = setMatrixBit(this.pathMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, b);
    }
 
@@ -7581,7 +7607,17 @@ public final class IsoGridSquare {
    }
 
    public void ReCalculateVisionBlocked(IsoGridSquare square, IsoGridSquare.GetSquare getter) {
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcParallel
+         int pzoptM = pzopt.HandoffRecalc.memo(this, square, pzopt.HandoffRecalc.VISION); // pzopt
+         if (pzoptM >= 0) { // pzopt
+            this.visionMatrix = setMatrixBit(this.visionMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, pzoptM == 1); // pzopt
+            return; // pzopt
+         } // pzopt
+      } // pzopt
       boolean b = this.CalculateVisionBlocked(square, getter);
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare) { // pzopt: handoffRecalcMemo
+         pzopt.HandoffRecalc.store(this, square, pzopt.HandoffRecalc.VISION, b); // pzopt
+      } // pzopt
       this.visionMatrix = setMatrixBit(this.visionMatrix, 1 + square.x - this.x, 1 + square.y - this.y, 1 + square.z - this.z, b);
    }
 
@@ -7872,6 +7908,9 @@ public final class IsoGridSquare {
          return this.solidFloor;
       }
 
+      if (pzopt.HandoffRecalc.capture && pzopt.HandoffRecalc.noCache()) { // pzopt: handoffRecalcParallel, no lazy write while the workers read
+         return this.properties.has(IsoFlagType.solidfloor) || this.HasStairs() || this.hasSlopedSurface(); // pzopt
+      } // pzopt
       if (!this.properties.has(IsoFlagType.solidfloor) && !this.HasStairs() && !this.hasSlopedSurface()) {
          this.solidFloor = false;
       } else {
@@ -8982,6 +9021,9 @@ public final class IsoGridSquare {
    }
 
    void setBlockedGridPointers(IsoGridSquare.GetSquare getter) {
+      if (pzopt.HandoffRecalc.capture && getter == cellGetSquare && pzopt.HandoffRecalc.deferPointers(this)) { // pzopt: handoffRecalcFast, only the last call of the phase counts
+         return; // pzopt
+      } // pzopt
       this.w = getter.getGridSquare(this.x - 1, this.y, this.z);
       this.e = getter.getGridSquare(this.x + 1, this.y, this.z);
       this.s = getter.getGridSquare(this.x, this.y + 1, this.z);
@@ -9032,6 +9074,72 @@ public final class IsoGridSquare {
          this.ne = null;
       }
    }
+
+   /** pzopt: handoffRecalcFast, a deferred setBlockedGridPointers applied with the pathMatrix of its call. */
+   public void pzoptApplyPointers(int pathAtCall) { // pzopt
+      int pzoptNow = this.pathMatrix; // pzopt
+      this.pathMatrix = pathAtCall; // pzopt: testPathFindAdjacent reads this square's own pathMatrix only
+      try { // pzopt
+         this.setBlockedGridPointers(cellGetSquare); // pzopt
+      } finally { // pzopt
+         this.pathMatrix = pzoptNow; // pzopt
+      } // pzopt
+   } // pzopt
+
+   /** pzopt: handoffRecalcFast, the inputs the collide / path / vision bits read from a recompute (stale check), into out; the count. */
+   public int pzoptPropsKey(long[] out) { // pzopt
+      out[0] = this.hasTypes; // pzopt
+      out[1] = this.hasTree ? 1L : 0L; // pzopt
+      int n = this.properties.pzoptKey(out, 2); // pzopt
+      return n < 0 ? -1 : n + 2; // pzopt
+   } // pzopt
+
+   /** pzopt: devHandoffRecalcCheck, the int fields a hand-off recalc phase writes. */
+   public int[] pzoptHrInts() { // pzopt
+      return new int[]{this.collideMatrix, this.pathMatrix, this.visionMatrix, this.solidFloorCached ? 1 : 0, this.solidFloor ? 1 : 0}; // pzopt
+   } // pzopt
+
+   /** pzopt: devHandoffRecalcCheck, the pointer fields a hand-off recalc phase writes (the ten blocked-grid pointers, nav). */
+   public IsoGridSquare[] pzoptHrRefs() { // pzopt
+      return new IsoGridSquare[]{this.w, this.nw, this.sw, this.s, this.n, this.ne, this.se, this.e, this.u, this.d, // pzopt
+         this.nav[0], this.nav[1], this.nav[2], this.nav[3], this.nav[4], this.nav[5], this.nav[6], this.nav[7]}; // pzopt
+   } // pzopt
+
+   /** pzopt: devHandoffRecalcCheck, what RecalcProperties writes (restored by pzoptHrPropsRestore). */
+   public Object[] pzoptHrPropsSave() { // pzopt
+      return new Object[]{this.properties.pzoptCopy(), this.hasTypes, this.hasTree, this.isExteriorCache, this.isSolidFloorCache, this.isVegitationCache}; // pzopt
+   } // pzopt
+
+   public void pzoptHrPropsRestore(Object[] o) { // pzopt
+      this.properties.pzoptSetFrom((zombie.core.properties.PropertyContainer)o[0]); // pzopt
+      this.hasTypes = (Long)o[1]; // pzopt
+      this.hasTree = (Boolean)o[2]; // pzopt
+      this.isExteriorCache = (Boolean)o[3]; // pzopt
+      this.isSolidFloorCache = (Boolean)o[4]; // pzopt
+      this.isVegitationCache = (Boolean)o[5]; // pzopt
+   } // pzopt
+
+   /** pzopt: devHandoffRecalcCheck, put the captured fields back. */
+   public void pzoptHrRestore(int[] i, IsoGridSquare[] r) { // pzopt
+      this.collideMatrix = i[0]; // pzopt
+      this.pathMatrix = i[1]; // pzopt
+      this.visionMatrix = i[2]; // pzopt
+      this.solidFloorCached = i[3] != 0; // pzopt
+      this.solidFloor = i[4] != 0; // pzopt
+      this.w = r[0]; // pzopt
+      this.nw = r[1]; // pzopt
+      this.sw = r[2]; // pzopt
+      this.s = r[3]; // pzopt
+      this.n = r[4]; // pzopt
+      this.ne = r[5]; // pzopt
+      this.se = r[6]; // pzopt
+      this.e = r[7]; // pzopt
+      this.u = r[8]; // pzopt
+      this.d = r[9]; // pzopt
+      for (int k = 0; k < 8; k++) { // pzopt
+         this.nav[k] = r[10 + k]; // pzopt
+      } // pzopt
+   } // pzopt
 
    public IsoObject getContainerItem(String type) {
       int numObjects = this.getObjects().size();

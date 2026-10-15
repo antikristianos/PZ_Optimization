@@ -7842,3 +7842,65 @@ makes its composite inputs differ every time.
   composite are gone with `renderPrewarm` (first composite 2.1-3.3 ms); with `zombieFirstSightSprite` too, the composites a
   frame drop from 29-34 (13-17 ms render thread) to 9-10 (2.7-3.7 ms), max frame 17.7-25.1 ms vs 21.8-39.1 off. Drive bench
   (drive-120-south) with both keys 233.7-233.8 fps / 99.2-99.3 % <= 9 ms vs 233.8-234.7 / 99.2-99.4 % off.
+
+## The chunk hand-off's border recalc without its repeats (2026-10-14/15, worktree `f8-handoff`): IsoChunk, IsoGridSquare, IsoChunkMap, PropertyContainer, IsoWorld, WorldStreamer
+
+`handoffRecalcFast` (on by default since 2026-10-15: exact, `devHandoffRecalcCheck`; tab: Driving > Chunk streaming), `pzopt.HandoffRecalc`. A streamed chunk's hand-off
+(`IsoChunk.loadInMainThread`, game thread) recalculates its border squares against the loaded neighbours: the new squares'
+`RecalcAllWithNeighbours`, the border loop of `IsoChunk.RecalcAllWithNeighbour` per level and direction, the four corners'
+`RecalcAllWithNeighbours` per level. That phase is about half of a hand-off's game-thread time, and most of it repeats itself:
+- every `ReCalculateAll` calls `RecalcPropertiesIfNeeded` on both squares, and a loaded chunk's square stays dirty after a
+  recompute (`propertiesDirty = chunk == null || chunk.loaded`), so each call recomputes (about 15 recomputes per square and
+  hand-off); nothing in the phase changes a recompute's inputs (objects, room, roof, rain, fire, water) and its side effects
+  are flags nobody reads before the phase ends (lighting / physics "check later", the puddle recalc, the obstacle cache);
+- every `ReCalculateAll` calls `setBlockedGridPointers` on both squares (ten lookups and up to eight path tests each); those
+  pointers are only written during the phase, so only a square's last call counts.
+During the phase (now the stock code moved unchanged to `IsoChunk.pzoptRecalcPhase`):
+- `IsoGridSquare.RecalcPropertiesIfNeeded`: the first call per square and phase recomputes, the others return;
+- `IsoGridSquare.setBlockedGridPointers(cellGetSquare)`: deferred, with the square's own pathMatrix at the call kept (its
+  path tests read only that); applied (`pzoptApplyPointers`, the stock body with that pathMatrix) before a direct pointer
+  write (`IsoChunk.RecalcAllWithNeighbour`, dz 0: `pzopt.HandoffRecalc.flush2`), before the first recompute of the square or
+  of the square above it (a recompute that changed stale properties would change what the deferred call reads), and at the
+  end of the phase.
+Proof: `devHandoffRecalcCheck` runs each chunk's phase twice, fast and then (squares restored: matrices, the ten pointers,
+nav, the solid-floor cache, the properties and their derived fields) stock, whose result stays, and compares the three
+matrices, the ten pointers and nav of every square within two of the chunk, and the set of squares whose properties were
+recomputed: Louisville 777 chunks (handoff-chk6), 0 differences; with the memo / workers variants below also 0 over
+Louisville 736 + 778 + 737 and drive-120-south 2,446 + 2,469 chunks.
+Cost of the phase per chunk (Louisville at the cap, within-run alternation): stock 416-459 us mean, fast 207-299 us.
+
+Measured and left off:
+- `handoffRecalcMemo` (pzopt.HandoffRecalc.store/memo): a pair's collide / path / vision bit kept for its repeats within the
+  phase. Exact (0 differences over 778 + 2,469 chunks) but a pair repeats only 1.3 times: the bookkeeping (slot set-up, the
+  stairs / slope exclusion: pairs that read neighbour pointers doGridNav changes) cost more than it saved (762 vs 260 us).
+- `handoffRecalcParallel` (+ `handoffRecalcParallelMin`): the bits of the pairs the phase asks for computed on the frame
+  workers before it (fork-join, every lazy write suppressed on the workers, property recomputes asked for inside a
+  computation recorded and applied on a hit, a stale recompute drops the entries within reach). Exact (0 differences over
+  736 + 737 + 2,446 chunks), but the fork costs 100-400 us a chunk: only chunks of 1,600+ pairs gain (60-180 us).
+- Hooks: `IsoGridSquare.ReCalculateCollide / ReCalculatePathFind / ReCalculateVisionBlocked` (memo lookup, store),
+  `TreatAsSolidFloor` (no cache fill while the workers read), `RecalcPropertiesIfNeeded` (records on a worker).
+Census (instrumented runs, console "chunk hand-off:"): `pzopt.HandoffParts` (doLoadGridsquare's time by part:
+recalc, stories, update, vehicles, squares, erosion, pathfind, buildings, loot, rest), the phase cost by mode, chunks handed
+off in the frame vs in the slack, per-frame in-frame hand-off time, the queue wait (`IsoChunk.pzoptQueuedNs`, set where
+`WorldStreamer` / `RecalcPool` queue the chunk).
+
+`propIdCache` (on by default since 2026-10-15: exact, `devPropIdCheck` 17.8 M lookups compared, 0 mismatches; tab: Driving > Chunk
+streaming), `pzopt.PropIds`: `PropertyContainer.has / get(IsoPropertyType)` looked
+the id up by name in TilePropertyAliasMap's HashMap on every call (0.8 % of the Louisville game thread; 10 % of a hand-off
+through RecalcProperties' `has(FUEL_AMOUNT)`). The ids are kept per type for the alias map's generation; `IsoWorld` bumps the
+generation right after `TilePropertyAliasMap.Generate` (its only caller).
+
+The slack scheduler of the hand-off (timing-only; on by default since 2026-10-15, the maintainer's decision, with tab entries in Driving >
+Chunk streaming: `chunkHandoffCost=chunk`, `chunkHandoffSlackMaxWait=6`, `chunkHandoffForceAnyFrame=true`,
+`chunkHandoffFrameBudgetUs=1500`; GtAb `chunkHandoffSched`, bit 61, switches all four together): the census showed the hand-off producer's estimate (a learned cost per square, at least half a slowly decaying peak,
+learned from slack hand-offs only) stuck high after one heavy chunk, so the staged chunk waited up to 600 frames while the queue
+grew past `chunkHandoffSlackBacklog` (24) and a few frames a run then handed off the backlog in the frame (each > 4 ms).
+- `chunkHandoffCost=chunk` (`square` = the 2026-10-05 model): the running mean of a whole hand-off, learned from the in-frame ones too.
+- `chunkHandoffSlackMaxWait` (6; 0 = `slackMaxWaitFrames`, 600): `SlackWork.Producer.maxWaitFrames()` lets the hand-off producer force a
+  staged chunk that does not fit after its own wait; `chunkHandoffForceAnyFrame` (`Producer.forceAnyFrame()`) forces it into
+  the next slack, light frame or not (still one forced job a frame).
+- `chunkHandoffFrameBudgetUs` (1500; 0 = stock): a backlog's in-frame hand-off (queue >= `chunkHandoffSlackBacklog`, below
+  `chunkHandoffPaceBacklog` 160, so a world load or teleport keeps the stock count) stops once the frame's hand-offs took the
+  budget (at least one chunk, at most the stock count); the rest join in the slack (the producer stays registered). Edit in
+  `IsoChunkMap.updateInternal`'s hand-off loop (`// pzopt` lines), which also times each in-frame hand-off for the chunk model.
+No other stock code changed for these (IsoChunkMap's producer and SlackWork are pzopt code).

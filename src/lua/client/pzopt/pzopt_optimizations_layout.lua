@@ -22,7 +22,8 @@ PzoptSettingsLayout = {
               subs = {
                 { title = "Car smoothness", keys = { "vehicleSmooth", "driveCameraLate", "driveLookSmooth", "cameraScreenPixels",
                     "physicsStepHz", "physicsStepMode" } },
-                { title = "Chunk streaming", keys = { "parallel", "workers", "loadWorkers", "wake", "chunkHandoffDivisor", "slackWork",
+                { title = "Chunk streaming", keys = { "parallel", "workers", "loadWorkers", "wake", "chunkHandoffDivisor", "handoffRecalcFast", "propIdCache", "slackWork",
+                    "chunkHandoffCost", "chunkHandoffSlackMaxWait", "chunkHandoffForceAnyFrame", "chunkHandoffFrameBudgetUs",
                     "hotsaveStaged", "hotsaveIntervalSec" } },
                 { title = "Render distance", keys = { "chunkGridWidth", "chunkGridFollowView" } },
                 { title = "Trees while driving", keys = { "driveTreeCutaway", "treeRebakeLazy", "treeRebakeLingerMs",
