@@ -310,6 +310,7 @@ PzoptOptionClasses = {
     devMirrorsPropSkip = { "pzopt.Mirrors" },
     devMirrorsRectsEvery = { "pzopt.Mirrors" },
     devMirrorsSkip = { "pzopt.Mirrors" },
+    devMirrorsSkip2 = { "pzopt.MirrorGeometry", "pzopt.Mirrors" },
     devMirrorsTopTest = { "pzopt.Mirrors" },
     devMirrorsView = { "pzopt.Mirrors" },
     devMirrorsViewToggleMs = { "pzopt.Mirrors" },
