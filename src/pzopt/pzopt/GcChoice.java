@@ -461,6 +461,12 @@ public final class GcChoice {
          String oldMs = ms < 0 ? "none" : args.optString(ms).substring(XMS.length());
          String newMx = heapMb > 0 ? heapMb + "m" : mx < 0 ? null : oldMx;
          String newMs = fixed && newMx != null ? newMx : null;
+         if (newMs == null && newMx != null && ms >= 0 && sizeMb(oldMs) > sizeMb(newMx)) {
+            // a player's own -Xms above the new -Xmx: the JVM refuses to start ("Initial heap size set to a larger value
+            // than the maximum heap size") before console.txt exists, and every launch after it fails the same way
+            // (Discord, 2026-10-17: -Xms5120m -Xmx5120m with gcHeap=auto's 4096). The marker keeps the old -Xms for the undo.
+            newMs = newMx;
+         }
          boolean addTouch = preTouch && indexOf(args, PRETOUCH) < 0;
          if (heapMb <= 0 && newMs == null && !addTouch) {
             return;
@@ -476,6 +482,44 @@ public final class GcChoice {
          }
          args.put(HEAP_MARKER + oldMx + "," + oldMs + "," + (addTouch ? 1 : 0));
       });
+   }
+
+   /** A -Xmx / -Xms size ("5120m", "6g", "4194304k", bytes) in MB; -1 when it does not parse. */
+   static long sizeMb(String v) {
+      if (v == null || v.isEmpty()) {
+         return -1;
+      }
+      char u = Character.toLowerCase(v.charAt(v.length() - 1));
+      String n = Character.isDigit(u) ? v : v.substring(0, v.length() - 1);
+      try {
+         long x = Long.parseLong(n);
+         return switch (u) {
+            case 't' -> x << 20;
+            case 'g' -> x << 10;
+            case 'm' -> x;
+            case 'k' -> x >> 10;
+            default -> Character.isDigit(u) ? x >> 20 : -1;
+         };
+      } catch (NumberFormatException e) {
+         return -1;
+      }
+   }
+
+   /** The first vmArgs array whose last -Xms is larger than its last -Xmx (the JVM would refuse to start), else null. */
+   static String heapConflict(JSONObject j) {
+      String[] bad = {null};
+      forEachVmArgsDeep(j, args -> {
+         int mx = lastPrefixIndex(args, XMX);
+         int ms = lastPrefixIndex(args, XMS);
+         if (bad[0] == null && mx >= 0 && ms >= 0) {
+            long x = sizeMb(args.optString(mx).substring(XMX.length()));
+            long s = sizeMb(args.optString(ms).substring(XMS.length()));
+            if (x > 0 && s > x) {
+               bad[0] = args.optString(ms) + " > " + args.optString(mx);
+            }
+         }
+      });
+      return bad[0];
    }
 
    /** Undo heapToPzopt where its marker is: the old -Xmx / -Xms back (or gone), our pre-touch flag removed. */
@@ -602,6 +646,11 @@ public final class GcChoice {
       if (!check.has("mainClass") || check.getJSONArray("classpath").length() == 0 || check.getJSONArray("vmArgs").length() == 0) {
          Files.deleteIfExists(tmp);
          throw new java.io.IOException("launcher JSON check failed; left unchanged");
+      }
+      String conflict = heapConflict(check);
+      if (conflict != null) {
+         Files.deleteIfExists(tmp);
+         throw new java.io.IOException("launcher JSON would not start the JVM (" + conflict + "); left unchanged");
       }
       AotCache.replaceJson(tmp, json); // in place when the running launcher holds the file (Windows)
    }

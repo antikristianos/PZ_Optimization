@@ -8387,3 +8387,21 @@ Runs (desktop, player-like Louisville as above, `player.sh i11g-p60|p30 --prop f
 - Lock (lock.sh, 120 fps, fixed D 21.67 ms on every 10 s line, no low-cap line): i11g-l1 119.96 fps, 99.83 % <= 9 ms, p99 8.377,
   p99.9 10.12, max 16.68, ext 0.28; i11g-l2 119.72 fps, 99.53 %, p99 8.428, p99.9 16.681, max 16.70, ext 0.20; both PASS, crashed 0,
   strongMarks 5.8-6.0k, strongPastBudget 0; settle frames (route -17 / -1 s) of all four runs uniform black roofs.
+
+## Linux "won't launch" reports (Discord, 2026-10-17)
+
+Two players on hybrid Intel + RTX 3050 laptops (Fedora 44, CachyOS) whose game closed on start with the mod installed.
+
+- `pzopt.GcChoice` (not an override): `heapToPzopt` set gcHeap=auto's `-Xmx` (4096 MB with few mods) but, with
+  `gcHeapFixed=false`, left a player's own larger `-Xms` (`-Xms5120m -Xmx5120m`), and the next launch's JVM refused to start
+  ("Initial heap size set to a larger value than the maximum heap size") before console.txt existed, so the posted log was
+  the previous, working session. Since 981b0602 (2026-10-05). Now a larger `-Xms` is lowered to the new `-Xmx`; the
+  `-Dpzopt.heap=` marker keeps the player's sizes, so every undo (GcChoice, pzopt.sh, install.sh, install.ps1) restores them;
+  `save` refuses to write a launcher JSON whose `-Xms` exceeds its `-Xmx` (`heapConflict`, `sizeMb`). `GcChoiceTest`.
+- `org.lwjglx.opengl.Display.create`: when `glfwCreateWindow` fails on the Wayland platform that HDR selected
+  (`pzopt.Hdr.windowFailed`: hdr / hdrAuto, not `zomboid.wayland=1`, X11 available), GLFW is terminated, initialised again on
+  X11 (the platform the game itself picks), `Keyboard.create()` is made (init() skips it on Wayland, create(PixelFormat) only
+  makes it on Wayland), `monitor` re-read, and `create()` runs again: an SDR X11 window, `Hdr.windowCreated` logs the fallback
+  as the HDR state. The report: the FP16 EGL window under the NVIDIA driver failed with "EGL: Failed to create window
+  surface: EGL failed to allocate resources" (it opened with the iGPU only). The `hdr: auto` note is logged before the retry.
+  Dev key `devHdrWindowFail` throws the first HDR window away so the path runs on any Wayland desktop.

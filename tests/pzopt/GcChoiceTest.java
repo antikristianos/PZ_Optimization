@@ -97,6 +97,23 @@ public class GcChoiceTest {
       GcChoice.heapToPzopt(touched, 4096, false, true);
       GcChoice.heapToStock(touched);
       check(touched.similar(touchedStock), "a player's own pre-touch flag stays: " + touched);
+      // a player's own -Xms above gcHeap's -Xmx (Discord 2026-10-17): lowered with it, or the JVM refuses to start
+      JSONObject big = new JSONObject(STOCK.replace("\"-Xmx3072m\"", "\"-Xms5120m\",\"-Xmx5120m\""));
+      JSONObject bigStock = new JSONObject(big.toString());
+      GcChoice.heapToPzopt(big, 4096, false, false);
+      java.util.List<Object> ba = big.getJSONArray("vmArgs").toList();
+      check(ba.contains("-Xmx4096m") && ba.contains("-Xms4096m") && !ba.contains("-Xms5120m") && GcChoice.heapConflict(big) == null,
+            "-Xms lowered to the new -Xmx: " + ba);
+      check(ba.contains(GcChoice.HEAP_MARKER + "5120m,5120m,0"), "marker keeps the player's sizes: " + ba);
+      GcChoice.heapToStock(big);
+      check(big.similar(bigStock), "undo gives the player's -Xms / -Xmx back: " + big);
+      JSONObject small = new JSONObject(STOCK.replace("\"-Xmx3072m\"", "\"-Xms2g\",\"-Xmx3072m\""));
+      GcChoice.heapToPzopt(small, 4096, false, false);
+      check(small.getJSONArray("vmArgs").toList().contains("-Xms2g"), "a smaller -Xms stays as it is: " + small);
+      check(GcChoice.heapConflict(new JSONObject(STOCK.replace("\"-Xmx3072m\"", "\"-Xms6g\",\"-Xmx4096m\""))) != null, "conflict found");
+      check(GcChoice.heapConflict(new JSONObject(STOCK)) == null, "stock has no conflict");
+      check(GcChoice.sizeMb("5120m") == 5120 && GcChoice.sizeMb("6G") == 6144 && GcChoice.sizeMb("4194304k") == 4096
+            && GcChoice.sizeMb("1073741824") == 1024 && GcChoice.sizeMb("x") == -1, "sizeMb units");
       check(GcChoice.heapMb(0) == 0 && GcChoice.heapMb(512) == 1024, "0 stays the launcher's own, at least 1 GB");
       check(GcChoice.heapMb(1 << 20) < 1 << 20 && GcChoice.heapMb(1 << 20) % 512 == 0, "1 TB is clamped to half the RAM, 512 MB steps");
       // gcHeap=auto: 4 GB, 8 GB from gcHeapAutoMods mods; game = the launcher's own; a number is MB

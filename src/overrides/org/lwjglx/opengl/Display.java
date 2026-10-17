@@ -202,6 +202,21 @@ public class Display {
       if (Display.Window.handle == 0L && pzopt.CoreGl.retryWithoutCore()) { // pzopt: macGlCore, no core context: the stock legacy one
          Display.Window.handle = GLFW.glfwCreateWindow(gameWindowMode.getWidth(), gameWindowMode.getHeight(), windowTitle, pzoptMonitor, 0L); // pzopt
       } // pzopt
+      if (Display.Window.handle != 0L && pzopt.Hdr.devFailWindow()) { // pzopt: devHdrWindowFail, the failure below on any machine
+         GLFW.glfwDestroyWindow(Display.Window.handle); // pzopt
+         Display.Window.handle = 0L; // pzopt
+      } // pzopt
+      if (Display.Window.handle == 0L && pzopt.Hdr.windowFailed()) { // pzopt: the HDR (Wayland, FP16) window failed: the game's own X11 platform, SDR
+         GLFW.glfwTerminate(); // pzopt
+         GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11); // pzopt
+         if (!GLFW.glfwInit()) { // pzopt
+            throw new IllegalStateException("Unable to initialize GLFW"); // pzopt
+         } // pzopt
+         Keyboard.create(); // pzopt: init() made it for X11; create(PixelFormat) makes it only on Wayland
+         monitor = GLFW.glfwGetPrimaryMonitor(); // pzopt: the old handle died with glfwTerminate
+         create(); // pzopt: hints and window again; Hdr asks for no FP16 hints on X11
+         return; // pzopt
+      } // pzopt
       if (Display.Window.handle != 0L) {
          // pzopt: keep gameWindowMode equal to the size the window really got. Fullscreen: GLFW may have picked
          // another video mode. Windowed: Windows clamps a new decorated window to the screen's max track size, so a

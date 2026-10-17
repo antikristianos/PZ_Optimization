@@ -285,6 +285,7 @@ PzoptOptionClasses = {
     devHandoffRecalcCheck = { "IsoChunk", "pzopt.HandoffRecalc" },
     devHdrFrameLog = { "pzopt.Hdr" },
     devHdrTraceMs = { "pzopt.Hdr", "pzopt.HdrLight" },
+    devHdrWindowFail = { "pzopt.Hdr" },
     devHordeCheck = { "pzopt.HordeBatch" },
     devHordeCheckVariants = { "pzopt.HordeBatch" },
     devHordeLog = { "pzopt.HordeDraw" },
