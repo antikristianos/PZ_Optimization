@@ -1307,7 +1307,7 @@ local ENHANCEMENT_SECTIONS = {
         },
     },
     {
-        title = "God rays (light shafts through windows, doorways, trees and fog)", clip = "hdr",
+        title = "God rays (light shafts through windows, doorways, trees and fog)", clip = "godrays",
         entries = {
             { key = "godRays", label = "God rays",
               tip = "Sunlight (and moonlight) falls through windows and open doorways into rooms as shafts of light in the dust, with sunlit patches on the floor, tables and walls where it lands, cut exactly by the window frames; outdoors, in fog, rain and morning mist, the shadows of buildings and trees stretch through the haze; torches, headlights and lamps glow in the dust and fog around them. Walls, roofs, upper floors, curtains and barricades block the light; tree crowns let it through their gaps. Nothing is drawn where no light comes in: a clear day costs only the rooms with sunlit windows on screen (one draw), the haze pass runs only in fog, rain or mist. Windows, Linux and macOS (on a Mac with \"macOS: OpenGL 4.1\" on, the default)." },
@@ -1698,6 +1698,10 @@ local CLIP_TITLES = {
     grade = "Rosewood house in the rain at 14:00, the player turning in place: colour grading (cooler, greyer, softer in rain)",
     -- voxel lighting (2026-10-19, the game's own frames: stock vs every default + per-pixel and voxel lighting)
     voxel = "A parking lot at 01:00, street lamps and room lights on, the camera panning east: stock vs voxel lighting (lamps and room lights traced through walls, windows and fences)",
+    -- god rays through doors (2026-10-18, runs grmenu-*: the game's own frames at 1:1, the door toggled every 2 s)
+    godrays = "The Riverside fire station at 15:00, zoom 1: the sun comes in through the garage doors as they open and close",
+    godraysdoor = "A shop door at 17:00, zoom 1, the player just inside: the door settings off vs on (the light follows the door's swing, the open door blocks its share, the player's shadow in the shaft, dust stirred up)",
+    godraysspill = "A Rosewood house at 23:00 in dark fog, its lamps on, zoom 1: the rooms' lamplight spills out of the windows and the opening door into the fog",
 }
 -- Clips whose stock side is a shared GIF (one stock run for several group clips): <STOCK_FILE[clip]>-stock.gif.
 local STOCK_FILE = { zombies = "lou", player = "lou", upscale = "native", dlss = "native", fsrzoom = "nativezoom", dlsszoom = "nativezoom" }
@@ -1719,6 +1723,9 @@ local CLIP_SIDES = {
     memory = { "REMEMBERED PLACES OFF", "REMEMBERED PLACES ON" },
     grade = { "COLOUR GRADING OFF", "COLOUR GRADING ON" },
     voxel = { "STOCK GAME", "VOXEL LIGHTING ON" },
+    godrays = { "GOD RAYS OFF", "GOD RAYS ON" },
+    godraysdoor = { "DOOR SETTINGS OFF", "DOOR SETTINGS ON" },
+    godraysspill = { "SPILL OFF", "SPILL ON" },
 }
 -- The line under the clips: what is the same in both, and what the burned-in number is (clips without one say so).
 local CLIP_NOTES = {
@@ -1731,6 +1738,9 @@ local CLIP_NOTES = {
     memory = ". Same save, spot and hour, frames lined up; no counter.",
     grade = ". Same save, spot and hour, frames lined up; no counter.",
     voxel = ". Same save, route and hour, frames lined up; no counter.",
+    godrays = ". Same save, spot and hour, frames lined up; no counter.",
+    godraysdoor = ". Same save, spot and hour, frames lined up; no counter.",
+    godraysspill = ". Same save, spot and hour, frames lined up; no counter.",
 }
 local function clipSides(clip)
     if CLIP_SIDES[clip] then return CLIP_SIDES[clip] end
@@ -1747,6 +1757,8 @@ local KEY_CLIP = {
     fogPass = "fog", fogScalePct = "fog", fogMaskFrames = "fog",
     fsrSharpnessPct = "fsrzoom", dlssWaterCurrent = "dlss", dlssWaterHistoryPct = "dlss", dlssPreset = "dlss", dlssOutputPct = "dlss", dlssOutputFilter = "dlsszoom", dlssSharpen = "dlsszoom",
     hdrSunPct = "hdrday", hdrGlintPct = "hdrday",
+    godRaysDoorLeaf = "godraysdoor", godRaysDoorSwingMs = "godraysdoor", godRaysCharShadows = "godraysdoor", godRaysDoorDustPct = "godraysdoor",
+    godRaysSpill = "godraysspill", godRaysSpillPct = "godraysspill",
     pixelLight = "torch", voxelLight = "voxel", voxelLightTorchShadows = "voxel", voxelLightSkyMethod = "voxel", voxelLightBounce = "voxel", pplAnalytic = "torch", pplNormals = "torch", pplWrapPct = "torch", pplShadows = "torch", pplTorchFeetGlow = "torch", torchSource = "torch", torchSourceAim = "torch", torchSourceSelfShadow = "torch", pplSmooth = "torch", pplPointLights = "torch", pplWetSpecular = "storm", pplSpecPct = "storm",
     lightingStrongDelta = "torch", lightingStrongBudget = "horde", lightingStrongFrameMs = "horde", lightingFlush = "torch", lightingBudget = "torch",
     audioLimiter = "horde", audioLimiterCeilingDb = "horde", audioLimiterStereoFold = "horde", soundTickHz = "horde", emitterIdleSkip = "horde", worldSoundCleanupFast = "horde", hearingHoist = "horde",

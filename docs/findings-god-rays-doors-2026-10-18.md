@@ -118,6 +118,17 @@ changes the chunk occupancy). The rest are live keys (`Config.loadLive`): the li
 include the ones that shape them. `godRaysDoorWatch` / `godRaysDoorMerge` stay off the menu (fixes, not choices). Checked in
 game with `options_tab=Enhancements options_shots=cat:light:4:advanced;cat:light:4:everything` (run `grdoor-menu-*`).
 
+Before / after clips (`harness/menu-gifs.py godrays godraysdoor godraysspill`, kind `pane`, `align='door'`: each side starts
+0.4 s before its run's first `harness: door toggled open`, 4 s = opens, closes, loops): `godrays` (the section) the fire
+station garage at 15:00, god rays off vs on (runs `grmenu2-fire-*`); `godraysdoor` (leaf, swing, people's shadows, dust) a
+plain shop door at 17:00 with the player a square inside, the door keys off vs on (`grmenu3-hinge-*`: the garage door rolls
+up, so its pair showed no difference); `godraysspill` (spill, spill brightness) a Rosewood house at 23:00, spill off vs on
+(`grmenu3-spill-*`). Traps: `zombies=off` (a zombie walked into one side of the first pair); night fog at 0.5 is pale grey
+and hides the spill (the first spill video, `grdoor-vid-spill2`, is washed out by it): `fog_tint=dark`.
+GIF against other encodings of the same 4 s 512x216 clip (the `godrays` on side vs the lossless pane): GIF 183 KB, PSNR 30.7
+dB, SSIM 0.81 (96 colours: the haze in contour bands, the yellow lines washed out); H.264 baseline 35 KB, 37.7 dB, 0.971;
+AV1 31 KB, 39.0, 0.980; animated WebP 65 KB, 35.8, 0.945; MJPEG q5 1.07 MB, 35.1, 0.943; APNG (lossless) 7.9 MB.
+
 ## Open
 
 - The swing follows the stock sprite's instant change with our own 350 ms ease; a door with a 3D model (`SpriteModel`) has

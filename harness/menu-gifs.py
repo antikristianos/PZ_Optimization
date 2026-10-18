@@ -139,6 +139,19 @@ for name, stock, opt, title in (
 # 0.35 s of the same route time (props-reflect-card.py's Matcher), so both sides stay in step; `after` counts route seconds.
 CLIPS['voxel'] = dict(stock='vxcard-lot2-stock', opt='vxmenu-lot-enh', kind='capture', after=1.0, counter=False,
                       crop='64:24:2368:1000', title='Night lot at 01:00, lamps and room lights, camera panning: stock vs voxel lighting')
+# God rays through doors (2026-10-18, docs/findings-god-rays-doors-2026-10-18.md): in-game captures (devCapture at 1:1, zoom 1,
+# harness `find=sundoor`, zombies off, the door toggled every 2 s), <run>/pane.mkv from the capture; each side starts `after` s
+# before its run's first door opening (align='door': 4 s = the door opens, closes, and the clip loops seamlessly).
+# `godrays`: the Riverside fire station's garage at 15:00, god rays off vs on; `godraysdoor`: a plain door at 17:00 (the
+# rig's default spot), the player a square inside, the door keys off (leaf, swing, people's shadows, door dust, wide-door
+# merge) vs on (a garage door rolls up: no leaf, no swing to see); `godraysspill`: a Rosewood house at 23:00 in fog 0.5 with
+# fog_tint=dark (the game's night fog at 0.5 is pale grey and hides the spill), its lamps on, the spill off vs on.
+# `crop` is in the pane's pixels (the fire station capture is already the 1420x600 strip round the doors).
+for name, stock, opt, after, title, extra in (
+        ('godrays', 'grmenu2-fire-off', 'grmenu2-fire-on', 0.4, 'Riverside fire station at 15:00, the garage doors opening: god rays off vs on', {}),
+        ('godraysdoor', 'grmenu3-hinge-off', 'grmenu3-hinge-on', 0.4, 'A shop door at 17:00, the player in the doorway: the door settings off vs on', dict(crop='540:130:1020:430')),
+        ('godraysspill', 'grmenu3-spill-off', 'grmenu3-spill-on', 0.4, 'Rosewood house at 23:00 in dark fog, lamps on: spill off vs on', dict(crop='0:180:1500:630'))):
+    CLIPS[name] = dict(stock=stock, opt=opt, kind='pane', align='door', after=after, counter=False, title=title, **extra)
 CLIPS['ao'] = dict(stock='enh-ao-off', opt='enh-ao-on', after=1.0, counter=False, crop='1792:756:1536:648',
                    title='Rosewood houses at noon, zoom 1, walking: ambient occlusion off vs on')
 
@@ -319,6 +332,18 @@ def load_clip(name, c, work):
     return res
 
 
+def door_t0(run_dir, lead):
+    """align='door' (the find=sundoor rig): the pane time `lead` s before the first `harness: door toggled open` at least
+    1 s into the capture, from the console's epoch_ms and the capture's per-frame epochs (the pane is at the mean rate)."""
+    frames = [int(l.split()[0]) for l in open(os.path.join(run_dir, 'capture/index.txt')).readlines()[1:] if l.strip()]
+    for l in open(os.path.join(run_dir, 'console.txt'), errors='replace'):
+        if 'harness: door toggled open epoch_ms=' in l:
+            t = (int(l.rsplit('=', 1)[1]) - frames[0]) / 1000
+            if t >= 1.0 + lead:
+                return round(t - lead, 3)
+    raise SystemExit(f'{run_dir}: no door opening in the capture')
+
+
 def pane_clip(name, c, work):
     """Both sides from the pair's in-game capture panes (<run>/pane.mkv, SDR, one timeline): no onset, no tone-map."""
     res = {}
@@ -328,8 +353,9 @@ def pane_clip(name, c, work):
         if not os.path.exists(src):
             raise SystemExit(f'{name}: {src} missing (harness/stitch-darkness.py writes it)')
         out = os.path.join(OUT, f'{name}-{side}.gif')
-        res[side] = dict(run=os.path.basename(d), pane_t0=c['after'], file=os.path.basename(out),
-                         bytes=gif(src, c['after'], c.get('dur', DUR), None, out, fps=c.get('fps', FPS), crop=c.get('crop'),
+        t0 = door_t0(d, c['after']) if c.get('align') == 'door' else c['after']
+        res[side] = dict(run=os.path.basename(d), pane_t0=t0, file=os.path.basename(out),
+                         bytes=gif(src, t0, c.get('dur', DUR), None, out, fps=c.get('fps', FPS), crop=c.get('crop'),
                                    denoise=c.get('denoise', True), sdr=True))
     return res
 
