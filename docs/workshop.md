@@ -313,3 +313,13 @@ a Rosewood back yard with two sliding glass doors and a glass table placed on th
 doors to the table and back (desktop runs `gpc2-stock-cap` / `gpc2-enh-cap`, enhanced = every Visuals card but remembered
 places, HDR and upscaling off; in-game 30 fps 1:1 devCapture crops round the player), the patio halved, then 1:1 at the table
 and the doors; `harness/props-reflect-changes.py` = the still under it (what reflects, stock vs now, the cost per frame).
+`89` the "New! A built-in benchmark, one menu for everything" card (2026-10-18, the AVIF template, one animation and no
+still under it, the maintainer's choice; it replaces the Louisville New! section on the page, whose `87` / `88` stay in the
+README under a plain heading): `harness/benchmark-menu-card.py` = the 630 square, strip "Benchmark and Menu", real in-game
+screenshots only, six segments with a short cross-fade, each captioned on a dark band under the picture: the main menu's
+PZ OPTIMIZATION item, an Optimizations category (sidebar, breadcrumbs, detail, controller hint bar), Benchmark > Setup (the
+five runs), a horde shooting pass on the desktop (the HUD line at 1:1, then the horde; `bench-horde-ready-20261018-154604`),
+Benchmark > Report of the desktop's A/B run `20261018-035343` (stock and optimized fps per scene, score 1,636 vs 576, the
+charts) and Benchmark > Compare (its section column only: its scores belong to two other runs). The menu screens come from
+the desktop's 1280x720 large-font tour of the release build (`benchmark-run.sh ui:read --screen 1280x720 --font 3`, run
+`bench-card-720-20261018-223032`), shown as 698x720 windows panned left to right at 0.79x.

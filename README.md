@@ -90,7 +90,13 @@ curl -fsSL https://github.com/xD3I/PZ_Optimization/releases/latest/download/inst
 
 Every method, checking that it loaded, building from source: **[Install guide](docs/guide/install.md)**.
 
-## New! Up to 5x faster in a Louisville horde
+## New! A built-in benchmark, one menu for everything
+
+<p align="center">
+<img src="docs/workshop/images/89-new-benchmark-menu.avif" width="49%" alt="The main menu's PZ OPTIMIZATION item, the full-screen settings, Benchmark Setup with the five runs, a horde shooting pass, the report of the desktop's A/B run (Rosewood spin 142 to 481 fps, score 576 to 1,636) and the run comparison">
+</p>
+
+## Up to 5x faster in a Louisville horde
 
 <p align="center">
 <img src="docs/workshop/images/87-new-louisville-race.avif" width="49%" alt="5x faster Louisville: stock 63 fps against optimized 281 fps on the recorded race">
