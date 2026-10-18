@@ -527,6 +527,7 @@ public final class Scene {
       GateRig.tick(p, nowNs); // gate=auto|place: the double gate toggled / everything re-baked in turn
       CarSiege.tick(p, nowNs); // siege=N: zombies around the player's parked car (the "crowd the car, never attack" repro)
       BrawlRig.tick(p, nowNs); // brawl=N: hostile zombies round a visible player (the zombie behaviour check, 2026-10-13)
+      MeleeRig.tick(p, nowNs); // melee=N: the player swings a melee weapon at standing zombies (the phasing repro, 2026-10-18)
       crowdTick(p, nowNs); // crowd=N: a crowd around the player (the capsule shadow rig)
       animalsTick(p, nowNs); // animals=N[:type]: animals around the player (the animal line-of-sight rig; mixed kinds: the detailed shadow rig)
       if (zombiesOff) {
@@ -1097,6 +1098,6 @@ public final class Scene {
             + "\nsee_all=" + seeAll
             + (carSpawn > 0 ? "\ncar_spawn=" + carSpawn + "\nvehicles_loaded=" + zombie.iso.IsoWorld.instance.currentCell.getVehicles().size() : "")
             + (soundRadius > 0 ? "\nsound_radius=" + soundRadius + "\nsound_every=" + soundEvery + "\nsound_stats=" + soundStats() : "")
-            + (helicopter ? "\nhelicopter=" + helicopterState() : "") + ThumpRig.summary() + CarSiege.summary() + BrawlRig.summary() + SoundProbe.summary();
+            + (helicopter ? "\nhelicopter=" + helicopterState() : "") + ThumpRig.summary() + CarSiege.summary() + BrawlRig.summary() + MeleeRig.summary() + SoundProbe.summary();
    }
 }

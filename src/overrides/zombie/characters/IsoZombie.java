@@ -239,7 +239,10 @@ public final class IsoZombie extends IsoGameCharacter implements IHumanVisual {
    public int pzoptSightRank; // pzopt: zombieFirstSightSprite, this zombie's place in the cull loop's nearest-first order
    public int pzoptSightPend = -1; // pzopt: zombieFirstSightSprite, the cull pass in which this zombie waited for its first composite (drawn as its sprite)
    public int pzoptSightDefer = -1; // pzopt: zombieFirstSightSprite, the cull pass (pzopt.FirstSight.frame) in which this zombie's first clothing composite waits (drawn as its sprite)
-   public int pzoptAddWait; // pzopt: zombieFirstSightSprite (round 11), the cull pass (pzopt.FirstSight.frame) in which zombieModelAddBudgetUs put off this zombie's 3D model (its sprite is lit; 0 = never)
+   public int pzoptSightForce = -1; // pzopt: zombieFirstSightSprite (phasing fix 2026-10-18), the cull pass in which this zombie's first composite is made past the budgets (zombieFirstSightMaxWaitMs)
+   public int pzoptSightKept = -1; // pzopt: the cull pass in which this zombie, clothed before, came up without a composite (a model reset) and kept the stock order (census)
+   public long pzoptSightWaitNs; // pzopt: when this zombie's wait for its first composite began
+   public long pzoptClothedNs; // pzopt: the last cull pass in which this zombie's model had its clothing composite (pzopt.FirstSight.pending)
    public float pzoptLodSpriteScale = 1.0F; // pzopt: renderTextureInsteadOfModel's alpha factor (the sprite share while a crossfade draws it under the model)
    public IsoGridSquare pzoptOutlineSquare; // pzopt: occluded outlines, the square the occluder test ran for (OccludedOutline.classify)
    public long pzoptOutlineNs; // pzopt: occluded outlines, when it ran

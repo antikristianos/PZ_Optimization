@@ -68,8 +68,8 @@ public final class ZombieLod {
 
    /**
     * zombieLodSpriteLight: the factor on the square's light this zombie's flat sprite is drawn in (0 = stock: black). With
-    * zombieLodDynamic every flat sprite; without it (zombieFirstSightSprite alone, round 11) only a new zombie's sprite while
-    * it waits for its first composite or its model ({@link FirstSight#newSprite}): the stock far sprites stay black.
+    * zombieLodDynamic every flat sprite; without it only a sprite drawn under a crossfading model ({@link FirstSight#newSprite}):
+    * the stock far sprites stay black.
     */
    public static float spriteLight(IsoZombie z) {
       if (Config.ZOMBIE_LOD_SPRITE_LIGHT <= 0) {

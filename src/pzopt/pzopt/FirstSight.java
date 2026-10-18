@@ -22,6 +22,19 @@ import zombie.core.skinnedmodel.model.ModelInstanceTextureCreator;
  * sprite -> model switch ({@code zombieLodFadeMs}). Only a model instance that never had a composite waits: a zombie
  * whose clothes change (blood, holes) keeps the stock order.
  *
+ * <p>Phasing fix (2026-10-18, Workshop reports "zombies briefly naked"): the flat sprite is the game's generic
+ * DeadBodyAtlas body ({@code IsoZombie.renderTextureInsteadOfModel}: male / female, no clothes), so a waiting zombie
+ * was a lit grey-white mannequin. Two ways in: (1) a hit, a hat or helmet falling off, a death or a corpse drag runs
+ * {@code ModelManager.Reset}, which gives the zombie a fresh model instance (plain body texture, ready list cleared), so a
+ * zombie that had been drawn clothed counted as "never had a composite" and showed the bare sprite, then crossfaded back;
+ * (2) a horde's first sight held every zombie past the frame's grants as that sprite, ~1.5 s at 3 a frame. Now (1) a
+ * zombie drawn with its clothing composite in the last {@link #CLOTHED_KEEP_NS} never waits (stock order: its new
+ * composite is made in the frame it is drawn, nothing of it drawn before, as stock), and (2) without zombieLodDynamic a
+ * waiting zombie draws nothing (stock's not-ready state: no sprite, no crossfade, the model at its stock alpha once its
+ * composite is made) and waits at most {@code zombieFirstSightMaxWaitMs} (the grants a frame rise past the budgets to the even rate that meets
+ * every waiting zombie's deadline). With
+ * zombieLodDynamic the LOD's own sprite is held as before (its sprites are the same body by design).
+ *
  * <p>The census (devFirstSightCensus, or instrumented runs with the key on): composites a frame and their
  * render-thread time a frame (histograms, max), grants, deferred zombie-frames, the cost estimate.
  */
@@ -41,6 +54,14 @@ public final class FirstSight {
    private static boolean culling;
    public static long grantedTotal, deferredTotal, maxDeferred;
    private static int deferredThisFrame;
+   /** the cull pass's clock (beginCull) */
+   private static long cullNs;
+   /** a zombie drawn with its clothing composite this recently is never held (phasing fix, 2026-10-18) */
+   static final long CLOTHED_KEEP_NS = 2_000_000_000L;
+   /** zombieFirstSightMaxWaitMs: no zombie waits longer for its first composite (0 = no bound) */
+   private static final long MAX_WAIT_NS = Config.ZOMBIE_FIRST_SIGHT_MAX_WAIT_MS * 1_000_000L;
+   /** census: zombie-frames / events of a zombie that had been clothed and came up without a composite (a model reset), kept in stock order; grants past the max wait; LOD sprites held */
+   public static long keptFrames, keptEvents, forcedTotal, spriteHeld;
 
    // ---- render thread ----
    /** the render-thread cost of one composite (ns), exponential average of the made ones */
@@ -51,12 +72,12 @@ public final class FirstSight {
    }
 
    /**
-    * zombieLodSpriteLight without zombieLodDynamic: this zombie's flat sprite shows a new zombie, lit like the LOD's sprites:
-    * drawn under its model while it waits for its first composite or fades in, or put off its model this frame by
-    * zombieModelAddBudgetUs (IsoWorld.sceneCullZombies stamps {@code pzoptAddWait}).
+    * zombieLodSpriteLight without zombieLodDynamic: this zombie's flat sprite is drawn under its model in a crossfade, lit
+    * like the LOD's sprites. Since the phasing fix (2026-10-18) a first-sight wait without the LOD draws no sprite, and a
+    * zombie put off its model by zombieModelAddBudgetUs is the stock (unlit) far sprite, as with this key off.
     */
    public static boolean newSprite(IsoZombie z) {
-      return z.pzoptLodSpriteAlpha > 0.0F || z.pzoptAddWait == frame && frame != 0;
+      return z.pzoptLodSpriteAlpha > 0.0F; // (phasing fix 2026-10-18: a zombie put off its model by zombieModelAddBudgetUs is the stock far sprite again, unlit, as with this key off)
    }
 
    /** Cull loop, once a frame before the loop (zombieLodDynamic on, or {@link #active} without it). */
@@ -69,6 +90,12 @@ public final class FirstSight {
       }
       deferredThisFrame = 0;
       frame++;
+      cullNs = System.nanoTime();
+      if (lastCullNs != 0L) {
+         long d = Math.max(1_000_000L, Math.min(100_000_000L, cullNs - lastCullNs));
+         frameDtNs += (d - frameDtNs) / 8L;
+      }
+      lastCullNs = cullNs;
       grants = 0;
       long c = Math.max(5_000L, costNs);
       limit = (int)Math.max(1L, Config.ZOMBIE_COMPOSITE_BUDGET_US * 1000L / c);
@@ -81,18 +108,23 @@ public final class FirstSight {
    }
 
    private static final java.util.ArrayList<IsoZombie> pend = new java.util.ArrayList<>();
+   private static int[] framesLeft = new int[512];
+   /** the cull passes' interval (ns), exponential average (zombieFirstSightMaxWaitMs pacing) */
+   private static long frameDtNs = 16_666_667L;
+   private static long lastCullNs;
 
    /** CharDraw.start, before its tests: whether any zombie about to draw its model waits for its first composite. */
    public static boolean anyPending(java.util.List<IsoZombie> candidates) {
       if (!culling) {
          return false;
       }
-      for (int i = 0; i < candidates.size(); i++) {
+      boolean any = false;
+      for (int i = 0; i < candidates.size(); i++) { // every one (no early out): pending() stamps the clothed ones
          if (pending(candidates.get(i))) {
-            return true;
+            any = true;
          }
       }
-      return false;
+      return any;
    }
    private static final java.util.Comparator<IsoZombie> BY_RANK = java.util.Comparator.comparingInt(z -> z.pzoptSightRank);
 
@@ -115,21 +147,79 @@ public final class FirstSight {
       if (pend.size() > limit) {
          pend.sort(BY_RANK);
       }
+      boolean lod = ZombieLod.active();
       for (int i = 0; i < pend.size(); i++) {
          IsoZombie z = pend.get(i);
-         // every waiting zombie is its sprite this frame: the LOD's sprite -> model crossfade held at its start (the
-         // granted one too: its model fades in from the frame after its composite is made, and when the render thread's
-         // budget makes it wait once more it stays the sprite)
+         if (z.pzoptSightPend != frame - 1) {
+            z.pzoptSightWaitNs = cullNs; // a new wait (not waiting last frame)
+         }
          z.pzoptSightPend = frame;
-         z.pzoptLodFade = 2;
-         z.pzoptLodFadeStartNs = ZombieLod.frameNs();
-         z.pzoptLodModelAlpha = 0.0F;
-         z.pzoptLodSpriteAlpha = 1.0F;
-         if (grants < limit) {
+         if (lod) {
+            // zombieLodDynamic: the waiting zombie is the LOD's sprite this frame, the sprite -> model crossfade held at its
+            // start (the granted one too: its model fades in from the frame after its composite is made)
+            z.pzoptLodFade = 2;
+            z.pzoptLodFadeStartNs = ZombieLod.frameNs();
+            z.pzoptLodModelAlpha = 0.0F;
+            z.pzoptLodSpriteAlpha = 1.0F;
+            spriteHeld++;
+         } else {
+            // without the LOD (the default): nothing of it is drawn while it waits, as stock while a composite is not
+            // ready; no sprite (the game's generic unclothed body) and no crossfade
+            z.pzoptLodFade = 0;
+            z.pzoptLodModelAlpha = 1.0F;
+            z.pzoptLodSpriteAlpha = 0.0F;
+         }
+      }
+      // zombieFirstSightMaxWaitMs: the grants this frame are at least the rate that lets every waiting zombie have its
+      // composite by its deadline (earliest-deadline feasibility: k zombies due within f frames need k / f a frame), so a
+      // burst is spread evenly up to the deadline instead of all at once when it falls due
+      int need = 0;
+      long dt = Math.max(1_000_000L, frameDtNs);
+      if (MAX_WAIT_NS > 0L && pend.size() > limit) {
+         int n = pend.size();
+         if (framesLeft.length < n) {
+            framesLeft = new int[n * 2];
+         }
+         for (int i = 0; i < n; i++) {
+            IsoZombie z = pend.get(i);
+            framesLeft[i] = (int)Math.max(1L, Math.min(100_000L, (z.pzoptSightWaitNs + MAX_WAIT_NS - cullNs) / dt));
+         }
+         java.util.Arrays.sort(framesLeft, 0, n);
+         double r = 0.0;
+         for (int i = 0; i < n; i++) {
+            r = Math.max(r, (i + 1) / (double)framesLeft[i]);
+         }
+         need = (int)Math.ceil(r - 1.0e-9);
+      }
+      int quota = Math.max(limit, need);
+      boolean paced = need > limit; // past the budgets: the grants are made whatever the render thread's budget
+      // the zombies due by the next frame first, then the nearest
+      for (int i = 0; i < pend.size(); i++) {
+         IsoZombie z = pend.get(i);
+         if (MAX_WAIT_NS > 0L && z.pzoptSightWaitNs + MAX_WAIT_NS <= cullNs + dt) {
             grants++;
             grantedTotal++;
+            z.pzoptSightForce = frame; // made this frame whatever the render thread's budget
+            forcedTotal++;
+            z.pzoptSightDefer = -1;
          } else {
-            z.pzoptSightDefer = frame;
+            z.pzoptSightDefer = frame; // provisional, the second pass may grant it
+         }
+      }
+      for (int i = 0; i < pend.size(); i++) {
+         IsoZombie z = pend.get(i);
+         if (z.pzoptSightDefer != frame) {
+            continue;
+         }
+         if (grants < quota) {
+            grants++;
+            grantedTotal++;
+            z.pzoptSightDefer = -1;
+            if (paced) {
+               z.pzoptSightForce = frame;
+               forcedTotal++;
+            }
+         } else {
             deferredTotal++;
             deferredThisFrame++;
          }
@@ -143,14 +233,36 @@ public final class FirstSight {
          return false;
       }
       ModelManager.ModelSlot slot = z.legsSprite.modelSlot;
-      if (slot == null || slot.model == null || slot.model.tex instanceof CharacterSmartTexture) {
+      if (slot == null || slot.model == null) {
          return false;
       }
-      if (z.pzoptUpdateModelTextures()) {
-         return true; // the render pre-pass makes its texture creator this frame
+      if (slot.model.tex instanceof CharacterSmartTexture) {
+         z.pzoptClothedNs = cullNs; // drawn clothed (phasing fix)
+         return false;
       }
-      ModelInstanceTextureCreator tc = z.getTextureCreator();
-      return tc != null && !tc.isRendered();
+      if (z.isReanimatedForGrappleOnly()) {
+         return false; // a corpse being dragged is a new zombie made from the body (IsoDeadBody.reanimateZombieForGrapple): stock order, never a wait (phasing fix)
+      }
+      boolean waits;
+      if (z.pzoptUpdateModelTextures()) {
+         waits = true; // the render pre-pass makes its texture creator this frame
+      } else {
+         ModelInstanceTextureCreator tc = z.getTextureCreator();
+         waits = tc != null && !tc.isRendered();
+      }
+      if (waits && z.pzoptClothedNs != 0L && cullNs - z.pzoptClothedNs < CLOTHED_KEEP_NS) {
+         // phasing fix: a model reset (hit, hat falling off, death, corpse drag) gave a clothed zombie a fresh instance;
+         // stock order (its composite now, nothing of it drawn before), never the bare sprite
+         if (z.pzoptSightKept != frame) {
+            if (z.pzoptSightKept != frame - 1) {
+               keptEvents++;
+            }
+            z.pzoptSightKept = frame;
+            keptFrames++;
+         }
+         return false;
+      }
+      return waits;
    }
 
    /** Cull loop: this zombie was drawn as its sprite last frame waiting for its composite (losing its slot, it stays the sprite: no fade-out of a model that never drew). */
@@ -160,7 +272,7 @@ public final class FirstSight {
 
    /** ModelSlotRenderData.init: this character's first composite may be made this frame within the render thread's budget. */
    public static boolean eligible(IsoGameCharacter chr) {
-      return ON && chr instanceof IsoZombie z && z.pzoptSightPend == frame;
+      return ON && chr instanceof IsoZombie z && z.pzoptSightPend == frame && z.pzoptSightForce != frame; // (a zombie past zombieFirstSightMaxWaitMs is made whatever the budget)
    }
 
    private static final long BUDGET_NS = Config.ZOMBIE_COMPOSITE_BUDGET_US * 1000L;
@@ -319,7 +431,8 @@ public final class FirstSight {
          + (composites == 0 ? 0 : compositeNs / composites / 1000L) + " us, cost estimate " + costNs / 1000L + " us), not ready " + notReady
          + ", per frame max " + maxFrameComposites + " / " + String.format(java.util.Locale.ROOT, "%.2f", maxFrameNs / 1.0e6)
          + " ms; frames with 0/1/2-3/4-7/8-15/16-31/32-63/64+ composites " + join(histCount) + "; frames by composite time <0.25/<0.5/<1/<2/<4/<8/8+ ms "
-         + join(histMs) + (ON ? "; granted " + grantedTotal + ", deferred zombie-frames " + deferredTotal + " (max " + maxDeferred + " a frame), render-budget waits " + renderWaits + ", limit now " + limit : ""));
+         + join(histMs) + (ON ? "; granted " + grantedTotal + ", deferred zombie-frames " + deferredTotal + " (max " + maxDeferred + " a frame), render-budget waits " + renderWaits + ", limit now " + limit
+         + "; clothed zombies after a model reset kept in stock order " + keptEvents + " (" + keptFrames + " zombie-frames), granted past the budgets for the max wait " + forcedTotal + ", LOD sprites held " + spriteHeld : ""));
    }
 
    private static String join(long[] a) {

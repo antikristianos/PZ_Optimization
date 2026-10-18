@@ -2702,7 +2702,6 @@ public final class IsoWorld {
                      z.getAnimationPlayer().doBlending = false; // pzopt
                   } // pzopt
                   pzoptAddsDeferred++; // pzopt
-                  if (pzoptSight) z.pzoptAddWait = pzopt.FirstSight.frame; // pzopt: zombieFirstSightSprite, a new zombie waiting for its model: its sprite is lit (round 11)
                   continue; // pzopt: its model slot goes to the next zombie this frame
                } // pzopt
                if (pzoptAdds == 0) { // pzopt

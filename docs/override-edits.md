@@ -8405,3 +8405,31 @@ Two players on hybrid Intel + RTX 3050 laptops (Fedora 44, CachyOS) whose game c
   as the HDR state. The report: the FP16 EGL window under the NVIDIA driver failed with "EGL: Failed to create window
   surface: EGL failed to allocate resources" (it opened with the iGPU only). The `hdr: auto` note is logged before the retry.
   Dev key `devHdrWindowFail` throws the first HDR window away so the path runs on any Wayland desktop.
+
+## Zombie phasing fix (2026-10-18): no bare stand-in sprite for `zombieFirstSightSprite`
+
+Workshop reports since the 10-16 release ("zombies briefly naked / phasing"): a zombie hit with a melee weapon, killed, dragged as
+a corpse or losing its hat, and the first sight of a horde (~1.5 s), showed naked grey-white figures. The stand-in drawn while a
+zombie waited for its clothing composite is `IsoZombie.renderTextureInsteadOfModel`'s DeadBodyAtlas picture, the game's generic
+male / female body without clothes, lit at zombieLodSpriteLight. Two ways in: `ModelManager.Reset` (a hit, a helmet fall, a death,
+a corpse drag, an outfit change) gives the zombie a fresh model instance whose texture is the plain body texture and clears its
+ready list, so `FirstSight.pending` took a zombie that had been drawn clothed for one that never had a composite and held it as
+the bare sprite; and at a horde's first sight every zombie past the frame's grants (3 a frame) was that sprite until its turn.
+Also, a zombie put off its model by zombieModelAddBudgetUs was lit (the same bare body) while the key was on.
+
+- `pzopt.FirstSight` (no override logic beyond fields): `pending` stamps a zombie whose model has its composite
+  (`IsoZombie.pzoptClothedNs`); a zombie stamped in the last 2 s is never held (stock order: its new composite is made in the frame
+  it is drawn; nothing of it is drawn before, as stock after a reset); `anyPending` scans every candidate so every one is stamped.
+  A corpse being dragged (a new zombie made from the body, `IsoDeadBody.reanimateZombieForGrapple`, `isReanimatedForGrappleOnly`)
+  never waits either.
+  Without zombieLodDynamic (the default) a waiting zombie draws nothing (no sprite, no crossfade: stock's not-ready state; its
+  model shows at its stock alpha once the composite is made) and waits at most `zombieFirstSightMaxWaitMs` (new key, 250 ms):
+  the grants a frame rise past zombieCompositeBudgetUs / zombieCompositeMaxPerFrame to the even rate that meets every waiting
+  zombie's deadline (k zombies due within f frames need k / f a frame; those grants skip the render thread's budget,
+  `IsoZombie.pzoptSightForce`, `FirstSight.eligible` false for them). A hard bound that granted every due zombie at once
+  made 82-91 ms frames (up to 140 composites in one frame). With zombieLodDynamic the LOD's own sprite is held as before. `newSprite` no longer lights
+  a zombie put off its model by zombieModelAddBudgetUs (it is the stock unlit far sprite, as with the key off).
+- `IsoZombie`: field `pzoptAddWait` removed; `pzoptSightForce`, `pzoptSightKept`, `pzoptSightWaitNs`, `pzoptClothedNs` added.
+- `IsoWorld.sceneCullZombies`: the `pzoptAddWait` stamp removed.
+- Census line (devFirstSightCensus / instrument): clothed zombies after a model reset kept in stock order (events, zombie-frames),
+  grants past the max wait, LOD sprites held. Findings: `docs/findings-zombie-phasing-2026-10-18.md`.
