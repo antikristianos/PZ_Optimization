@@ -1130,6 +1130,10 @@ public final class Config {
     * steps (capped only). off | cpu | gpu | gpufinish | auto (auto = gpu wherever GL timestamp queries exist, cpu only while VRR is active, off under the macOS Metal bridge); see pzopt.Pacing.
     */
    public static final String PRESENT_PACING = string("presentPacing", "auto");
+   /** Unattended built-in benchmark at boot (technique 25): off, all, or scenarios[:passes[:ab]] (pzopt.Benchmark). */
+   public static final String BENCHMARK_AUTO = string("benchmarkAuto", "off");
+   /** dev: the main menu opens a benchmark screen by itself (panel | history | report:<run>) for the UI checks (harness/benchmark-run.sh). */
+   public static final String DEV_BENCHMARK_UI = string("devBenchmarkUi", "");
    public static final int PRESENT_PACING_PCT = Math.max(50, Math.min(100, integer("presentPacingPct", 90)));
    public static final int PRESENT_PACING_MARGIN_US = Math.max(0, integer("presentPacingMarginUs", 200));
    /**
@@ -2298,6 +2302,12 @@ public final class Config {
             Log.warn("could not read " + f.getAbsolutePath() + ": " + e);
          }
       }
+      // a built-in benchmark pass pins its settings like pzopt.properties (BenchPlan: stock pass, hidden overlay, ...)
+      for (java.util.Map.Entry<String, String> e : BenchPlan.configPins().entrySet()) {
+         if (p.getProperty(e.getKey()) == null) {
+            p.setProperty(e.getKey(), e.getValue());
+         }
+      }
       return p;
    }
 
@@ -2426,9 +2436,30 @@ public final class Config {
 
    // --- options tab (Options > Optimizations; see UserOptions) --------------------------------
 
+   /** Every key whose value in force differs from the build's default, sorted (the benchmark's settings fingerprint). */
+   public static java.util.TreeMap<String, String> nonDefault() {
+      java.util.TreeMap<String, String> m = new java.util.TreeMap<>();
+      synchronized (Config.class) {
+         for (java.util.Map.Entry<String, String[]> e : REGISTRY.entrySet()) {
+            if (!java.util.Objects.equals(e.getValue()[0], e.getValue()[1])) {
+               m.put(e.getKey(), e.getValue()[0]);
+            }
+         }
+      }
+      return m;
+   }
+
    /** Is this one of the keys read at init? */
    public static boolean knows(String key) {
       return key != null && REGISTRY.containsKey(key);
+   }
+
+   /** The build's default of a key read at init, null for an unknown key (the benchmark's run comparison). */
+   public static String defaultOf(String key) {
+      synchronized (Config.class) {
+         String[] v = key == null ? null : REGISTRY.get(key);
+         return v == null ? null : v[1];
+      }
    }
 
    /** Does a change of this key apply while the game runs ({@link #reloadLive}) rather than on the next launch? */

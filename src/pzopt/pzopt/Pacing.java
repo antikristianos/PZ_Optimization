@@ -517,6 +517,9 @@ public final class Pacing {
 
    /** Render thread, right before Display.update (the swap): optionally hold the present, then stamp the call. */
    public static void beforeSwap() {
+      Overlay.swapCallNs = System.nanoTime(); // the built-in benchmark: render work ends, the present (hold + swap) begins
+      BenchShot.beforeSwap(); // the built-in benchmark's screenshots: the finished frame, before it is presented
+      BenchFocus.beforeSwap(); // the built-in benchmark: a restarted pass's window takes the focus (macOS opens it behind)
       if (!ACTIVE) {
          return;
       }
@@ -1052,6 +1055,7 @@ public final class Pacing {
    }
 
    private static void write(long[] row) {
+      BenchRecorder.onPacing(row); // the built-in benchmark's latency: step start to GPU done
       if (logFailed) {
          return;
       }

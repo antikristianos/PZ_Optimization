@@ -225,6 +225,12 @@ public final class PerformanceSettings {
       pzopt.GifTextures.releaseAll();
    }
 
+   // pzopt: the built-in benchmark (media/lua/client/pzopt/pzopt_benchmark.lua): one string command in, tab-separated
+   // lines out (pzopt.Benchmark.call: scenarios, menu, start, report, history, open, share, hud, abort, ...).
+   public String pzoptBenchmark(String cmd, String arg) {
+      return pzopt.Benchmark.call(cmd, arg == null ? "" : arg);
+   }
+
    // pzopt: the main menu's "PZ Optimization update" item (media/lua/client/pzopt/pzopt_mainscreen_update.lua)
    // polls pzopt.Updater through these: one release check per boot, then the download + install on a
    // daemon thread; state names in Updater.State. The game restarts to load the new classes.

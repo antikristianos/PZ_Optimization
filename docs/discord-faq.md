@@ -49,7 +49,7 @@ Options gets an **Optimizations** tab and Display gets an **Uncapped** frame-rat
 # 🔄 Updates and uninstall
 
 **How do I update?**
-The main menu has a **PZ OPTIMIZATION UPDATE** item, which lights up when a newer build is out. Click **Update now**, then **Restart game**. Your saves and settings stay. Every new release is announced in this server.
+The main menu has a **PZ OPTIMIZATION** item; when a newer build is out it says "Update available" under it. Open it, click **UPDATE**, then **Update now**, then **Restart game**. Your saves and settings stay. Every new release is announced in this server.
 
 **How do I uninstall?**
 In the main menu: **Options > Optimizations > Uninstall PZ Optimization...**

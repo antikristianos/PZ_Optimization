@@ -8456,3 +8456,13 @@ decision) from the level's last preparation, whatever had changed since.
   0.76 / 0.82, the fix worse than stock 0.08); on the release base (runs `rf3-inout-*`) every box is 0.0 % off stock,
   Jev `same_in_all` 0.99, the fix matches stock 0.89. Standing on the porch square 6292,5462 hides the whole upper house in stock too.
   Shipped as a safety change (maintainer, 2026-10-18).
+
+### Built-in benchmark (2026-10-18, docs/plan-builtin-benchmark.md): PerformanceSettings, no other override
+
+- `PerformanceSettings.pzoptBenchmark(cmd, arg)`: the one Lua entry point of `media/lua/client/pzopt/pzopt_benchmark.lua`
+  (main menu "BENCHMARK" item, setup dialog, the pass's world, HUD, report), forwarded to `pzopt.Benchmark.call`.
+- Everything else is pzopt code: `HarnessFlags` takes a pass's harness flags from the benchmark plan when there is no
+  harness flag file (`BenchPlan`), `Config` merges the pass's pinned settings into its pzopt.properties layer (stock pass
+  `enabled=false`, overlay hidden, frame log on), `Harness` calls `Benchmark.onWorldReady / onRouteStart / onTick /
+  onRouteEnd` and steps its route by a fixed time per frame with `fixed_step` (timedemo), `Overlay` / `Pacing` hand
+  their per-frame rows to `BenchRecorder`, `Stats` counts loaded chunks without the instrument flag.

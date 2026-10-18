@@ -291,7 +291,7 @@ applyNav = function(mo, spec)
     PzoptOptionsNavigate(mo, kind, parts[2] ~= "" and parts[2] or nil, parts[3], parts[4] ~= "" and parts[4] or nil)
 end
 -- compat_check=1 (2026-10-02): stay on the main menu, log the pzopt menu items, write Screenshots/pzopt-menu.png, open
--- the "PZ OPTIMIZATION MOD COMPATIBILITY CHECK" dialog through the item's own click handler, log its text, write
+-- the mod compatibility dialog (PzoptCompatDialog.show), log its text, write
 -- Screenshots/pzopt-compat.png, close it and quit. With `--mod pzopt-compat-javafixture` (harness/compat/make-java-fixture.sh)
 -- the dialog lists the fixture's jars and the two settings it switches off. compat_choose=performance|compatibility
 -- presses that choice's button after the first screenshot, logs the profile state and writes
@@ -315,14 +315,14 @@ local function compatTick()
         getCore():TakeFullScreenshot("pzopt-menu.png")
         c.menuMs = now
     elseif not c.openedMs and now - c.menuMs >= 2000 then
-        local item = ms.pzoptCompatOption
-        if not item then
+        -- the check's dialog (pzopt_mainscreen_compat.lua; the main menu's PZ OPTIMIZATION screen shows the same scan as a page)
+        if not PzoptCompatDialog then
             print("[pzopt-harness] compat check: item NOT FOUND, quitting")
             compatCheck = false
             getCore():quit()
             return
         end
-        item.onMouseDown(item, 0, 0)
+        PzoptCompatDialog.show()
         local dlg = PzoptCompatDialog and PzoptCompatDialog.instance
         print("[pzopt-harness] compat check: dialog " .. (dlg and "open" or "NOT OPEN"))
         if dlg then
@@ -1117,7 +1117,110 @@ local function worldMapTick()
     print("[pzopt-map] step " .. i .. " zoom=" .. string.format("%.3f", ui.mapAPI:getZoomF()) .. " base=" .. string.format("%.3f", base))
 end
 
+-- pzmenu_check=S (2026-10-18): S seconds into the world (the bench save), the PZ Optimization menu over the pause menu:
+-- Esc opens the pause menu, its PZ OPTIMIZATION item opens the screen, the Profiler's overlay toggle (live) and a live
+-- Profiler key change at once, the screen closes back onto the pause menu, Esc resumes; every step is a [pzopt-harness]
+-- pzmenu line and an in-game screenshot (Screenshots/pzopt-pzmenu-<n>.png). With pzmenu_read=1 the same screens are the
+-- readability tour's stops (BENCHREAD lines + Screenshots/pzopt-bench-ui-read-*.png, harness/benchmark-readability.py).
+local pzmenu = nil
+local PZMENU_KEY = "overlayGraph" -- a live Profiler key (Profiler > Performance overlay > Overlay)
+local function pzmenuTick()
+    if pzmenu == false then return end
+    if not getPlayer() then return end
+    if pzmenu == nil then
+        local flags = readFlags()
+        if not flags or not flags.pzmenu_check or flags.pzmenu_check == "" then pzmenu = false; return end
+        pzmenu = { at = getTimestampMs() + (tonumber(flags.pzmenu_check) or 10) * 1000, step = 0, read = flags.pzmenu_read == "1" }
+    end
+    local now = getTimestampMs()
+    if now < pzmenu.at then return end
+    local ms = MainScreen.instance
+    local function log(t) print("[pzopt-harness] pzmenu: " .. t) end
+    local function shot(n) getCore():TakeFullScreenshot("pzopt-pzmenu-" .. n .. ".png") end
+    local st = pzmenu.step
+    pzmenu.step = st + 1
+    pzmenu.at = now + 2500
+    if pzmenu.read and st == 0 then
+        -- the readability tour over the pause menu (its stops; the tour logs and shoots each one). The "ig-" names keep its
+        -- screenshots (Screenshots/pzopt-bench-ui-read-NN-<name>.png) apart from a main-menu tour's on the same machine
+        local stops = {
+            { name = "ig-pause", fn = function() ToggleEscapeMenu(escapeKey()) ms.bottomPanel.pzoptReadRoot = true end },
+            { name = "ig-pzmenu", fn = function()
+                ms.bottomPanel.pzoptReadRoot = nil
+                ms.pzoptMenuOption.onMouseDown(ms.pzoptMenuOption, 0, 0)
+                PzoptMainMenu.instance().forceHints = true
+            end },
+            { name = "ig-pzmenu-tools-overlay-1", fn = function() PzoptMainMenu.instance():select("tools/overlay/1") end },
+            { name = "ig-pzmenu-perf-drive-1", fn = function() PzoptMainMenu.instance():select("perf/drive/1") end },
+            { name = "ig-pzmenu-restart-prompt", fn = function() PzoptMainMenu.instance():devStep("vehicleSmooth", 1) end },
+            { name = "ig-pzmenu-restart-later", fn = function() PzoptMainMenu.instance():hideRestartPrompt() end },
+            { name = "ig-pzmenu-bench-setup", fn = function()
+                local m = PzoptMainMenu.instance()
+                m.forceNoPrompt = true
+                m:devStep("vehicleSmooth", -1)
+                m.forceNoPrompt = nil
+                m:select("bench/setup")
+            end },
+            { name = "ig-pzmenu-help", fn = function() PzoptMainMenu.instance():setHelp(true) end },
+            { name = "ig-pause-again", fn = function()
+                local m = PzoptMainMenu.instance()
+                m:setHelp(false)
+                m:close()
+                ms.bottomPanel.pzoptReadRoot = true
+            end },
+            { name = "ig-resumed", fn = function()
+                ms.bottomPanel.pzoptReadRoot = nil
+                ToggleEscapeMenu(escapeKey()) -- the game runs again (quit_after then quits to the desktop, not to the main menu)
+                print("[pzopt-harness] pzmenu: resumed, pause menu open=" .. tostring(ms:isVisible()))
+            end },
+        }
+        PzoptBenchRead.begin(stops)
+        pzmenu = false
+        log("readability tour over the pause menu started (" .. #stops .. " stops)")
+        return
+    end
+    if st == 0 then
+        ToggleEscapeMenu(escapeKey())
+        log("pause menu open=" .. tostring(ms and ms:isVisible()) .. " item=" .. tostring(ms and ms.pzoptMenuOption and ms.pzoptMenuOption.name))
+        shot(1)
+    elseif st == 1 then
+        ms.pzoptMenuOption.onMouseDown(ms.pzoptMenuOption, 0, 0)
+        local m = PzoptMainMenu.instance()
+        log("screen open=" .. tostring(m ~= nil) .. " page=" .. tostring(m and m.selected) .. " in game=" .. tostring(ms.inGame))
+        shot(2)
+    elseif st == 2 then
+        local m = PzoptMainMenu.instance()
+        m:select("tools/overlay/1")
+        local p = getPerformance()
+        log("overlay before: visible=" .. tostring(p:isPzoptOverlayVisible()) .. " sampling=" .. tostring(p:isPzoptOverlaySampling()))
+        m:activateItem(1) -- the toggle row (first on the page): shows the overlay (and switches the measuring on if it was off)
+        log("overlay after the toggle: visible=" .. tostring(p:isPzoptOverlayVisible()) .. " sampling=" .. tostring(p:isPzoptOverlaySampling()))
+        pzmenu.keyBefore = p:getPzoptOption(PZMENU_KEY)
+        m:devStep(PZMENU_KEY, 1)
+        log("live key " .. PZMENU_KEY .. ": " .. tostring(pzmenu.keyBefore) .. " -> " .. p:getPzoptOption(PZMENU_KEY) .. " (in force now)")
+    elseif st == 3 then
+        shot(3) -- the overlay over the menu, a few seconds into its measuring
+        log("overlay showing: visible=" .. tostring(getPerformance():isPzoptOverlayVisible()))
+    elseif st == 4 then
+        local m = PzoptMainMenu.instance()
+        m:devStep(PZMENU_KEY, -1)
+        m:close()
+        log("screen closed: screen=" .. tostring(PzoptMainMenu.instance() ~= nil) .. " pause menu open=" .. tostring(ms:isVisible())
+            .. " " .. PZMENU_KEY .. "=" .. getPerformance():getPzoptOption(PZMENU_KEY))
+        shot(4)
+    elseif st == 5 then
+        ToggleEscapeMenu(escapeKey())
+        log("resumed: pause menu open=" .. tostring(ms:isVisible()))
+    elseif st == 6 then
+        getPerformance():togglePzoptOverlay()
+        log("done (overlay visible=" .. tostring(getPerformance():isPzoptOverlayVisible()) .. ")")
+        pzmenu = false
+    end
+end
+
 local function onTickEvenPaused()
+    local okz, errz = pcall(pzmenuTick)
+    if not okz then print("[pzopt-harness] pzmenu: rig error " .. tostring(errz)); pzmenu = false end
     local ok5, err5 = pcall(worldMapTick)
     if not ok5 then print("[pzopt-map] rig error " .. tostring(err5)); worldMap = false end
     local ok4, err4 = pcall(inputLagTick)
@@ -1133,6 +1236,14 @@ local function onTickEvenPaused()
     if quitAtMs and getTimestampMs() >= quitAtMs then
         quitAtMs = nil
         print("[pzopt-harness] quit_after reached, quitting")
+        -- from the pause menu getCore():quit() goes to the main menu instead of the desktop (a run waited for an exit that
+        -- never came, 2026-10-18): the PZ Optimization screen and the pause menu close first, then the game quits
+        pcall(function()
+            local m = PzoptMainMenu and PzoptMainMenu.instance and PzoptMainMenu.instance()
+            if m then m:close("quit_after") end
+            local ms = MainScreen.instance
+            if ms and ms.inGame and ms:isVisible() then ToggleEscapeMenu(escapeKey()) end
+        end)
         getCore():quit()
     end
 end

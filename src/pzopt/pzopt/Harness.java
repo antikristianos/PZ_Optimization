@@ -200,6 +200,7 @@ public final class Harness {
    private static final List<float[]> legs = new ArrayList<>(); // {dx, dy, length}
    private static int leg = 0;
    private static float legDone = 0f;
+   private static float fixedStep; // fixed_step: route steps per route second, one per frame (timedemo); 0 = wall clock
    private static float x, y;
    private static int routeZ; // the level the bench route walks on (upstairs=Z moves it)
    private static float upstairsAt; // upstairs_at: seconds into the route of the level change (0 = at route start)
@@ -354,6 +355,7 @@ public final class Harness {
             String[] xy = endAtFlag.split(",");
             endAt = new int[] {Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())};
          }
+         fixedStep = Float.parseFloat(HarnessFlags.get("fixed_step", "0"));
          jitterTiles = Float.parseFloat(HarnessFlags.get("jitter", "0"));
          shotBurst = Integer.parseInt(HarnessFlags.get("shot_burst", "0"));
          jitterY = "true".equals(HarnessFlags.get("jitter_y", "false"));
@@ -388,11 +390,15 @@ public final class Harness {
          }
          BloodProbe.tick(p, nowNs); // blood_fill= / blood_rate= / blood_probe=: the floor blood decal rig
          BloodProbe.spray(p, dt);
+         if (state == RUN) {
+            Benchmark.onTick(nowNs); // built-in benchmark: utilization, focus and pause checks
+         }
       }
       switch (state) {
          case WAIT_WORLD -> {
             if (p != null && p.getCurrentSquare() != null) {
                 HarnessFlags.markStarted();
+                Benchmark.onWorldReady(); // built-in benchmark: load time, random numbers seeded
                 if (PLAYING) {
                    // play mode: the scene is forced, the player keeps their save's state and the game stays open
                    try {
@@ -744,12 +750,14 @@ public final class Harness {
                runStartEpochMs = System.currentTimeMillis();
                sampleThreadCpu();
                Stats.mark("route-start");
+               Benchmark.onRouteStart(); // built-in benchmark: the timed window opens
                state = RUN;
             }
          }
           case RUN -> {
             if (p == null) {
                Log.warn("harness: player vanished mid-route (world reloaded?); aborting run");
+               Benchmark.onRouteEnd("aborted", "the player vanished mid-route");
                state = DONE;
                return;
             }
@@ -839,7 +847,10 @@ public final class Harness {
             if (shotAt > 0f && shotPhase < 2 && !holdForScreenshot(nowNs)) {
                return; // camera held for the screenshot: no teleport, no turn this frame
             }
-             float step = speed * Math.min(dt, 0.1f);
+            // fixed_step=N (built-in benchmark's timedemo, technique 27): the route advances 1/N s of route time per frame,
+            // so every pass shows the same camera path frame for frame whatever the frame rate
+            float routeDt = fixedStep > 0f ? 1f / fixedStep : Math.min(dt, 0.1f);
+             float step = speed * routeDt;
             while (step > 0f && leg < legs.size()) {
                float[] l = legs.get(leg);
                float remain = l[2] - legDone;
@@ -863,10 +874,18 @@ public final class Harness {
             }
             if ((turnDegPerSec != 0f || faceSet) && !MirrorWalk.active()) { // explore=mirror faces the player itself
                // spin the facing so the vision cone, lighting cone and buildings-in-front scans keep changing
-               turnAngle = (turnAngle + turnDegPerSec * Math.min(dt, 0.1f)) % 360f;
+               turnAngle = (turnAngle + turnDegPerSec * routeDt) % 360f;
                p.setDirectionAngle(turnAngle);
             }
             zoomCycle(p, nowNs);
+            int sceneEnd = Showcase.routeEnd(nowNs); // showcase end=horde_dead: the scene ends the route (horde dead, or end_cap)
+            if (sceneEnd == 0) {
+               return;
+            }
+            if (sceneEnd == 1) {
+               leg = legs.size();
+               holdSecs = 0f;
+            }
             if (leg >= legs.size() && holdSecs > 0f) {
                // end-of-route hold: no more teleports, the facing keeps turning (flag hold)
                if (holdStartNs == 0L) {
@@ -911,6 +930,7 @@ public final class Harness {
                runEndEpochMs = System.currentTimeMillis();
                Log.info("harness: route done in " + secs + "s, " + chunks + " chunks loaded (" + chunks / secs + "/s); quitting");
                Log.info("harness: player at route end: " + Scene.visionState(p)); // blur > 0 = the screen was soft (pinWornItems)
+               Benchmark.onRouteEnd("complete", ""); // built-in benchmark: results, next pass armed
                writeThreadCpu(secs);
                writeSummary(secs, chunks);
                Stats.flush();
@@ -1614,6 +1634,30 @@ public final class Harness {
       float distance = 0f;
       for (float[] leg : legs) distance += leg[2];
       return distance;
+   }
+
+   /**
+    * How far along the route the run is, 0 before the route start, 1 at its end (the built-in benchmark's HUD): the
+    * distance driven on a drive, the route time walked plus the end hold on a walk (so timedemo counts route time).
+    */
+   static float routeFraction() {
+      if (driving) {
+         float len = routeDistance();
+         float done = pilot != null ? pilot.progress() : drivenDistance;
+         return len > 0f ? Math.max(0f, Math.min(1f, done / len)) : 0f;
+      }
+      float scene = Showcase.progress(System.nanoTime()); // end=horde_dead: the scene's own end
+      if (scene >= 0f) {
+         return scene;
+      }
+      if (speed <= 0f) {
+         return 0f;
+      }
+      float walked = legDone;
+      for (int i = 0; i < leg && i < legs.size(); i++) walked += legs.get(i)[2];
+      float held = holdStartNs != 0L ? Math.min(holdSecs, (System.nanoTime() - holdStartNs) / 1e9f) : 0f;
+      float total = routeLength() / speed + holdSecs;
+      return total > 0f ? Math.min(1f, (walked / speed + held) / total) : 0f;
    }
 
    /**
@@ -2482,6 +2526,7 @@ public final class Harness {
       Stats.mark("route-end");
       runEndEpochMs = System.currentTimeMillis();
       Log.info("harness: route " + routeStatus + " in " + secs + "s, vehicle distance=" + drivenDistance + "; quitting");
+      Benchmark.onRouteEnd(routeStatus, ""); // built-in benchmark: results, next pass armed
       writeThreadCpu(secs);
       if (pilot != null) {
          writeDriveLog(); // before the summary: run.sh treats pzopt-bench.out as the end of the route
@@ -2606,6 +2651,7 @@ public final class Harness {
       runEndEpochMs = System.currentTimeMillis();
       writeSummary(0f, 0);
       Log.warn("harness: rejected driving run: " + reason);
+      Benchmark.onRouteEnd("rejected", reason);
       Stats.flush();
       state = DONE;
       requestQuit();

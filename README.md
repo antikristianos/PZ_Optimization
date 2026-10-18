@@ -145,7 +145,7 @@ the launcher's garbage collector and heap.</i>
 
 ## Updates, uninstall
 
-Updates arrive in the main menu (**PZ OPTIMIZATION UPDATE**, one click). After a game update the next start removes a
+Updates arrive in the main menu (**PZ OPTIMIZATION > UPDATE**, one click; the item reads "UPDATE AVAILABLE" when one is offered). After a game update the next start removes a
 build made for the old version by itself (or installs the matching one from the Workshop item) and starts the game again.
 
 **To remove it:** Options > PZ Optimization > **Uninstall PZ Optimization**. Game does not start, or already

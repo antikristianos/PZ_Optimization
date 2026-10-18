@@ -74,6 +74,27 @@
 # The player's real saves are never loaded or written by a harness run.
 set -euo pipefail
 
+# --benchmark <spec> (with --label, --prop k=v): the game's built-in benchmark chain through harness/benchmark-run.sh,
+# so a laptop queue job (the queue runs run.sh there) can run it; the other arguments (--launcher direct ...) do not apply
+# --screen WxH: the game in a window of that size (BENCH_SCREEN, the readability checks of small screens), --font N its UI
+# font size (BENCH_FONT, options.ini fontSize); --benchmark pad
+# (with --label bench-pad) runs the controller check harness/benchmark-pad-check.sh instead (a uinput pad: Linux only)
+if [[ " $* " == *" --benchmark "* ]]; then
+  b_spec=""; b_label="bench"; b_props=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --benchmark) b_spec="$2"; shift 2 ;;
+      --label) b_label="$2"; shift 2 ;;
+      --screen) export BENCH_SCREEN="$2"; shift 2 ;;
+      --font) export BENCH_FONT="$2"; shift 2 ;;
+      --prop) b_props+=("$2"); shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ "$b_spec" == pad ]] && BENCH_PROPS="${b_props[*]:-}" exec "$(cd "$(dirname "$0")" && pwd)"/benchmark-pad-check.sh
+  exec "$(cd "$(dirname "$0")" && pwd)/benchmark-run.sh" "$b_spec" "$b_label" ${b_props[@]+"${b_props[@]}"}
+fi
+
 APPID=108600
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO/scripts/pz-env.sh"   # PZ_DIR, ZOMBOID, PZ_LAYOUT, PZ_DIR_JVM
