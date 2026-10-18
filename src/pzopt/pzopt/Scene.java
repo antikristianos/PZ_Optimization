@@ -15,7 +15,9 @@ import zombie.iso.weather.ClimateManager;
  *       weather generation, then pins the climate overrides a stock STAGE_STORM sets (rain 1.0,
  *       full cloud, wind, dark ambient) every frame, plus a lightning strike next to the player every
  *       {@code thunder_secs} seconds (default 6) so the flash + forced grid-stack recalc is part of
- *       every run at the same instants; {@code clear} stops weather and pins the fair-weather values;</li>
+ *       every run at the same instants; {@code clear} stops weather and pins the fair-weather values; with
+ *       {@code time_of_day} the light follows that hour (the storm's dimming on top: a rainy night stays night), without it the
+ *       light is pinned to daylight as before;</li>
  *   <li>{@code fog=heavy|off|0..1} — pins the fog intensity ({@code heavy} = 1.0, the value a stock
  *       BLIZZARD stage without its own roll uses; a storm stage rolls at most 0.5) every frame. On its own it
  *       stops the save's weather period too (every WeatherPeriod stage re-pins fog to 0) but leaves the other
@@ -908,9 +910,11 @@ public final class Scene {
          set(cm, ClimateManager.FLOAT_FOG_INTENSITY, 0.0f); // no fog flag: a storm/clear run has no fog (the 2026-09-20 baselines)
       }
       set(cm, ClimateManager.FLOAT_DESATURATION, storm ? 0.3f : 0.0f);
-      set(cm, ClimateManager.FLOAT_GLOBAL_LIGHT_INTENSITY, storm ? 0.4f : 1.0f);
-      set(cm, ClimateManager.FLOAT_AMBIENT, storm ? 0.45f : 1.0f);
-      set(cm, ClimateManager.FLOAT_DAYLIGHT_STRENGTH, storm ? 0.45f : 1.0f);
+      // the light: with a forced hour (time_of_day=) the climate's own value for that hour, times the storm's dimming (a
+      // night stays night: weather=rain|storm|clear at 01:00); without one the old daylight pin (the weather= baselines)
+      light(cm, ClimateManager.FLOAT_GLOBAL_LIGHT_INTENSITY, storm ? 0.4f : 1.0f);
+      light(cm, ClimateManager.FLOAT_AMBIENT, storm ? 0.45f : 1.0f);
+      light(cm, ClimateManager.FLOAT_DAYLIGHT_STRENGTH, storm ? 0.45f : 1.0f);
       cm.getClimateBool(ClimateManager.BOOL_IS_SNOW).setOverride(false);
    }
 
@@ -944,6 +948,16 @@ public final class Scene {
       } catch (NumberFormatException e) {
          Log.warn("harness: unknown fog '" + raw + "' (heavy|off|0..1); leaving the save's fog");
          return -1f;
+      }
+   }
+
+   /** A light float under weather=: the hour's own value x the weather's factor when the hour is forced, else the factor itself (daylight). */
+   private static void light(ClimateManager cm, int id, float factor) {
+      if (timeOfDay >= 0f) {
+         ClimateManager.ClimateFloat f = cm.getClimateFloat(id);
+         f.setOverride(f.getInternalValue() * factor, 1.0f);
+      } else {
+         set(cm, id, factor);
       }
    }
 

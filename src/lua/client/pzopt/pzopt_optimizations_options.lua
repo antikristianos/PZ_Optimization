@@ -38,7 +38,7 @@ local MASTER = { key = "enabled", label = "Optimizations enabled (master switch)
 -- (Config's GATED list) while the choices below stay saved for when it is on again. Both apply at once; the features
 -- that pick their shaders or window at start-up (NEXT_LAUNCH_ONLY) follow on the next launch.
 local ENHANCEMENTS_MASTER = { key = "enhancementsEnabled", label = "Enhancements enabled (master switch)", live = true,
-  restartKeys = { "hdr", "hdrAuto", "pixelLight", "reflections", "carGlass", "mirrors" },
+  restartKeys = { "hdr", "hdrAuto", "pixelLight", "voxelLight", "reflections", "carGlass", "mirrors" },
   tip = "Off = the picture is the stock game's: upscaling, sprite filtering, HDR output, ambient occlusion, sun shadows, reflections, car glass, the darkness floor, remembered places, colour grading, per-pixel lighting, god rays and foliage sway are all off, whatever the settings below say (they are kept for when you switch it on again). On = the settings below apply. HDR output, per-pixel lighting, reflections and car glass switch on the next launch." }
 local PROFILER_MASTER = { key = "profilerEnabled", label = "Profiler enabled (master switch)", live = true,
   tip = "Off = no performance overlay, no measuring and no frame log: the overlay's samplers never start and the toggle key only says the profiler is off, whatever the settings below say (they are kept for when you switch it on again). On = the settings below apply." }
@@ -1363,6 +1363,15 @@ local ENHANCEMENT_SECTIONS = {
             { key = "pplSpecPct", label = "Per-pixel lighting: wet glint strength (%)",
               choices = { "30", "60", "100" }, note = { ["60"] = "default" },
               tip = "How bright the glints on wet ground are." },
+            { key = "voxelLight", label = "Voxel lighting (needs per-pixel lighting)",
+              tip = "Street lamps, house lamps and room lights are traced through the world's walls, windows, doorways, fences, floors and tree crowns: they cast real shadows (a fence, a stair, a building's corner), light reaches a room through its windows, walls facing a lamp catch more of it, and the sky lights rooms from their windows and doorways instead of a flat indoor darkening. Each chunk picture keeps its own light layer, worked out again only when a light or the buildings change, so a still scene costs nothing extra. Needs a graphics card with OpenGL 4.3 (not macOS). Applies on the next launch." },
+            { key = "voxelLightTorchShadows", label = "Voxel lighting: torch shadows",
+              tip = "A torch you carry casts shadows of walls, fences, floors and crowns too (traced again only when the torch moves)." },
+            { key = "voxelLightSkyMethod", label = "Voxel lighting: daylight indoors",
+              choices = { "flood", "cascades", "cones" }, note = { ["flood"] = "default" },
+              tip = "How the sky's light reaches into rooms. Flood: spread from the open sky through windows and doorways (cheapest). Cascades: rays towards the sky from every square, shared between neighbours (the sky through a window comes from where it faces; ~1 ms when buildings change). Cones: the same with every ray traced (~2 ms when buildings change)." },
+            { key = "voxelLightBounce", label = "Voxel lighting: bounced light",
+              tip = "Lit floors and walls light their surroundings a little: a lamp pool fills the area round it, a lit window spills warm light outside." },
             { key = "pplShadows", label = "Per-pixel lighting: torch shadows (experimental)",
               tip = "Fence posts, furniture and walls cast shadows into your torch's beam (computed from the picture's depth at half resolution, one frame late). Experimental." },
             { key = "pplTorchFeetGlow", label = "Per-pixel lighting: torch glow at your feet",
@@ -1405,6 +1414,8 @@ local NEXT_LAUNCH_ONLY = { hdr = true, hdrAuto = true, carOccupant = true, carOc
     -- per-pixel lighting: read once at start-up (the chunk composite shader is patched when the game loads it)
     pixelLight = true, pplAnalytic = true, pplPointLights = true, pplNormals = true, pplWrapPct = true, pplSmooth = true,
     pplWetSpecular = true, pplSpecPct = true, pplShadows = true, torchSourceSelfShadow = true,
+    -- voxel lighting: its shader code is compiled into the per-pixel lighting programs at start-up
+    voxelLight = true, voxelLightTorchShadows = true, voxelLightSkyMethod = true, voxelLightBounce = true,
     -- reflections: the water, puddle and chunk composite shaders are patched when the game loads them (only then);
     -- strength and puddles apply at once
     reflections = true,
@@ -1755,7 +1766,7 @@ local KEY_CLIP = {
     fogPass = "fog", fogScalePct = "fog", fogMaskFrames = "fog",
     fsrSharpnessPct = "fsrzoom", dlssWaterCurrent = "dlss", dlssWaterHistoryPct = "dlss", dlssPreset = "dlss", dlssOutputPct = "dlss", dlssOutputFilter = "dlsszoom", dlssSharpen = "dlsszoom",
     hdrSunPct = "hdrday", hdrGlintPct = "hdrday",
-    pixelLight = "torch", pplAnalytic = "torch", pplNormals = "torch", pplWrapPct = "torch", pplShadows = "torch", pplTorchFeetGlow = "torch", torchSource = "torch", torchSourceAim = "torch", torchSourceSelfShadow = "torch", pplSmooth = "torch", pplPointLights = "torch", pplWetSpecular = "storm", pplSpecPct = "storm",
+    pixelLight = "torch", voxelLight = "torch", pplAnalytic = "torch", pplNormals = "torch", pplWrapPct = "torch", pplShadows = "torch", pplTorchFeetGlow = "torch", torchSource = "torch", torchSourceAim = "torch", torchSourceSelfShadow = "torch", pplSmooth = "torch", pplPointLights = "torch", pplWetSpecular = "storm", pplSpecPct = "storm",
     lightingStrongDelta = "torch", lightingStrongBudget = "horde", lightingStrongFrameMs = "horde", lightingFlush = "torch", lightingBudget = "torch",
     audioLimiter = "horde", audioLimiterCeilingDb = "horde", audioLimiterStereoFold = "horde", soundTickHz = "horde", emitterIdleSkip = "horde", worldSoundCleanupFast = "horde", hearingHoist = "horde",
     lightSwitchCheckFrames = "horde", soundZoneCache = "horde", worldSoundFast = "horde", gridStackInterval = "horde",
@@ -2032,6 +2043,8 @@ local EFFECTS = {
     spriteFilter = { gpu = 1 },
     spriteFilterMin = { gpu = 1 },
     pixelLight = { cpu = -1, gpu = 1, vram = 1 },
+    voxelLight = { gpu = 0, vram = 1 },
+    voxelLightSkyMethod = { gpu = 1 },
     pplPointLights = { gpu = 1 },
     pplShadows = { gpu = 2 },
     pplTorchFeetGlow = {},

@@ -80,7 +80,10 @@ public final class GodRays {
    static final float VIEW_PATH = 4.8989795F; // squares of view ray per level of height (3 across x and y, 2.449 up)
    // occupancy bits
    static final int B_FLOOR = 1, B_ROOM = 32, B_ROOF = 64;
-   static final int B_GLASS_N = 1 << 12, B_GLASS_W = 1 << 13; // the N / W edge's aperture is a closed door's glass (CPU only: the volume sees a window)
+   static final int B_GLASS_N = 1 << 12, B_GLASS_W = 1 << 13;
+   // voxel lighting only: a see-through fence on the N / W edge; a low fence on an open N / W edge (B_LOW_W shares bit 13
+   // with B_GLASS_W, which only a window or door edge carries)
+   static final int B_TRANS_N = 1 << 14, B_TRANS_W = 1 << 15, B_LOW_N = 1 << 7, B_LOW_W = 1 << 13; // the N / W edge's aperture is a closed door's glass (CPU only: the volume sees a window)
    static final int EDGE_GLASS = 4; // edge(): the aperture is a closed door's glass
    static final int E_OPEN = 0, E_WALL = 1, E_WINDOW = 2, E_DOOR = 3;
 
@@ -187,6 +190,16 @@ public final class GodRays {
    static long buildSerial;
    private static final java.util.HashSet<Long> dirtyChunks = new java.util.HashSet<>();
    private static int occZ0 = -4;
+
+   /** Whether the last occupancy scan built every chunk of the window (game thread). */
+   static boolean occScanComplete() {
+      return !scanIncomplete && scanCamWx != Integer.MIN_VALUE;
+   }
+
+   /** The occupancy's first level (game thread). */
+   static int occZ0() {
+      return occZ0;
+   }
    private static int[] spiral;
    static long chunkBuilds, chunkBuildNs;
    static int maxTopLevel = 1; // the tallest occupancy level with anything in it (the DDA's exit height)
@@ -203,7 +216,7 @@ public final class GodRays {
 
    /** A chunk's geometry changed (a geometry bake of one of its levels: a door, a window, a wall): rebuild its occupancy. */
    public static void chunkChanged(IsoChunk c) {
-      if (c != null && (Config.GOD_RAYS || EntityShadow.wantsOccupancy())) {
+      if (c != null && (Config.GOD_RAYS || EntityShadow.wantsOccupancy() || VoxelLight.wantsOccupancy())) {
          dirtyChunks.add(key(c.wx, c.wy));
       }
    }
@@ -285,6 +298,7 @@ public final class GodRays {
             continue; // not loaded and already empty
          }
          int[] data = build(cell, c, wx, wy);
+         VoxelLight.occChanged(wx, wy, slotOwner[slot] == k && slotZ0[slot] == occZ0 ? slotData[slot] : null, data); // voxel lighting: its bricks in reach again when it changed
          slotOwner[slot] = k;
          slotBuiltMs[slot] = now;
          slotZ0[slot] = occZ0;
@@ -355,6 +369,28 @@ public final class GodRays {
                }
                int en = edge(sq, true), bandN = lastGlassBand, ew = edge(sq, false), bandW = lastGlassBand;
                b |= (en & 3) << 1 | (ew & 3) << 3;
+               // voxel lighting (pzopt.VoxelLight; the god rays read neither): a see-through fence on the N / W edge (bars,
+               // chain link: part of the light through), a low fence on an open N / W edge (only its bottom stops light)
+               if (sq.has(IsoFlagType.WallNTrans) || sq.has(IsoFlagType.TallHoppableN)) {
+                  b |= B_TRANS_N;
+               }
+               if (sq.has(IsoFlagType.WallWTrans) || sq.has(IsoFlagType.TallHoppableW)) {
+                  b |= B_TRANS_W;
+               }
+               if ((en & 3) == E_OPEN && sq.has(IsoFlagType.HoppableN)) {
+                  b |= B_LOW_N;
+               }
+               // a free-standing solid fence (a fence panel, no room on either side) on a wall edge: low + see-through bits
+               // together, which no other wall edge carries; it stops light only up to its top (VoxelLight.TRACE_GLSL)
+               if ((en & 3) == E_WALL && (b & B_TRANS_N) == 0 && solidFence(sq, true)) {
+                  b |= B_LOW_N | B_TRANS_N;
+               }
+               if ((ew & 3) == E_WALL && (b & B_TRANS_W) == 0 && solidFence(sq, false)) {
+                  b |= B_LOW_W | B_TRANS_W;
+               }
+               if ((ew & 3) == E_OPEN && (ew & EDGE_GLASS) == 0 && sq.has(IsoFlagType.HoppableW)) {
+                  b |= B_LOW_W;
+               }
                if ((en & EDGE_GLASS) != 0 || (ew & EDGE_GLASS) != 0) {
                   if (glassBands == null) {
                      glassBands = new int[64 * OCC_L * 2];
@@ -479,6 +515,24 @@ public final class GodRays {
       return false;
    }
 
+   /**
+    * The wall on sq's N / W edge is a fence ("fencing_" sheets), or the edge's wall flag comes from an object that is not a
+    * wall (a free-standing panel), and neither square beside it is in a room.
+    */
+   static boolean solidFence(IsoGridSquare sq, boolean north) {
+      if (sq.getRoom() != null) {
+         return false;
+      }
+      IsoObject w = sq.getWall(north);
+      String n = w != null && w.getSprite() != null ? w.getSprite().getName() : null;
+      if (w != null && (n == null || !n.startsWith("fencing_"))) {
+         return false;
+      }
+      IsoCell cell = IsoWorld.instance.currentCell;
+      IsoGridSquare nb = cell == null ? null : cell.getGridSquare(north ? sq.getX() : sq.getX() - 1, north ? sq.getY() - 1 : sq.getY(), sq.getZ());
+      return nb == null || nb.getRoom() == null;
+   }
+
    private static int edgeType(IsoGridSquare sq, boolean north) {
       if (sq.has(north ? IsoFlagType.DoorWallN : IsoFlagType.DoorWallW) || sq.has(north ? IsoFlagType.doorN : IsoFlagType.doorW)) {
          IsoObject d = sq.getDoor(north ? zombie.iso.objects.GridSquareEdgeFacingDirection.NORTH_SOUTH : zombie.iso.objects.GridSquareEdgeFacingDirection.EAST_WEST); // 42.21: edge enum (north = NORTH_SOUTH)
@@ -562,7 +616,7 @@ public final class GodRays {
    }
 
    /** 1..65535 for a room on a level (0 = none): the integration's dust stays within one room. */
-   private static int roomHash(zombie.iso.areas.IsoRoom r, int z) {
+   static int roomHash(zombie.iso.areas.IsoRoom r, int z) {
       long id = r.getRoomDef() != null ? r.getRoomDef().getID() : System.identityHashCode(r);
       long h = (id * 0x9E3779B97F4A7C15L) ^ (z * 0xC2B2AE3D27D4EB4FL);
       h ^= h >>> 29;
@@ -1148,7 +1202,7 @@ public final class GodRays {
    private static float heldCu = -1F;
 
    private static void queueInner(int playerIndex) {
-      if (!wanted() && EntityShadow.wantsOccupancy()) {
+      if (!wanted() && (EntityShadow.wantsOccupancy() || VoxelLight.wantsOccupancy())) {
          occupancyOnly(playerIndex);
          return;
       }
@@ -1532,6 +1586,7 @@ public final class GodRays {
          if ((!f.uploads.isEmpty() || f.tops != null) && ensureOcc()) {
             occUploads += f.uploads.size();
             uploadOcc(f);
+            VoxelLight.Gl.occSerial++; // voxel lighting: its torch maps trace again
          }
          if (occTex != 0) {
             occZ0Now = f.occZ0;

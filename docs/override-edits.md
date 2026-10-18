@@ -8466,3 +8466,10 @@ decision) from the level's last preparation, whatever had changed since.
   `enabled=false`, overlay hidden, frame log on), `Harness` calls `Benchmark.onWorldReady / onRouteStart / onTick /
   onRouteEnd` and steps its route by a fixed time per frame with `fixed_step` (timedemo), `Overlay` / `Pacing` hand
   their per-frame rows to `BenchRecorder`, `Stats` counts loaded chunks without the instrument flag.
+
+### Voxel lighting (2026-10-18, `pzopt.VoxelLight`, key `voxelLight`, off by default)
+
+- `FBORenderCell.renderOneLevel`, the god rays' occupancy hook: a chunk level whose objects changed (add / remove / modify)
+  also refreshes the shared occupancy when voxel lighting wants it (`pzopt.VoxelLight.wantsOccupancy()`), as it already did
+  for god rays and entity shadows. Voxel lighting traces its lamp, room and sky light through that occupancy
+  (`docs/findings-voxel-lighting-2026-10-18.md`). No other override changes.

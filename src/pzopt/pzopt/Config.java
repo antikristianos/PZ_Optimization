@@ -1742,6 +1742,51 @@ public final class Config {
    public static final String DEV_PPL_TOGGLE_AT = string("devPplToggleAt", ""); // dev: seconds after the world is up at which pixelLight flips on / off (every texture re-baked), for A/Bs of one scene in one run
    public static final String DEV_CAPTURE = string("devCapture", ""); // dev: start,seconds,fps,scalePct: the presented frames read back to ~/Zomboid/pzopt-capture/ (pzopt.FrameCapture), a recorder-free video rig
    public static final String DEV_PPL_DUMP_AT = string("devPplDumpAt", ""); // dev: seconds after the world is up at which the per-square lighting, the light sources and the scene depth + colour go to ~/Zomboid/pzopt-ppl/ (pzopt.PixelLight)
+   // voxel lighting (pzopt.VoxelLight, 2026-10-18): the static lights (lamps, room lights), the sky and one bounce traced through
+   // the god rays' voxel occupancy into a world-anchored light volume, lit per pixel by pixelLight's chunk composite
+   public static final boolean VOXEL_LIGHT = bool("voxelLight", false); // voxel lighting on (needs pixelLight; applies at the next launch)
+   public static final int VOXEL_LIGHT_SQUARES = pow2Clamp(integer("voxelLightSquares", 256), 64, 256); // squares per side of the light volume round the camera (power of two, within the occupancy's 256)
+   public static final int VOXEL_LIGHT_RES = Math.max(1, Math.min(4, integer("voxelLightRes", 2))); // light volume texels per square across (1, 2 or 4)
+   public static final int VOXEL_LIGHT_LEVEL_RES = Math.max(1, Math.min(4, integer("voxelLightLevelRes", 2))); // light volume texels per level of height
+   public static final int VOXEL_LIGHT_BRICKS = Math.max(8, integer("voxelLightBricksPerFrame", 256)); // light volume bricks (4 x 4 squares x 1 level) traced a frame at most, nearest first
+   public static final int VOXEL_LIGHT_STRENGTH_PCT = integer("voxelLightStrengthPct", 100); // the traced lamps' and room lights' brightness, % of the native's
+   public static final String VOXEL_LIGHT_COMBINE = string("voxelLightCombine", "max"); // how lights add up at a point: max (the native's), hue (summed, scaled back under 1 keeping the colour), screen (1 - (1 - a)(1 - b)), add
+   public static final boolean VOXEL_LIGHT_SKY = bool("voxelLightSky", true); // the ambient from the open sky, flooded through windows and doorways into rooms (replaces the native's indoor darkening)
+   public static final String VOXEL_LIGHT_SKY_METHOD = string("voxelLightSkyMethod", "flood"); // the sky term: flood (open columns flooded through openings) or cones (17 rays a cell through the occupancy, the flood softening them)
+   public static final int VOXEL_LIGHT_SKY_DECAY_PCT = integer("voxelLightSkyDecayPct", 72); // sky flood: what is left of the sky light a square further from the open sky, %
+   public static final int VOXEL_LIGHT_SKY_FLOOR_PCT = integer("voxelLightSkyFloorPct", 20); // sky flood: the least ambient a room keeps, % of the outdoor ambient
+   public static final boolean VOXEL_LIGHT_AMBIENT_ADD = bool("voxelLightAmbientAdd", false); // the lamps add to the sky's ambient (off: the brighter of the two, as the native)
+   public static final boolean VOXEL_LIGHT_BOUNCE = bool("voxelLightBounce", true); // one bounce: the traced light's reflection, flooded through the occupancy (warm spill from lit windows, fill near lamp pools)
+   public static final int VOXEL_LIGHT_BOUNCE_PCT = integer("voxelLightBouncePct", 15); // one bounce: the surfaces' albedo, %
+   public static final String VOXEL_LIGHT_BOUNCE_METHOD = string("voxelLightBounceMethod", "flood"); // the bounce: flood (the brightest neighbour, non-directional) or cube (six directional fluxes propagated: a wall facing the lit area takes more)
+   public static final int VOXEL_LIGHT_CUBE_GAIN_PCT = integer("voxelLightCubeGainPct", 100); // cube: the directional bounce's strength, %
+   public static final int VOXEL_LIGHT_BOUNCE_DECAY_PCT = integer("voxelLightBounceDecayPct", 60); // one bounce: what is left a square further, %
+   public static final int VOXEL_LIGHT_PROP_ITERS = Math.max(1, integer("voxelLightPropIters", 4)); // flood iterations a frame while the flood has not settled
+   public static final int VOXEL_LIGHT_GLASS_PCT = integer("voxelLightGlassPct", 85); // light through a window pane, %
+   public static final int VOXEL_LIGHT_FENCE_PCT = integer("voxelLightFencePct", 80); // light through a see-through fence (bars, chain link), %
+   public static final int VOXEL_LIGHT_CROWN_PCT = integer("voxelLightCrownPct", 100); // how much tree crowns stop light, %
+   public static final int VOXEL_LIGHT_WRAP_PCT = integer("voxelLightWrapPct", 35); // facing to the light: wrap, % (as pplWrapPct)
+   public static final String VOXEL_LIGHT_NORMAL = string("voxelLightNormal", "texel"); // the surface normal for the facing: texel (pplTexelPos's), screen (derivatives), none (no facing)
+   public static final int DEV_VOXEL_LIGHT_VIEW = integer("devVoxelLightView", 0); // dev (with devPplView != 0 for the dev variant): 1 the traced light, 2 the sky term, 3 the bounce, 4 validity, 5 the facing, 6 the voxel light alone (no native), 7 native vs voxel split screen
+   public static final String DEV_VOXEL_LIGHT_VIEW_LIST = string("devVoxelLightViewList", "0,1,2,3,4,5,6,7"); // dev: the views devVoxelLightViewCycle steps through
+   public static final int DEV_VOXEL_LIGHT_VIEW_CYCLE = integer("devVoxelLightViewCycle", 0); // dev: every N ms the next dev view (0..7, logged with its epoch; needs devPplView != 0, e.g. 99, for the dev programs)
+   public static final boolean DEV_VOXEL_LIGHT_TORCH_LOG = bool("devVoxelLightTorchLog", false); // dev: every torch retrace to the console (epoch ms, position, height, level, the share of its map in shadow; reads the map back)
+   public static final String DEV_VOXEL_LIGHT_PROBE = string("devVoxelLightProbe", ""); // dev: x0,y0,x1,y1,z: every 5 s the lights reaching that box and each square's room / roof / occupancy word to the console
+   public static final String DEV_VOXEL_LIGHT_DUMP_AT = string("devVoxelLightDumpAt", ""); // dev: seconds after the first voxel frame at which the light volumes are read back to ~/Zomboid/pzopt-voxel/ (A, C as float32, + the frame's mapping)
+   public static final String VOXEL_LIGHT_APPLY = string("voxelLightApply", "cache"); // how the composite reads it: cache (a light layer per chunk texture, relit by compute when it or the volume changes: one fetch a pixel), pixel (the volume per pixel)
+   public static final int VOXEL_LIGHT_CACHE_LAYERS = Math.max(64, integer("voxelLightCacheLayers", 1536)); // cache: light layers (one a chunk texture on screen)
+   public static final int VOXEL_LIGHT_CACHE_W = Math.max(32, integer("voxelLightCacheW", 128)); // cache: a layer's texels across (a chunk texture is ~1024-1500 px wide)
+   public static final int VOXEL_LIGHT_CACHE_H = Math.max(32, integer("voxelLightCacheH", 96)); // cache: a layer's texels down (a chunk texture is 1024 px tall)
+   public static final String VOXEL_LIGHT_PENDING = string("voxelLightPending", "native"); // cache: a chunk texture whose layer is not lit yet (new on screen, a frame or two): native (the native's light, free) or pixel (the volume per pixel, ~+130 us at 5K while any is)
+   public static final int VOXEL_LIGHT_RELIGHTS_BAKED = Math.max(1, integer("voxelLightRelightsBaked", 8)); // cache: of those, layers relit only because their chunk re-baked (turning near cut walls re-bakes many)
+   public static final int VOXEL_LIGHT_RELIGHTS = Math.max(1, integer("voxelLightRelightsPerFrame", 32)); // cache: layers relit a frame at most (new ones first)
+   public static final boolean VOXEL_LIGHT_TORCH_SHADOWS = bool("voxelLightTorchShadows", true); // carried torches cast shadows: a visibility map round each traced through the occupancy every frame it moves (walls, fences, floors, crowns)
+   public static final boolean VOXEL_LIGHT_SKIP = bool("voxelLightSkip", true); // traces cross 4 x 4 square blocks with nothing in them in one step (a coarse occupancy)
+   public static final String VOXEL_LIGHT_DIRECT = string("voxelLightDirect", "dda"); // the direct light's visibility: dda (each texel marches to each lamp) or maps (a 64 x 64 octahedral visibility map per lamp, marched from the lamp; texels look it up)
+   public static final int VOXEL_LIGHT_GATHER_FRAMES = Math.max(1, integer("voxelLightGatherFrames", 10)); // the light list is read every N frames (and when the window moves)
+   public static final boolean DEV_VOXEL_LIGHT_TIMING = bool("devVoxelLightTiming", false); // dev: GPU time of the light volume's passes in the log every 5 s
+   public static final int DEV_VOXEL_LIGHT_ALTERNATE = integer("devVoxelLightAlternate", 0); // dev: every N ms voxel lighting flips on / off (its passes and the composite term), for within-run frame-time A/Bs
+   public static final boolean DEV_VOXEL_LIGHT_FULL = bool("devVoxelLightFull", false); // dev: every brick traced again every frame (the brute-force cost reference)
    public static final boolean DEV_SSR_TIMING = bool("devSsrTiming", false); // dev: GPU time of the water pass in the log every 600 frames, apart for reflections on / off (devSsrAlternate)
    public static final String HORDE_BATCH = string("hordeBatch", "exact"); // exact by default since 2026-10-14 (maintainer): the 3D zombies' model draws in batches on the render thread (pzopt.HordeBatch): one program, a draw record + bone palette per draw in storage buffers, one attribute push / pop per run; off | exact (a run ends at anything drawn between two zombies: the stock order) | defer (the moving pass's zombies drawn at its end, stock order among them); GL 4.3, stock elsewhere
    public static final String HORDE_BATCH_UPLOAD = string("hordeBatchUpload", "mapped"); // hordeBatch's records: mapped (persistent coherent buffers, GL 4.4, four frames in turn behind fences) | subdata (glBufferSubData per run)
@@ -2350,7 +2395,7 @@ public final class Config {
          {"enhancementsEnabled", "upscaler", "off", "dynRes", "false", "spriteFilter", "stock", "hdr", "false", "hdrAuto", "false",
             "ambientOcclusion", "false", "sunShadows", "false", "reflections", "false", "ripples", "false", "bloodWet", "false", "occludedZombieOutlines", "false", "darknessFloorPct", "0",
             "memoryTint", "false", "colorGrading", "false", "pixelLight", "false", "godRays", "false", "foliageSway", "false", "relief", "false", "carGlass", "false",
-            "torchSource", "false", "mirrors", "false"},
+            "torchSource", "false", "mirrors", "false", "voxelLight", "false"},
          // everything that makes the overlay measure or show (Overlay.configure; harness runs still measure)
          {"profilerEnabled", "overlaySampling", "false", "overlay", "false", "overlayLog", "false"},
       };
@@ -2419,6 +2464,14 @@ public final class Config {
          out[i] = Integer.parseInt(parts[i].trim());
       }
       return out;
+   }
+
+   private static int pow2Clamp(int v, int lo, int hi) {
+      int p = lo;
+      while (p < hi && p < v) {
+         p <<= 1;
+      }
+      return p;
    }
 
    private static int integer(String key, int def) {

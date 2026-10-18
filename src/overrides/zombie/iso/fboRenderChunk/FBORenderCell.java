@@ -3316,7 +3316,7 @@ public final class FBORenderCell {
                   this.pzoptBakeTrees(c, playerIndex, zoom);
                   pzopt.GpuSections.end("bake.trees"); // pzopt: GPU sub-section
                }
-               if ((pzopt.Config.GOD_RAYS || pzopt.EntityShadow.wantsOccupancy()) && renderLevels.isDirty(level, FBORenderChunk.DIRTY_OBJECT_ADD | FBORenderChunk.DIRTY_OBJECT_REMOVE | FBORenderChunk.DIRTY_OBJECT_MODIFY, zoom)) pzopt.GodRays.chunkChanged(c); // pzopt: god rays, a door / window / wall changed: the chunk's occupancy again
+               if ((pzopt.Config.GOD_RAYS || pzopt.EntityShadow.wantsOccupancy() || pzopt.VoxelLight.wantsOccupancy()) && renderLevels.isDirty(level, FBORenderChunk.DIRTY_OBJECT_ADD | FBORenderChunk.DIRTY_OBJECT_REMOVE | FBORenderChunk.DIRTY_OBJECT_MODIFY, zoom)) pzopt.GodRays.chunkChanged(c); // pzopt: god rays, a door / window / wall changed: the chunk's occupancy again
                if (pzopt.ChunkAo.enabled() && FBORenderChunkManager.instance.renderChunk != null && FBORenderChunkManager.instance.renderChunk.isTopLevel(level)) { // pzopt: ambient occlusion baked into the texture
                   pzopt.ChunkAo.bakeEnd(FBORenderChunkManager.instance.renderChunk, c, playerIndex, zoom, pzopt.ChunkAo.geometryDirty(renderLevels, level, zoom)); // pzopt
                } // pzopt

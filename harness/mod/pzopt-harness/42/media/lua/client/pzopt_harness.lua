@@ -753,6 +753,13 @@ local function onFETick()
         end
         print("[pzopt-harness] continuing latest save " .. tostring(MainScreen.latestSaveWorld) .. " (" .. tostring(MainScreen.latestSaveGameMode) .. ")")
         MainScreen.continueLatestSave(MainScreen.latestSaveGameMode, MainScreen.latestSaveWorld)
+        if flags.stock_drive and flags.inputlag == "1" then
+            -- no pzopt.Harness presses click-to-start in an uninstalled game: the input driver's script (run.sh
+            -- --inputlag) clicks it, so it starts now instead of after the player exists
+            local w = getFileWriter("pzopt-inputlag-ready.txt", true, false)
+            if w then w:write("ready_epoch_ms=" .. tostring(getTimestampMs()) .. "\n"); w:close() end
+            print("[pzopt-stockdrive] loading; the input driver clicks click-to-start")
+        end
     end
 end
 
@@ -1037,10 +1044,11 @@ local function inputLagTick()
     if inputLag == nil then
         local flags = readFlags()
         if not flags or flags.inputlag ~= "1" then inputLag = false; return end
-        inputLag = { readyMs = now + 6000, check = 0 }
+        if flags.stock_drive then inputLag = { ready = true, check = 0, stock = true } -- the drive stays seated (stockDriveTick)
+        else inputLag = { readyMs = now + 6000, check = 0 } end
     end
     local player = getPlayer()
-    if player:getVehicle() then
+    if player:getVehicle() and not inputLag.stock then
         -- the bench save starts in the drive bench's car: W/S would be throttle / brake. Get out on foot first
         if not inputLag.exiting then
             inputLag.exiting = true
@@ -1069,6 +1077,92 @@ local function inputLagTick()
         print("[pzopt-inputlag] script done, quitting")
         inputLag = false
         getCore():quit()
+    end
+end
+
+-- stock_drive=1 (2026-10-18, the car flicker on a truly uninstalled game: `--install stock --inputlag
+-- harness/inputlag/stock-click.txt`): the drive mode in Lua with the game's own calls only, since pzopt.Harness is not
+-- there. On the bench save (the player stands at the KY-60 path start, 8010,11204): stock_drive_hour (1) o'clock,
+-- weather stopped, grid power on and the light switches within 50 tiles on (Scene.lightsOnAround), a Base.RaceCar12
+-- spawned facing east with headlights on and the player seated, the camera zoomed out, then the game's cruise control
+-- (setRegulator) at stock_drive_kmh (120) with no steering: the road runs straight east. A line every second
+-- ([pzopt-stockdrive] t= pos= kmh= yaw=); quits after stock_drive_secs (35) of driving.
+local stockDrive = nil
+local function stockDriveTick()
+    if stockDrive == false then return end
+    local player = getPlayer()
+    if not player then return end
+    local now = getTimestampMs()
+    if stockDrive == nil then
+        local flags = readFlags()
+        if not flags or not flags.stock_drive then stockDrive = false; return end
+        stockDrive = { t0 = now, step = 0, hour = tonumber(flags.stock_drive_hour) or 1,
+            kmh = tonumber(flags.stock_drive_kmh) or 120, secs = tonumber(flags.stock_drive_secs) or 35, logMs = 0 }
+        appendFlag("started=1") -- back at the menu = the run is over (the menu quits to the desktop)
+    end
+    local s = stockDrive
+    local dt = now - s.t0
+    if s.step == 0 then
+        s.step = 1
+        local gt = getGameTime()
+        gt:setLastTimeOfDay(s.hour); gt:setTimeOfDay(s.hour)
+        getClimateManager():stopWeatherAndThunder()
+        getWorld():setHydroPowerOn(true)
+        local shut = math.ceil(getWorld():getWorldAgeDays()) + 30
+        local opt = getSandboxOptions():getOptionByName("ElecShutModifier")
+        if opt:getValue() < shut then opt:setValue(shut) end
+        local on, px, py = 0, math.floor(player:getX()), math.floor(player:getY())
+        for z = 0, 3 do for y = py - 50, py + 50 do for x = px - 50, px + 50 do
+            local sq = getCell():getGridSquare(x, y, z)
+            if sq then
+                local objs = sq:getObjects()
+                for i = 0, objs:size() - 1 do
+                    local o = objs:get(i)
+                    if instanceof(o, "IsoLightSwitch") and not o:isActivated() then o:setActive(true, false, true); on = on + 1 end
+                end
+            end
+        end end end
+        print(string.format("[pzopt-stockdrive] hour %.1f, weather stopped, hydro power on, ElecShutModifier %d, %d switches on, player at %d,%d,%d vehicle=%s",
+            s.hour, opt:getValue(), on, px, py, math.floor(player:getZ()), tostring(player:getVehicle())))
+    elseif s.step == 1 and dt >= 2000 then
+        s.step = 2
+        local v = player:getVehicle()
+        if not v then
+            local sq = getCell():getGridSquare(math.floor(player:getX()), math.floor(player:getY()), 0)
+            v = addVehicleDebug("Base.RaceCar12", IsoDirections.E, 0, sq)
+            if not v then print("[pzopt-stockdrive] could not spawn the car"); stockDrive = false; return end
+            v:repair()
+            player:getInventory():AddItem(v:createVehicleKey())
+            v:setAngles(0, 90, 0) -- addVehicleDebug adds up to 11 deg of random heading; the road runs due east
+            if not v:enter(0, player) then print("[pzopt-stockdrive] could not seat the player"); stockDrive = false; return end
+        end
+        s.v = v
+        v:setHeadlightsOn(true)
+        print("[pzopt-stockdrive] car " .. tostring(v:getScriptName()) .. " at " .. string.format("%.1f,%.1f", v:getX(), v:getY()) .. ", player seated " .. tostring(player:getVehicle() == v))
+    elseif s.step == 2 and dt >= 4000 then
+        s.step = 3
+        local v = s.v
+        v:setAngles(0, 90, 0)
+        v:setKeysInIgnition(true)
+        v:engineDoRunning()
+        for _ = 1, 12 do getCore():doZoomScroll(0, 1) end
+        v:setRegulator(true)
+        v:setRegulatorSpeed(s.kmh)
+        s.driveMs = now
+        print("[pzopt-stockdrive] drive start epoch_ms=" .. tostring(now) .. " engine=" .. tostring(v:isEngineRunning()) .. " regulator " .. s.kmh)
+    elseif s.step == 3 then
+        local v = s.v
+        if now - s.logMs >= 1000 then
+            s.logMs = now
+            print(string.format("[pzopt-stockdrive] t=%.0f pos=%.1f,%.1f kmh=%.1f yaw=%.1f headlights=%s zoom=%.2f epoch_ms=%d",
+                (now - s.driveMs) / 1000, v:getX(), v:getY(), v:getCurrentSpeedKmHour(), v:getAngleY(), tostring(v:getHeadlightsOn()),
+                getCore():getZoom(0), now))
+        end
+        if now - s.driveMs >= s.secs * 1000 then
+            print("[pzopt-stockdrive] done, quitting")
+            stockDrive = false
+            getCore():quit()
+        end
     end
 end
 
@@ -1225,6 +1319,8 @@ local function onTickEvenPaused()
     if not ok5 then print("[pzopt-map] rig error " .. tostring(err5)); worldMap = false end
     local ok4, err4 = pcall(inputLagTick)
     if not ok4 then print("[pzopt-inputlag] rig error " .. tostring(err4)); inputLag = false end
+    local ok6, err6 = pcall(stockDriveTick)
+    if not ok6 then print("[pzopt-stockdrive] rig error " .. tostring(err6)); stockDrive = false; getCore():quit() end
     local ok3, err3 = pcall(pauseMenuTick)
     if not ok3 then print("[pzopt-harness] pause menu: rig error " .. tostring(err3)); pauseMenu = false end
     local okg, errg = pcall(glassTick)

@@ -152,7 +152,7 @@ PzoptSettingsLayout = {
         "puddleCache", "animBonesParallel", "actionEvalParallel", "charDrawPrep", "zombieLodDynamic", "playerLosFast", "noLoadingScreen",
         "resumeShot", "centerFirstLoad", "aotCache", "texCompress", "uiRetained", "mapStreetCache", "luaSkipEmpty", "corePlacement",
         "gpuPstate", "audioLimiter", "modProfile", "updateCheck",
-        "upscaler", "upscalerQuality", "dynRes", "dynResFps", "spriteFilter", "hdrAuto", "hdr", "pixelLight", "torchSource",
+        "upscaler", "upscalerQuality", "dynRes", "dynResFps", "spriteFilter", "hdrAuto", "hdr", "pixelLight", "voxelLight", "torchSource",
         "sunShadows", "sunShadowStrengthPct", "entityShadows", "moonShadows", "cloudShadows", "ambientOcclusion", "godRays", "godRaysStrengthPct",
         "reflections", "reflectionPuddles", "ripples", "ripplesStrengthPct", "ripplesRain", "ripplesWake", "mirrors", "mirrorsWindows", "mirrorsWallMirrors", "mirrorsProps", "carGlass", "carOccupant", "bloodWet", "darknessFloorPct",
         "memoryTint", "colorGrading", "foliageSway", "foliageSwayPct", "relief", "occludedZombieOutlines",
