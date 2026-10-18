@@ -96,6 +96,15 @@ Every method, checking that it loaded, building from source: **[Install guide](d
 <img src="docs/workshop/images/89-new-benchmark-menu.avif" width="49%" alt="The main menu's PZ OPTIMIZATION item, the full-screen settings, Benchmark Setup with the five runs, a horde shooting pass, the report of the desktop's A/B run (Rosewood spin 142 to 481 fps, score 576 to 1,636) and the run comparison">
 </p>
 
+## New! Voxel lighting
+
+<p align="center">
+<img src="docs/workshop/images/90-new-voxel-lighting.avif" width="49%" alt="A night lot at 01:00, stock against voxel lighting: street lamps and room lights traced through walls, windows and fences light the facades instead of a pale patch on the ground">
+</p>
+
+Lamps and room lights traced through walls, windows and fences. Off by default: PZ OPTIMIZATION > Enhancements >
+Lighting and shadows > Per-pixel lighting.
+
 ## Up to 5x faster in a Louisville horde
 
 <p align="center">

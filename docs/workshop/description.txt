@@ -33,6 +33,10 @@ Steam: right-click the game, Manage > Browse local files. Go up to [b]steamapps[
 [h1]New! A built-in benchmark, one menu for everything[/h1]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/89-new-benchmark-menu.avif[/img]
 
+[h1]New! Voxel lighting[/h1]
+[img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/90-new-voxel-lighting.avif[/img]
+[i]Lamps and room lights traced through walls, windows and fences. Off by default: PZ OPTIMIZATION > Enhancements > Lighting and shadows > Per-pixel lighting.[/i]
+
 [h1]Features[/h1]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/65-feature-fast-boot-load-split.avif[/img]
 [i]Desktop (Ryzen 7 9800X3D, GeForce RTX 4090, Crucial T705 2 TB NVMe SSD, 5120x2160, Linux). Launch to the world on screen, Continue pressed as soon as the menu answers, caches warm. Stock: the game as it ships. Enhanced: every optimization at its default. The clocks are the means of two runs per side without capture.[/i] [url=https://pzo.diegov.dev/d/pzopt-compare/compare?var-runs=boot-stock-20261006-205652&var-runs=boot-opt-20261006-205745&var-base=boot-stock-20261006-205652]The two runs on the dashboard[/url]

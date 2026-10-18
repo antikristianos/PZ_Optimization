@@ -323,3 +323,8 @@ Benchmark > Report of the desktop's A/B run `20261018-035343` (stock and optimiz
 charts) and Benchmark > Compare (its section column only: its scores belong to two other runs). The menu screens come from
 the desktop's 1280x720 large-font tour of the release build (`benchmark-run.sh ui:read --screen 1280x720 --font 3`, run
 `bench-card-720-20261018-223032`), shown as 698x720 windows panned left to right at 0.79x.
+`90` the "New! Voxel lighting" card (2026-10-19, under `89`, both New! sections stay; the AVIF template, one animation):
+`harness/voxel-card.py` = the 630 square, strip "Voxel Lighting", stock left of the divider, one sweep: the night lot by the
+bench save at 01:00, grid power and light switches on, clear, zoom 1, the camera panning east (desktop devCapture runs
+`vxcard-lot2-stock` with `enabled=false` / `vxcard-lot2-enh` with `pixelLight=true voxelLight=true`, empty options file, half
+size, 30 fps), the stock frame matched to the enhanced one within 0.35 s of route time; caption under it with the menu path.
