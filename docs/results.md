@@ -263,3 +263,10 @@ empty options file. Ground truth `devUiTruth` (stale = a visible UI element diff
 
 240 fps held in every scene; uncapped ~-1 % fps. Runs: `uil13-cost-new`, `uil13-cost-prev`, `uil6-cost-stock`,
 `uil12-truth-new`, `uil12-truth-nocap`, `uil7-truth-prev`, `uil11-unc-prev`, `uil11-unc-new` (harness/runs of the worktree).
+
+## 2026-10-18 16:20-16:25 — KI5 LAV-300 flicker report, single-player repro (`docs/findings-ki5-vehicle-flicker-2026-10-18.md`)
+
+Desktop, direct launch, `--mode bench --mod damnlib --mod 84gageV300`, LAV-300 APC + vanilla Van parked by the car rig at
+8158,11514, 14 s hold, recorded. `ki5-lav-repro2` (tab file: car glass and sun shadows off): steady, LAV / Van frame-to-frame
+luma diff 0.30 / 0.30. `ki5-lav-allenh` (rain, every Visuals key on): steady, 0.69 / 0.43 (rain streaks), LAV mean luma flat
+within +-0.2 over 6 s. No flicker reproduced.
