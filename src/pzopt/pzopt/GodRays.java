@@ -1054,7 +1054,7 @@ public final class GodRays {
    private static void buildPrisms(Frame f, float x0, float y0, float x1, float y1) {
       int cx0 = (int)Math.floor(x0) >> 3, cx1 = (int)Math.floor(x1) >> 3, cy0 = (int)Math.floor(y0) >> 3, cy1 = (int)Math.floor(y1) >> 3;
       int camLevel = (int)Math.floor(IsoCamera.frameState.camCharacterZ);
-      long k = ((((((f.lightKey * 31L + buildSerial) * 131L + f.refX) * 7919L + f.refY) * 17L + cx0 * 3L + cy1) * 13L + camLevel) * 307L + Config.GOD_RAYS_SOFT_PCT);
+      long k = ((((((f.lightKey * 31L + buildSerial) * 131L + f.refX) * 7919L + f.refY) * 17L + cx0 * 3L + cy1) * 13L + camLevel) * 307L + Config.GOD_RAYS_SOFT_PCT) * 5L + (Config.GOD_RAYS_DOOR_LEAF ? 1 : 0) + (Config.GOD_RAYS_BOUNCE_PCT > 0 ? 2 : 0); // (the menu's live keys that shape the volumes)
       if (k == prismKey) {
          return;
       }

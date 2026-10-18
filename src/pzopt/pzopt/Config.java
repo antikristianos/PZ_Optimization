@@ -1669,14 +1669,14 @@ public final class Config {
    public static final boolean GOD_RAYS_LATE_DRAW = bool("godRaysLateDraw", false); // god rays: the light volumes and local lights drawn over the finished world at the screen composite (measured: +10 us, the extra FBO switch; off)
    public static final boolean GOD_RAYS_ROOF_RULE = bool("godRaysRoofRule", true); // god rays: a window or doorway whose outside square has a roof, a porch roof or a floor right above it lets no light in (no shaft, no sunlit patch)
    public static final boolean GOD_RAYS_DOOR_GLASS = bool("godRaysDoorGlass", true); // god rays: closed doors with glass (a window in the door, sliding glass doors) let the light through their glass, unless curtained or barricaded
-   public static final boolean GOD_RAYS_DOOR_LEAF = bool("godRaysDoorLeaf", true); // god rays: an open door's leaf stands in its doorway's light (pzopt.DoorLight): the shaft and its sunlit patch lose what the leaf shades, a glass door's glass lets its share through
-   public static final int GOD_RAYS_DOOR_SWING_MS = integer("godRaysDoorSwingMs", 350); // god rays: a door toggle swings the leaf about its hinge over this many ms for the light (opening: the light sweeps in through the widening gap; closing: it is cut off as the leaf shuts); 0 = at once, as the sprite
+   public static volatile boolean GOD_RAYS_DOOR_LEAF; // god rays: an open door's leaf stands in its doorway's light (pzopt.DoorLight): the shaft and its sunlit patch lose what the leaf shades, a glass door's glass lets its share through (live: loadLive)
+   public static volatile int GOD_RAYS_DOOR_SWING_MS; // god rays: a door toggle swings the leaf about its hinge over this many ms for the light (opening: the light sweeps in through the widening gap; closing: it is cut off as the leaf shuts); 0 = at once, as the sprite (live: loadLive)
    public static final boolean GOD_RAYS_DOOR_MERGE = bool("godRaysDoorMerge", true); // god rays: the tiles of one wide open door (a garage door, a double door) let the light in as one opening (each tile kept its frame margins: dark bars across the shaft)
-   public static final boolean GOD_RAYS_SPILL = bool("godRaysSpill", true); // god rays at night: a lit room's light spills out through its open doors and windows into the fog and the rain (its frustum through the opening, soft-edged; pzopt.DoorLight)
-   public static final int GOD_RAYS_SPILL_PCT = integer("godRaysSpillPct", 100); // god rays at night: how bright the light spilling out of lit rooms is, %
-   public static final boolean GOD_RAYS_CHAR_SHADOWS = bool("godRaysCharShadows", true); // god rays: people standing in a shaft through a window or a doorway cast their shadow into the lit dust and onto its sunlit patch (two soft capsules each, analytic)
-   public static final int GOD_RAYS_DOOR_DUST_PCT = integer("godRaysDoorDustPct", 100); // god rays: a door opening stirs the dust in its shaft (thicker swirls drifting in with the draft, more motes, settling over a few seconds), %; 0 = none
-   public static final int GOD_RAYS_BOUNCE_PCT = integer("godRaysBouncePct", 0); // god rays: the sunlit patch a shaft lays on the floor bounces its light onto the walls and furniture of its room round it, %; 0 = none (the default: measured 2026-10-18, a few levels on the walls for ~17 us at the cap; the game's own room light outweighs it)
+   public static volatile boolean GOD_RAYS_SPILL; // god rays at night: a lit room's light spills out through its open doors and windows into the fog and the rain (its frustum through the opening, soft-edged; pzopt.DoorLight) (live: loadLive)
+   public static volatile int GOD_RAYS_SPILL_PCT; // god rays at night: how bright the light spilling out of lit rooms is, % (live: loadLive)
+   public static volatile boolean GOD_RAYS_CHAR_SHADOWS; // god rays: people standing in a shaft through a window or a doorway cast their shadow into the lit dust and onto its sunlit patch (two soft capsules each, analytic) (live: loadLive)
+   public static volatile int GOD_RAYS_DOOR_DUST_PCT; // god rays: a door opening stirs the dust in its shaft (thicker swirls drifting in with the draft, more motes, settling over a few seconds), %; 0 = none (live: loadLive)
+   public static volatile int GOD_RAYS_BOUNCE_PCT; // god rays: the sunlit patch a shaft lays on the floor bounces its light onto the walls and furniture of its room round it, %; 0 = none (the default: measured 2026-10-18, a few levels on the walls for ~17 us at the cap; the game's own room light outweighs it) (live: loadLive)
    public static volatile boolean GOD_RAYS_BOUNCE_OFF; // (the bounce shader did not compile)
    public static final boolean GOD_RAYS_ROOF_EXACT = bool("godRaysRoofExact", false); // god rays: instead of the roof rule's "no light under a porch roof", the light comes in under the roof's edge as the sun's height allows (a low sun reaches in under the porch, a high one does not); off: the maintainer's rule (2026-10-04)
    public static final boolean GOD_RAYS_DOOR_WATCH = bool("godRaysDoorWatch", true); // god rays: the doors (open, curtain) and window curtains round the camera are checked every frame and a change rebuilds that chunk's light at once (42.21 draws doors per frame: a door toggle baked nothing and the shaft came with the 30 s refresh)
@@ -2301,6 +2301,13 @@ public final class Config {
       GOD_RAYS_LOCAL_METHOD = string("godRaysLocalMethod", "analytic").trim().toLowerCase(java.util.Locale.ROOT);
       GOD_RAYS_HAZE_MODE = string("godRaysHazeMode", "auto").trim().toLowerCase(java.util.Locale.ROOT);
       GOD_RAYS_LOCAL_PCT = Math.max(0, Math.min(400, integer("godRaysLocalPct", 100)));
+      GOD_RAYS_DOOR_LEAF = bool("godRaysDoorLeaf", true);
+      GOD_RAYS_DOOR_SWING_MS = Math.max(0, Math.min(2000, integer("godRaysDoorSwingMs", 350)));
+      GOD_RAYS_SPILL = bool("godRaysSpill", true);
+      GOD_RAYS_SPILL_PCT = Math.max(0, Math.min(400, integer("godRaysSpillPct", 100)));
+      GOD_RAYS_CHAR_SHADOWS = bool("godRaysCharShadows", true);
+      GOD_RAYS_DOOR_DUST_PCT = Math.max(0, Math.min(400, integer("godRaysDoorDustPct", 100)));
+      GOD_RAYS_BOUNCE_PCT = Math.max(0, Math.min(400, integer("godRaysBouncePct", 0)));
       HDR_UI_NITS = integer("hdrUiNits", 0);
       HDR_PAPER_PCT = integer("hdrPaperPct", 100);
       HDR_PEAK_NITS = integer("hdrPeakNits", 0);

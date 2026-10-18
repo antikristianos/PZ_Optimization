@@ -230,7 +230,7 @@ final class DoorLight {
       }
       int camLevel0 = (int)Math.floor(zombie.iso.IsoCamera.frameState.camCharacterZ);
       long key = ((((((GodRays.buildSerial * 31L + f.refX) * 131L + f.refY) * 17L + (f.i0 >> 3)) * 13L + (f.j0 >> 3)) * 7L + f.nx * 1000L + f.ny) * 11L + camLevel0) * 29L
-         + Float.floatToIntBits(outside) + (long)Config.GOD_RAYS_LOCAL_PCT * 7919L
+         + Float.floatToIntBits(outside) + (long)Config.GOD_RAYS_LOCAL_PCT * 7919L + (long)Config.GOD_RAYS_SPILL_PCT * 15485863L
          + ((long)Math.floor(zombie.iso.IsoCamera.frameState.camCharacterX) >> 2) * 104729L + ((long)Math.floor(zombie.iso.IsoCamera.frameState.camCharacterY) >> 2) * 1299709L;
       int lh = 1;
       for (int i = 0; i < watchedLights.size(); i++) {
