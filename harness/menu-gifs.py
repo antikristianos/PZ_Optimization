@@ -132,6 +132,13 @@ for name, stock, opt, title in (
         ('memory', 'cap-day-off', 'cap-day-on', 'Rosewood house at 13:00, turning in place: stock vs remembered places'),
         ('grade', 'cap-rain-off', 'cap-rain-on', 'Rosewood house in the rain at 14:00: stock vs colour grading')):
     CLIPS[name] = dict(stock=stock, opt=opt, kind='pane', after=2.0, counter=False, crop=PANE_CROP, title=title)
+# Voxel lighting (2026-10-19, docs/findings-voxel-lighting-2026-10-18.md): in-game captures (pzopt.FrameCapture, half size,
+# 30 fps) of the night lot by the bench save at 01:00, the camera panning east, lamps and room lights on: the Workshop card's
+# stock run (vxcard-lot2-stock, enabled=false) and a run with per-pixel + voxel lighting on (vxmenu-lot-enh). kind='capture'
+# takes the frames straight from <run>/capture/frames.rgba: the stock frame of each GIF frame is the best image match within
+# 0.35 s of the same route time (props-reflect-card.py's Matcher), so both sides stay in step; `after` counts route seconds.
+CLIPS['voxel'] = dict(stock='vxcard-lot2-stock', opt='vxmenu-lot-enh', kind='capture', after=1.0, counter=False,
+                      crop='64:24:2368:1000', title='Night lot at 01:00, lamps and room lights, camera panning: stock vs voxel lighting')
 CLIPS['ao'] = dict(stock='enh-ao-off', opt='enh-ao-on', after=1.0, counter=False, crop='1792:756:1536:648',
                    title='Rosewood houses at noon, zoom 1, walking: ambient occlusion off vs on')
 
@@ -327,6 +334,45 @@ def pane_clip(name, c, work):
     return res
 
 
+def capture_clip(name, c, work):
+    """Both sides from the runs' devCapture frames (SDR, rows bottom-up), matched frame by frame; no tone-map."""
+    import numpy as np
+    from PIL import Image
+    spec = importlib.util.spec_from_file_location('props', os.path.join(REPO, 'harness/props-reflect-card.py'))
+    props = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(props)
+    caps = []
+    for side in ('stock', 'opt'):
+        d = st.run_dir(c[side])
+        lines = open(os.path.join(d, 'capture/index.txt')).read().split('\n')
+        head = dict(x.split('=') for x in lines[0].split())
+        w, h = int(head['w']), int(head['h'])
+        stamps = np.array([int(x) for x in lines[1:] if x.strip()])
+        r0 = int(st.kv(os.path.join(d, 'pzopt-schedule.out'))['route_start_epoch_ms'])
+        raw = np.memmap(os.path.join(d, 'capture/frames.rgba'), np.uint8, mode='r')
+        n = min(len(stamps), raw.size // (w * h * 4))
+        caps.append((raw[:n * w * h * 4].reshape(n, h, w, 4), (stamps[:n] - r0) / 1000.0, d))
+    match = props.Matcher(caps[0][:2], caps[1][:2])
+    cx, cy, cw, ch = (int(v) for v in c['crop'].split(':'))
+    dur, fps = c.get('dur', DUR), c.get('fps', FPS)
+    for side in ('stock', 'opt'):
+        os.makedirs(os.path.join(work, name + '-' + side))
+    for j in range(round(dur * fps)):
+        for side, cap, i in zip(('stock', 'opt'), caps, match(c['after'] + j / fps)):
+            f = np.ascontiguousarray(cap[0][i][::-1][cy:cy + ch, cx:cx + cw, :3])
+            Image.fromarray(f).save(os.path.join(work, f'{name}-{side}', f'f{j:05d}.png'), compress_level=1)
+    res = {}
+    for side, cap in zip(('stock', 'opt'), caps):
+        src = os.path.join(work, f'{name}-{side}.mkv')
+        sh(['ffmpeg', '-hide_banner', '-v', 'error', '-y', '-framerate', str(fps), '-i',
+            os.path.join(work, f'{name}-{side}', 'f%05d.png'), '-c:v', 'ffv1', src])
+        out = os.path.join(OUT, f'{name}-{side}.gif')
+        res[side] = dict(run=os.path.basename(cap[2]), route_t0=c['after'], file=os.path.basename(out),
+                         bytes=gif(src, 0, dur, None, out, fps=fps, crop=f'0:0:{cw}:{ch}',  # frames already cut: keeps the crop's aspect at 512 wide
+                                   denoise=c.get('denoise', True), sdr=True))
+    return res
+
+
 def main():
     names = sys.argv[1:] or list(CLIPS)
     os.makedirs(OUT, exist_ok=True)
@@ -339,7 +385,7 @@ def main():
         except IndexError:
             print(f'{name}: runs {c["stock"]} / {c["opt"]} not under harness/runs, skipped', file=sys.stderr)
             continue
-        fn = load_clip if c.get('kind') == 'load' else pane_clip if c.get('kind') == 'pane' else action_clip
+        fn = {'load': load_clip, 'pane': pane_clip, 'capture': capture_clip}.get(c.get('kind'), action_clip)
         report[name] = dict(title=c['title'], **fn(name, c, work))
     shutil.rmtree(work, ignore_errors=True)
     # which runs and cut points made the shipped GIFs; a partial run updates its clips and keeps the rest

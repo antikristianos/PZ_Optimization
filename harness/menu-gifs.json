@@ -363,6 +363,21 @@
   },
   "title": "Rosewood spin, uncapped: native vs FSR 1.0 quality"
  },
+ "voxel": {
+  "opt": {
+   "bytes": 373165,
+   "file": "voxel-opt.gif",
+   "route_t0": 1.0,
+   "run": "vxmenu-lot-enh-20261019-001227"
+  },
+  "stock": {
+   "bytes": 314589,
+   "file": "voxel-stock.gif",
+   "route_t0": 1.0,
+   "run": "vxcard-lot2-stock-20261018-223157"
+  },
+  "title": "Night lot at 01:00, lamps and room lights, camera panning: stock vs voxel lighting"
+ },
  "zgt": {
   "opt": {
    "bytes": 936611,

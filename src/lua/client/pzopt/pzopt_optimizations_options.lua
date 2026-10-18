@@ -1676,6 +1676,8 @@ local CLIP_TITLES = {
     darkness = "Rosewood house at 01:00, the player turning in place: darkness floor 20 %, remembered places and colour grading together",
     memory = "Rosewood house at 13:00, the player turning in place: what is out of sight is drawn grey, dimmer and cooler",
     grade = "Rosewood house in the rain at 14:00, the player turning in place: colour grading (cooler, greyer, softer in rain)",
+    -- voxel lighting (2026-10-19, the game's own frames: stock vs every default + per-pixel and voxel lighting)
+    voxel = "A parking lot at 01:00, street lamps and room lights on, the camera panning east: stock vs voxel lighting (lamps and room lights traced through walls, windows and fences)",
 }
 -- Clips whose stock side is a shared GIF (one stock run for several group clips): <STOCK_FILE[clip]>-stock.gif.
 local STOCK_FILE = { zombies = "lou", player = "lou", upscale = "native", dlss = "native", fsrzoom = "nativezoom", dlsszoom = "nativezoom" }
@@ -1696,6 +1698,7 @@ local CLIP_SIDES = {
     darkness = { "STOCK DARKNESS", "FLOOR + REMEMBERED + GRADING" },
     memory = { "REMEMBERED PLACES OFF", "REMEMBERED PLACES ON" },
     grade = { "COLOUR GRADING OFF", "COLOUR GRADING ON" },
+    voxel = { "STOCK GAME", "VOXEL LIGHTING ON" },
 }
 -- The line under the clips: what is the same in both, and what the burned-in number is (clips without one say so).
 local CLIP_NOTES = {
@@ -1707,6 +1710,7 @@ local CLIP_NOTES = {
     darkness = ". Same save, spot and hour, frames lined up; no counter.",
     memory = ". Same save, spot and hour, frames lined up; no counter.",
     grade = ". Same save, spot and hour, frames lined up; no counter.",
+    voxel = ". Same save, route and hour, frames lined up; no counter.",
 }
 local function clipSides(clip)
     if CLIP_SIDES[clip] then return CLIP_SIDES[clip] end
@@ -1723,7 +1727,7 @@ local KEY_CLIP = {
     fogPass = "fog", fogScalePct = "fog", fogMaskFrames = "fog",
     fsrSharpnessPct = "fsrzoom", dlssWaterCurrent = "dlss", dlssWaterHistoryPct = "dlss", dlssPreset = "dlss", dlssOutputPct = "dlss", dlssOutputFilter = "dlsszoom", dlssSharpen = "dlsszoom",
     hdrSunPct = "hdrday", hdrGlintPct = "hdrday",
-    pixelLight = "torch", voxelLight = "torch", pplAnalytic = "torch", pplNormals = "torch", pplWrapPct = "torch", pplShadows = "torch", pplTorchFeetGlow = "torch", torchSource = "torch", torchSourceAim = "torch", torchSourceSelfShadow = "torch", pplSmooth = "torch", pplPointLights = "torch", pplWetSpecular = "storm", pplSpecPct = "storm",
+    pixelLight = "torch", voxelLight = "voxel", voxelLightTorchShadows = "voxel", voxelLightSkyMethod = "voxel", voxelLightBounce = "voxel", pplAnalytic = "torch", pplNormals = "torch", pplWrapPct = "torch", pplShadows = "torch", pplTorchFeetGlow = "torch", torchSource = "torch", torchSourceAim = "torch", torchSourceSelfShadow = "torch", pplSmooth = "torch", pplPointLights = "torch", pplWetSpecular = "storm", pplSpecPct = "storm",
     lightingStrongDelta = "torch", lightingStrongBudget = "horde", lightingStrongFrameMs = "horde", lightingFlush = "torch", lightingBudget = "torch",
     audioLimiter = "horde", audioLimiterCeilingDb = "horde", audioLimiterStereoFold = "horde", soundTickHz = "horde", emitterIdleSkip = "horde", worldSoundCleanupFast = "horde", hearingHoist = "horde",
     lightSwitchCheckFrames = "horde", soundZoneCache = "horde", worldSoundFast = "horde", gridStackInterval = "horde",
