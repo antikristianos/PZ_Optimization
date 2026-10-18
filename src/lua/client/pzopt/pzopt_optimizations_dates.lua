@@ -480,6 +480,7 @@ PzoptOptionDates = {
     devXxlTreeLog = "2026-09-28",
     devXxlVehicleFade = "2026-10-03",
     devZombieGroupCensus = "2026-10-15",
+    devZoomStaleFlags = "2026-10-18",
     dlssAutoExposure = "2026-09-24",
     dlssDepthInverted = "2026-09-22",
     dlssDirectColor = "2026-09-24",
