@@ -3752,8 +3752,12 @@ local function install()
             end
             return stockToggle(key)
         end
+        -- The global is the wrapper too (hotfix 2026-10-19): mods wrap the menu key with Events.OnKeyPressed.Remove(
+        -- ToggleEscapeMenu) + their own function calling the old global + Add. With the global left at the stock function
+        -- their Remove missed ours, so stock ran twice per press and the pause menu opened and closed in one frame.
+        ToggleEscapeMenu = toggle
         Events.OnKeyPressed.Remove(stockToggle)
-        Events.OnKeyPressed.Add(toggle)
+        Events.OnKeyPressed.Add(ToggleEscapeMenu)
     end
     -- Ctrl+F in a game (the pause menu's screen: MainScreen.onKeyRelease is the main menu's)
     Events.OnKeyPressed.Add(function(key)
