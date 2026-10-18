@@ -205,6 +205,7 @@ public final class IsoChunk {
    // texture, kept or still to be made, is handled under the zoom budget (FBORenderCell.renderOneLevel)
    public final long[] pzoptZoomReturned = new long[4];
    public final long[] pzoptZoomAllowed = new long[4]; // pzopt: zoomRetain, the bits of pzoptZoomReturned this frame's plan bakes
+   public final long[] pzoptZoomUnprepared = new long[4]; // pzopt: zoomRetain, the bits whose bake preparation waited with them (prepared when they bake)
    private boolean blendingDoneFull;
    private boolean blendingDonePartial;
    private boolean[] blendingModified = new boolean[4];
@@ -3488,6 +3489,7 @@ public final class IsoChunk {
          FBORenderChunkManager.instance.freeChunk(this);
          java.util.Arrays.fill(this.pzoptZoomReturned, 0L); // pzopt: zoomRetain, nothing pending for a reused chunk
          java.util.Arrays.fill(this.pzoptZoomAllowed, 0L);
+         java.util.Arrays.fill(this.pzoptZoomUnprepared, 0L); // pzopt: zoomRetain
          this.cutawayData.removeFromWorld();
          this.getVispolyData().removeFromWorld();
          if (this.corpseData != null) {

@@ -565,6 +565,7 @@ public final class Config {
    public static final boolean DEV_WORLD_SOUND_TIMING = bool("devWorldSoundTiming", false); // dev: per-section nanoTime totals of WorldSoundManager.addSound (pzoptTiming())
    public static final boolean DEV_PROFILE_LOG_OFF = bool("devProfileLogOff", false); // dev: harness runs sample the game-thread stack only while the overlay is shown (baseline for the overlay cost)
    public static final boolean DEV_CUTAWAY_LOG = bool("devCutawayLog", false); // dev: roof hide/show decisions per frame in the log
+   public static final boolean DEV_ZOOM_STALE_FLAGS = bool("devZoomStaleFlags", false); // dev: zoomRetain A/B, a granted level bakes with the square flags of its last preparation (the pre-2026-10-18 behaviour; lateFlagFixes still counted)
    public static final boolean GPU_SECTIONS = bool("gpuSections", false); // measurement only: GPU time per frame section in the log
    public static final boolean DEV_WEATHER_FX_OFF = bool("devWeatherFxOff", false); // measurement only: skip the weather FX pass
    public static final boolean TREE_BAKE_DIRECT = bool("treeBakeDirect", true);

@@ -3008,6 +3008,9 @@ public final class FBORenderCell {
                      if (pzoptAllowed || !pzoptHoldable) {
                         c.pzoptZoomReturned[playerIndex] &= ~pzoptBit;
                         c.pzoptZoomAllowed[playerIndex] &= ~pzoptBit;
+                        if ((c.pzoptZoomUnprepared[playerIndex] & pzoptBit) != 0L) {
+                           this.pzoptPrepareZoomGranted(playerIndex, c, level); // pzopt: the bake reads the square flags of its preparation
+                        }
                         if (pzoptAllowed) {
                            pzoptZoomAllowedNow = true;
                            this.pzoptZoomRebakesThisFrame++;
@@ -5846,7 +5849,7 @@ public final class FBORenderCell {
       if (!pzoptTlSets.isEmpty()) {
          final int frames = pzoptTlFrames;
          sb.append(" | trees waited for texture=").append(pzoptTreesWaited).append(" arrived=").append(pzoptTreesArrived).append(" | bakes in period=").append(pzoptBakesTotal).append(" deferred so far=").append(pzoptDeferredTotal).append(" lighting rebakes held=").append(pzoptLightingRebakesHeld).append(" strong now=").append(pzoptStrongRebakes).append(" strong past budget=").append(pzoptStrongHeld).append(" creations deferred=").append(pzoptCreatesStarved).append(" strong marks=").append(pzopt.LightDirt.strongMarks).append(" global light events=").append(pzopt.LightDirt.globalEvents).append(" flushed=").append(pzoptLightingFlushed).append(" budgeted rebakes=").append(pzoptRebakesTotal).append(" held=").append(pzoptRebakesHeld)
-            .append(" | zoom kept=").append(pzopt.ZoomRetain.kept).append(" returned=").append(pzopt.ZoomRetain.returned).append(" rebakes=").append(pzopt.ZoomRetain.rebakes).append(" creations=").append(pzopt.ZoomRetain.creations).append(" urgent=").append(pzopt.ZoomRetain.urgent).append(" placeholders=").append(pzopt.ZoomRetain.placeholders).append(" dropped=").append(pzopt.ZoomRetain.dropped).append(" flags:"); // pzopt: zoomRetain counters
+            .append(" | zoom kept=").append(pzopt.ZoomRetain.kept).append(" returned=").append(pzopt.ZoomRetain.returned).append(" rebakes=").append(pzopt.ZoomRetain.rebakes).append(" creations=").append(pzopt.ZoomRetain.creations).append(" urgent=").append(pzopt.ZoomRetain.urgent).append(" placeholders=").append(pzopt.ZoomRetain.placeholders).append(" dropped=").append(pzopt.ZoomRetain.dropped).append(" latePrepared=").append(pzopt.ZoomRetain.latePrepared).append(" lateFlagFixes=").append(pzopt.ZoomRetain.lateFlagFixes).append(" flags:"); // pzopt: zoomRetain counters
       for (int b = 0; b < 16; b++) {
          if (pzoptBakeFlags[b] > 0) sb.append(' ').append(PZOPT_FLAG_NAMES[b]).append('=').append(pzoptBakeFlags[b]);
          pzoptBakeFlags[b] = 0;
@@ -6996,8 +6999,15 @@ public final class FBORenderCell {
 
          for (int z = c.minLevel; z <= c.maxLevel; z++) {
             if (z == renderLevels.getMinLevel(z) && renderLevels.isOnScreen(z) && renderLevels.isDirty(z, zoom)) {
-               if (pzoptZoomRetain && pzopt.ZoomRetain.waiting(c, playerIndex, z)) {
-                  continue; // pzopt: zoomRetain, prepared in the frame the plan bakes it (a zoom-out dirties ~200 levels at once)
+               // pzopt: zoomRetain. A level waiting for the zoom plan is prepared in the frame the plan bakes it (a zoom-out dirties
+               // ~200 levels at once; renderOneLevel prepares the granted ones, pzoptZoomUnprepared). Its bake used to read the
+               // square flags of its last preparation, whatever had changed since: a house whose roof was hidden (collapsed)
+               // then baked roofless after the player left it, and roofs stayed up over a player who walked in while a zoom
+               // was draining (Discord bug report, 2026-10-09, ismaello). A cutaway / collapse change (2048 / 16384) is
+               // prepared at once, as the bakeScheduler's held levels are below: the occlusion grid reads the flags too.
+               if (pzoptZoomRetain && pzopt.ZoomRetain.waiting(c, playerIndex, z) && (pzopt.Config.DEV_ZOOM_STALE_FLAGS || !renderLevels.isDirty(z, 2048L | 16384L, zoom))) {
+                  c.pzoptZoomUnprepared[playerIndex] |= 1L << (z + 32); // pzopt
+                  continue; // pzopt
                }
                if (this.pzoptSchedPlanned && !pzopt.BakeScheduler.get(playerIndex).peek(c, z) && renderLevels.getFBOForLevel(z, zoom) != null
                      && !renderLevels.isDirty(z, 512L, zoom) && !renderLevels.isDirty(z, 2048L | 16384L, zoom)) { // pzopt
@@ -7014,11 +7024,43 @@ public final class FBORenderCell {
                   // below keeps its texture; only the bake itself waits for its grant.
                   continue; // pzopt
                }
+               c.pzoptZoomUnprepared[playerIndex] &= ~(1L << (z + 32)); // pzopt: zoomRetain, prepared now
                this.prepareChunkForUpdating(playerIndex, c, z);
             }
          }
       }
    }
+
+   // pzopt: zoomRetain, a level the zoom plan lets bake whose preparation waited with it (prepareChunksForUpdating): prepared
+   // here, before its bake reads the square flags. ZoomRetain.lateFlagFixes counts the squares whose flag the preparation
+   // changed, i.e. the squares the bake would have drawn or left out wrongly.
+   private final byte[] pzoptFlagsBefore = new byte[128]; // pzopt: new
+
+   private void pzoptPrepareZoomGranted(int playerIndex, IsoChunk c, int level) { // pzopt: new
+      c.pzoptZoomUnprepared[playerIndex] &= ~(1L << (level + 32)); // pzopt: new
+      FBORenderLevels renderLevels = c.getRenderLevels(playerIndex); // pzopt: new
+      int minLevel = renderLevels.getMinLevel(level), maxLevel = renderLevels.getMaxLevel(level); // pzopt: new
+      for (int z2 = minLevel; z2 <= maxLevel && z2 - minLevel < 2; z2++) { // pzopt: new
+         System.arraycopy(c.getCutawayDataForLevel(z2).squareFlags[playerIndex], 0, this.pzoptFlagsBefore, (z2 - minLevel) * 64, 64); // pzopt: new
+      } // pzopt: new
+      this.prepareChunkForUpdating(playerIndex, c, level); // pzopt: new
+      pzopt.ZoomRetain.latePrepared++; // pzopt: new
+      long pzoptFixesBefore = pzopt.ZoomRetain.lateFlagFixes; // pzopt: new
+      for (int z2 = minLevel; z2 <= maxLevel && z2 - minLevel < 2; z2++) { // pzopt: new
+         byte[] now = c.getCutawayDataForLevel(z2).squareFlags[playerIndex]; // pzopt: new
+         for (int i = 0; i < 64; i++) { // pzopt: new
+            if (((now[i] ^ this.pzoptFlagsBefore[(z2 - minLevel) * 64 + i]) & 1) != 0) { // pzopt: new
+               pzopt.ZoomRetain.lateFlagFixes++; // pzopt: new
+            } // pzopt: new
+         } // pzopt: new
+         if (pzopt.Config.DEV_ZOOM_STALE_FLAGS) { // pzopt: new, A/B rig: put the stale flags back
+            System.arraycopy(this.pzoptFlagsBefore, (z2 - minLevel) * 64, now, 0, 64); // pzopt: new
+         } // pzopt: new
+      } // pzopt: new
+      if (pzopt.ZoomRetain.lateFlagFixes != pzoptFixesBefore) { // pzopt: new
+         FBORenderCutaways.pzoptDevCutawayLog("zoom late prepare changed " + (pzopt.ZoomRetain.lateFlagFixes - pzoptFixesBefore) + " square flags, chunk " + c.wx + "," + c.wy + " levels " + minLevel + "-" + maxLevel + (pzopt.Config.DEV_ZOOM_STALE_FLAGS ? " (stale flags kept)" : "")); // pzopt: new
+      } // pzopt: new
+   } // pzopt: new
 
    private void prepareChunkForUpdating(int playerIndex, IsoChunk chunk, int z) {
       if (chunk != null) {

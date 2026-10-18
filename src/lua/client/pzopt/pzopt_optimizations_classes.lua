@@ -440,6 +440,7 @@ PzoptOptionClasses = {
     devXxlTreeLog = { "pzopt.XxlTreeFade" },
     devXxlVehicleFade = { "pzopt.XxlTreeFade" },
     devZombieGroupCensus = { "ZombieGroupManager" },
+    devZoomStaleFlags = { "FBORenderCell" },
     dlssAutoExposure = { "pzopt.Dlss" },
     dlssDepthInverted = { "pzopt.Dlss" },
     dlssDirectColor = { "pzopt.Dlss" },

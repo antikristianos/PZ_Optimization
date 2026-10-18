@@ -60,6 +60,8 @@ import zombie.vehicles.BaseVehicle;
  *                      flips every frame, like zombies shoving a player standing on a roof edge (carport flicker rig)
  *   shot_burst N       bench/parity with hold: 1 s into the hold write N in-game screenshots on N consecutive frames,
  *                      Screenshots/pzopt-burst-NN.png (with jitter: alternating positions, frame-exact flicker checks)
+ *   end_at   x,y       bench/parity, with hold: the player is put on this square when the legs are done (2026-10-18: the
+ *                      float walk of NW:10,SE:10 ended one square off in some runs, on a porch, and the roof hid by design)
  *   hold     seconds   bench/parity: after the last leg wait this long before quitting (no teleports: the player may walk); the turn
  *                      keeps spinning the facing (a still camera with changing cutaways, for flicker recordings)
  *   shot_at  seconds   bench/parity: this far into the route hold the camera (no teleport, no turn) for 6 s and,
@@ -179,6 +181,7 @@ public final class Harness {
    private static float shotAt = 0f;
    /** bench: seconds to stay on the route's end square, still spinning, before the run ends (flag hold, 0 = off). */
    private static float holdSecs = 0f;
+   private static int[] endAt; // flag end_at=x,y: teleport there when the route's legs are done, before the hold
    /** bench: hold-time X oscillation across the end square's east edge, in tiles (flag jitter, 0 = off). */
    private static float jitterTiles = 0f;
    private static float jitterEdgeX;
@@ -346,6 +349,11 @@ public final class Harness {
             }
          }
          holdSecs = Float.parseFloat(HarnessFlags.get("hold", "0"));
+         String endAtFlag = HarnessFlags.get("end_at", "");
+         if (!endAtFlag.isEmpty()) {
+            String[] xy = endAtFlag.split(",");
+            endAt = new int[] {Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())};
+         }
          jitterTiles = Float.parseFloat(HarnessFlags.get("jitter", "0"));
          shotBurst = Integer.parseInt(HarnessFlags.get("shot_burst", "0"));
          jitterY = "true".equals(HarnessFlags.get("jitter_y", "false"));
@@ -863,6 +871,9 @@ public final class Harness {
                // end-of-route hold: no more teleports, the facing keeps turning (flag hold)
                if (holdStartNs == 0L) {
                   holdStartNs = nowNs;
+                  if (endAt != null) { // flag end_at: the hold starts on this exact square (the legs' float walk can end one square off)
+                     p.teleportTo(endAt[0], endAt[1], routeZ);
+                  }
                   Log.info("harness: route legs done at " + p.getXi() + "," + p.getYi() + "; holding " + holdSecs + " s" + (turnDegPerSec != 0f ? " with turn=" + turnDegPerSec : ""));
                }
                if ((nowNs - holdStartNs) / 1e9f < holdSecs) {
@@ -2380,7 +2391,8 @@ public final class Harness {
             Log.info("harness: zoom step " + zoomSteps + " trace (bakes[/deferred]@ms per frame):" + zoomTrace);
             StringBuilder z = new StringBuilder("harness: zoom step " + zoomSteps + " retain: returned=" + (ZoomRetain.returned - zoomTraceReturned)
                   + " rebakes=" + (ZoomRetain.rebakes - zoomTraceRebakes) + " creations=" + (ZoomRetain.creations - zoomTraceCreations)
-                  + " urgent=" + (ZoomRetain.urgent - zoomTraceUrgent) + " flood frames=" + (ZoomRetain.floodFrames - zoomTraceFlood) + " placeholders=" + (ZoomRetain.placeholders - zoomTracePlaceholders) + " urgent flags:");
+                  + " urgent=" + (ZoomRetain.urgent - zoomTraceUrgent) + " flood frames=" + (ZoomRetain.floodFrames - zoomTraceFlood) + " placeholders=" + (ZoomRetain.placeholders - zoomTracePlaceholders)
+                  + " late prepared (total)=" + ZoomRetain.latePrepared + " late flag fixes (total)=" + ZoomRetain.lateFlagFixes + " urgent flags:");
             for (int b = 0; b < 16; b++) {
                if (ZoomRetain.urgentFlags[b] != zoomTraceUrgentFlags[b]) z.append(' ').append(1L << b).append('=').append(ZoomRetain.urgentFlags[b] - zoomTraceUrgentFlags[b]);
             }

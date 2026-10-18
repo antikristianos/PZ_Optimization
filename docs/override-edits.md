@@ -8433,3 +8433,26 @@ Also, a zombie put off its model by zombieModelAddBudgetUs was lit (the same bar
 - `IsoWorld.sceneCullZombies`: the `pzoptAddWait` stamp removed.
 - Census line (devFirstSightCensus / instrument): clothed zombies after a model reset kept in stock order (events, zombie-frames),
   grants past the max wait, LOD sprites held. Findings: `docs/findings-zombie-phasing-2026-10-18.md`.
+
+## zoomRetain: a level waiting for the zoom plan is prepared before it bakes (2026-10-18, Discord bug report, ismaello)
+
+Report (2026-10-09, AMD, Riverside house at 6287,5454): roofs missing from outside when the chunk loaded off screen (load
+zoomed in, zoom out), fixed by walking in and out; rarely, roofs that stay up after walking in. `prepareChunksForUpdating`
+skipped every level waiting for the zoomRetain plan (a zoom-out dirties ~200 levels at once), and the plan let it bake later
+in `renderOneLevel`, so that bake read `ChunkLevelData.squareFlags` (bit 1 = draw the square, the cutaway / collapsed-building
+decision) from the level's last preparation, whatever had changed since.
+
+- `FBORenderCell.prepareChunksForUpdating`: a waiting level is marked in the new `IsoChunk.pzoptZoomUnprepared[player]`
+  (bit `z + 32`, cleared in `removeFromWorld` and when the level is prepared); a level with cutaway / collapse dirt
+  (2048 / 16384) is prepared at once, as the bakeScheduler's held levels below already were.
+- `FBORenderCell.renderOneLevel`, zoom gate: a level the plan grants (or that cannot be held) whose preparation waited is
+  prepared there first (`pzoptPrepareZoomGranted`), then baked.
+- Counters `ZoomRetain.latePrepared` / `lateFlagFixes` (squares whose bit 1 the late preparation changed) in the periodic
+  bake line and the harness's `zoom step N trace`; `devCutawayLog` logs every preparation that changed a flag. A/B key
+  `devZoomStaleFlags` (default false) puts the stale flags back after the preparation (the old bakes).
+- Measured on the desktop (runs `rf-load-*`, `rf2-inout-*`, `rf2-porch-*`, judge `harness/roof-judge.py` + Jev): no rig
+  reproduced the report in any variant; ~750-4,200 late preparations a run and 0 changed flags, so this closes a hole the
+  report may come from but has not been shown to. Roof boxes settle like stock (0-5 % of the box apart; Jev `same_in_all`
+  0.76 / 0.82, the fix worse than stock 0.08); on the release base (runs `rf3-inout-*`) every box is 0.0 % off stock,
+  Jev `same_in_all` 0.99, the fix matches stock 0.89. Standing on the porch square 6292,5462 hides the whole upper house in stock too.
+  Shipped as a safety change (maintainer, 2026-10-18).

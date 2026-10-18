@@ -1273,6 +1273,7 @@ PzoptOptionDates = {
     zombieCompositeMaxPerFrame = "2026-10-15",
     zombieCullSortFast = "2026-09-22",
     zombieDrawLate = "2026-10-14",
+    zombieFirstSightMaxWaitMs = "2026-10-18",
     zombieFirstSightSprite = "2026-10-15",
     zombieLateApply = "2026-10-14",
     zombieLodDynamic = "2026-09-24",
