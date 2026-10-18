@@ -69,6 +69,6 @@ description=[code]irm https://github.com/xD3I/PZ_Optimization/releases/latest/do
 description=Linux, macOS: [code]curl -fsSL https://github.com/xD3I/PZ_Optimization/releases/latest/download/uninstall.sh | bash[/code]
 description=Unsubscribing and "Verify integrity of game files" leave these files in the game folder; the uninstaller removes them.
 description=
-description=Build 42.21, game revision 4a0e9546ec, commit 26229d22, 1222 files, sha256 f2b96941ac5ec2f066892bcb23822d9c1bc85a3d2cb78e2af9297a56a4cb2835. projectzomboid.jar is never modified.
+description=Build 42.21, game revision 4a0e9546ec, commit 22cb90f3, 1232 files, sha256 a2ed0441481909179dfe2dcd99d2b3e6fa21573e5d37445a3a01c86d28b2b82b. projectzomboid.jar is never modified.
 tags=Build 42;
 visibility=public
