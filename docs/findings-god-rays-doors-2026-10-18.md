@@ -103,9 +103,23 @@ with it), god rays alternating every second. The sun at 15:00 stands 62 deg up i
 shafts through the open bays are short (they reach the floor about a square in), a lit slab of dust in each doorway and a
 brighter strip of floor inside; at a lower sun from the south there is none (the sun is south only near noon).
 
+Videos (in-game `devCapture=3,22,30,100,crop=...,ram`, 1920x1080 1:1 crops, encoded AV1 10-bit PQ; god rays on, the doors
+toggled every 4 s): `grdoor-vid-fire2-20261018-213137` (the bays opening and closing) and `grdoor-vid-spill2-20261018-213550`
+(the night spill, `time_of_day=23 lights=on fog=0.5 zoom=1 door_need=light door_stand=out`; at fog 0.3 / zoom 1.5 the spill
+moved ~2 % of the pixels by more than 6 levels: hard to see in a video).
+
+## Menu
+
+Visuals > Lighting and shadows > God rays (the unified menu of 2f4e8486): open doors block the light (`godRaysDoorLeaf`), door
+swing (`godRaysDoorSwingMs`, Everything view), people's shadows in the shafts (`godRaysCharShadows`), dust stirred by doors
+(`godRaysDoorDustPct`), lamplight spilling out at night (`godRaysSpill`) and its brightness (`godRaysSpillPct`), light
+bounced off the sunlit floor (`godRaysBouncePct`, off), sun under porch roofs (`godRaysRoofExact`, off, next launch: it
+changes the chunk occupancy). The rest are live keys (`Config.loadLive`): the light volumes' build key and the spill cache key
+include the ones that shape them. `godRaysDoorWatch` / `godRaysDoorMerge` stay off the menu (fixes, not choices). Checked in
+game with `options_tab=Enhancements options_shots=cat:light:4:advanced;cat:light:4:everything` (run `grdoor-menu-*`).
+
 ## Open
 
 - The swing follows the stock sprite's instant change with our own 350 ms ease; a door with a 3D model (`SpriteModel`) has
   its own animation the leaf could follow (`IsoObjectAnimations`).
 - Spill sources: room ceiling lights only (lamps placed by players are not spill sources yet).
-- No Lua tab entries for the new keys (launch keys); the maintainer may want `godRaysDoorDustPct` / `godRaysSpillPct` there.

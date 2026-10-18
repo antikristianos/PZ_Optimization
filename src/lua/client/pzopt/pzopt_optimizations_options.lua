@@ -1350,7 +1350,7 @@ local ENHANCEMENT_SECTIONS = {
               choices = { "50", "100", "150", "200" }, note = { ["100"] = "default" },
               tip = "How bright the light spilling out of lit rooms is." },
             { key = "godRaysBouncePct", label = "God rays: light bounced off the sunlit floor (%)",
-              choices = { "0", "50", "100", "200" }, note = { ["0"] = "default, off" },
+              choices = { "0", "50", "100", "200" }, note = { ["0"] = "off" },
               tip = "The sunlit patch a shaft lays on the floor bounces a little of its light onto the walls and furniture around it. Subtle next to the game's own room light, so off by default." },
             { key = "godRaysRoofExact", label = "God rays: sun under porch roofs",
               tip = "Off (the default): a window or doorway under a porch roof or a floor above lets no light in. On: the sun comes in under the roof's edge as its height allows, so a low morning or evening sun reaches in under a porch and a high midday one does not. Applies on the next launch." },
