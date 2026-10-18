@@ -231,7 +231,7 @@ GAME_PATTERN='^([^ ]*[/\\])?ProjectZomboid64(\.exe)?( |$)'
 if pgrep -f "$GAME_PATTERN" >/dev/null; then echo "the game is already running" >&2; exit 1; fi
 # A run that dies hard (SIGKILL, power cut, the whole-system freezes of 2026-09-22/24) never reaches the EXIT
 # trap, and the per-run pzopt.properties it wrote stays in the install dir: every later boot pins those keys in
-# the Optimizations tab, and a stock run's `enabled=false` leaves the mod OFF for the player (found 2026-09-24).
+# the PZ OPTIMIZATION screen, and a stock run's `enabled=false` leaves the mod OFF for the player (found 2026-09-24).
 # Recover here, before this run takes its own backup: a .pzopt-orig is the player's file, so it goes back;
 # a pzopt.properties identical to the last run's copy is ours, so it goes away; anything else is the player's.
 recover_props() {

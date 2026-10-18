@@ -12,7 +12,7 @@
 [*][b]Subscribing is not enough.[/b] This replaces game classes; it needs the one-time install below.
 [*][b]Mods: untested, unsupported.[/b] Other mods may work alongside it; nobody checks them and problems with them are not fixed.
 [*][b]Multiplayer: untested, unsupported.[/b] It installs on your client only; joining a server may work, may not.
-[*]Something wrong? Options > PZ Optimization > "Stock game" preset, restart, then tell us on Discord.
+[*]Something wrong? main menu > PZ OPTIMIZATION > "Stock game" preset, restart, then tell us on Discord.
 [/list][/quote]
 [img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/72-install-script.avif[/img]
 [url=https://github.com/xD3I/PZ_Optimization][img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/link-github-small.png[/img][/url] [url=https://discord.gg/W32aAnKpK][img]https://raw.githubusercontent.com/xD3I/PZ_Optimization/master/docs/workshop/images/link-discord-small.png[/img][/url]
@@ -59,7 +59,7 @@ Steam: right-click the game, Manage > Browse local files. Go up to [b]steamapps[
 
 [h1]Updates, uninstall[/h1]
 Updates arrive in the main menu (PZ OPTIMIZATION > UPDATE, one click). After a game update the next start removes a build made for the old version by itself (or installs the matching one from this item) and starts the game again.
-[b]To remove it:[/b] Options > PZ Optimization > [b]Uninstall PZ Optimization[/b]. Game does not start, or already unsubscribed? Steam > Project Zomboid > Manage > [b]Browse local files[/b], double-click [b]Uninstall-PZ-Optimization.cmd[/b] (Linux, macOS: [b]bash uninstall-pz-optimization.bash[/b] there). Or paste into PowerShell:
+[b]To remove it:[/b] main menu > PZ OPTIMIZATION > [b]Uninstall PZ Optimization[/b]. Game does not start, or already unsubscribed? Steam > Project Zomboid > Manage > [b]Browse local files[/b], double-click [b]Uninstall-PZ-Optimization.cmd[/b] (Linux, macOS: [b]bash uninstall-pz-optimization.bash[/b] there). Or paste into PowerShell:
 [code]irm https://github.com/xD3I/PZ_Optimization/releases/latest/download/uninstall.ps1 | iex[/code]
 Linux, macOS: [code]curl -fsSL https://github.com/xD3I/PZ_Optimization/releases/latest/download/uninstall.sh | bash[/code]
 Unsubscribing and "Verify integrity of game files" leave these files in the game folder; the uninstaller removes them.

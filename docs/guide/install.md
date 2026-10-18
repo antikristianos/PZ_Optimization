@@ -47,7 +47,7 @@ carries the files and the installer, and one command finishes the install.
 3. Press **Copy the command**.
 4. Paste it into PowerShell (Windows) or a terminal (Linux, macOS), Enter. It waits while the game runs.
 5. Quit the game (QUIT); the installer then copies the files.
-6. Start the game: Options has a **PZ Optimization** tab. Disable the mod again: it only carries that window.
+6. Start the game: the main menu has a **PZ OPTIMIZATION** item. Disable the mod again: it only carries that window.
 
 **The command by hand** (Windows, PowerShell; adjust the drive if your Steam library is elsewhere):
 
@@ -118,7 +118,7 @@ No command at all. The files are the same in the Workshop download and in the re
 2. Copy everything in `pzopt-classes` (Ctrl+A, Ctrl+C).
 3. Open the game folder again (Browse local files) and paste it there, beside `projectzomboid.jar` (Ctrl+V). Skip any
    file that already exists.
-4. Start the game: Options has a **PZ Optimization** tab.
+4. Start the game: the main menu has a **PZ OPTIMIZATION** item.
 
 **From the release zip:** download `pzopt-4a0e9546ec-classes.zip` (about 64 MB) from the
 [release page](https://github.com/xD3I/PZ_Optimization/releases/latest) and unpack it into
@@ -178,7 +178,7 @@ grep -c '\[pzopt\] loaded override' ~/Zomboid/console.txt
 
 | You see | Meaning |
 |---|---|
-| dozens of lines | the overrides are active. Options has a **PZ Optimization** tab and Display has the **Uncapped** entry. Done. |
+| dozens of lines | the overrides are active. the main menu has a **PZ OPTIMIZATION** item and Options > Display has the **Uncapped** entry. Done. |
 | `0` | the class files did not load. Check that `<game>\pzopt\Overrides.class` exists and that `ProjectZomboid64.json` lists `"."` before `"projectzomboid.jar"` under `classpath` (it does on the stock depot; the macOS bundle has no JSON, its launcher puts `Contents/Java` first by itself). |
 | a line saying the overrides were built for another revision | your game is not 42.21 / `4a0e9546ec`; the game runs as stock. Switch Steam to that branch or wait for a matching release. |
 | the game stops at start with `NoClassDefFoundError: pzopt/...` | an unfinished install: some override classes are in the game folder without the `pzopt` folder they call. Run the installer again (it replaces what is there), or run it with `-Uninstall` / `--uninstall`. |
@@ -186,7 +186,7 @@ grep -c '\[pzopt\] loaded override' ~/Zomboid/console.txt
 
 ## Uninstall
 
-**In the game:** Options > PZ Optimization > **Uninstall PZ Optimization...** (main menu). The
+**In the game:** main menu > PZ OPTIMIZATION > **Uninstall PZ Optimization**. The
 game closes; once it has, a helper removes every file the installer or the updater recorded,
 the DLSS files the Visuals page fetched and the AOT cache, and the launcher settings it
 changed are put back (log: `Zomboid/pzopt/uninstall.log`). If the files are still there at the
@@ -248,7 +248,7 @@ With a controller the lit item is one more row of the menu's D-pad list (A opens
 there A is the first button, B the second one or close, the D-pad scrolls the notes).
 Only the changed entries are fetched before that click (`updatePrefetch`, capped at 16 MB;
 the whole zip never); the check itself is one request to `api.github.com` (the release page
-when the API's hourly limit is used up) and can be switched off in Options > PZ Optimization > Performance > System, sound and mods >
+when the API's hourly limit is used up) and can be switched off in PZ OPTIMIZATION > Optimizations > System, sound and mods >
 Updates (`updateCheck=false`). A copy unpacked by hand (Method C, no `pzopt-installed.txt`) only
 gets a link to the release page from the item.
 
@@ -258,7 +258,7 @@ in the Steam library that holds the game, and offers it at once when it is newer
 build; **Update now** then copies it from the disk. GitHub is still asked afterwards and only
 replaces the offer with a newer release, so where GitHub is slow or blocked the item still
 lights up, and otherwise it goes grey ("up to date") instead of failing. Switch:
-Options > PZ Optimization > Performance > System, sound and mods > Updates, `updateFromWorkshop` (default on).
+PZ OPTIMIZATION > Optimizations > System, sound and mods > Updates, `updateFromWorkshop` (default on).
 
 ## After a game update
 

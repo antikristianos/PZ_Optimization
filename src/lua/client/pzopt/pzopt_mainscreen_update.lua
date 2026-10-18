@@ -160,7 +160,7 @@ function PzoptUpdateDialog:refresh(force)
         local why
         local installedLine = "Installed build: " .. installed .. " <LINE> <LINE> "
         if s == "checking" then
-            why = "Checking whether a newer build exists for this game revision..."
+            why = "Checking whether a newer build exists for this game revision."
         elseif s == "up-to-date" then
             why = "This is the newest PZ Optimization build for this game revision. Nothing to install."
         elseif s == "error" then
@@ -450,7 +450,7 @@ function PzoptUpdateApi.view()
             .. "--uninstall first)."
         if v.tag ~= "" then table.insert(v.actions, { label = pageTitle, act = page, key = "x", confirm = "Open the page in your web browser?" }) end
     elseif s == "checking" then
-        v.text = "Checking whether a newer build exists for this game revision..."
+        v.text = "Checking whether a newer build exists for this game revision."
     elseif s == "up-to-date" then
         v.text = "This is the newest PZ Optimization build for this game revision. Nothing to install."
     else

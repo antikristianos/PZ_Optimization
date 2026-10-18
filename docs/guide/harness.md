@@ -104,7 +104,7 @@ run-vs-run comparisons, the daily re-measure of every release, and the game bein
 | `src/pzopt/pzopt/` | The new code, the `pzopt` package (~280 classes): `Config` (every key), `Overrides` / `BuildInfo` (build guard), the streamer, bake, weather, zombie and lighting passes, the Visuals, `Overlay`, `FrameCap`, `UserOptions`, the boot caches, `Harness` / `Parity` |
 | `src/overrides/` | The 139 shadowed game classes, edits marked `// pzopt:`; `scripts/bytecode-audit.py` checks every unedited method against the jar |
 | `src/shims/` | From-scratch replacements (`TISLogoState`) |
-| `src/lua/` | The PZ Optimization tab and frame-cap options Lua, installed under `media/lua/client/pzopt/` |
+| `src/lua/` | The PZ OPTIMIZATION screen, its settings and the frame-cap options Lua, installed under `media/lua/client/pzopt/` |
 | `install.sh`, `install.ps1` | Standalone installers (Linux, Windows); attached to every release and shipped in the Workshop item |
 | `scripts/` | `build.sh`, `pzopt.sh`, `release.sh` (release zip + GitHub release), `workshop.sh` (Workshop staging), `test.sh`, `accept.sh`, `regen-overrides.sh`, `decompile.sh`, `pz-env.sh` |
 | `harness/` | `run.sh` (Linux) and `run-win.ps1` (Windows), `queue.sh` (the per-machine run queue, `queue/machines.conf`), analysis and stitch scripts, `flamegraph.py`, the Jev judges (`judge.py`, `parity-judge.py`, `ui-drive.py`, `typesafe_client.py`), `parity-gate.sh`, the `pzopt-harness` Lua mod, bench save template, `baseline/` captures |

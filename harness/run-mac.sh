@@ -297,7 +297,7 @@ for h in "$PZ_DIR"/hs_err_pid*.log "$ZOMBOID"/hs_err_pid*.log; do [[ -f "$h" ]] 
 [[ -f "$game_cache/console.txt" ]] && cp "$game_cache/console.txt" "$out/console.txt" || echo "no console.txt written" >&2
 [[ "$game_cache" != "$ZOMBOID" ]] && { echo "game user folder $game_cache"; ls -la "$game_cache" "$game_cache/pzopt"; } > "$out/game-cache-dir.txt" 2>&1
 cp "$ZOMBOID"/pzopt-*.out "$out/" 2>/dev/null || true
-cp "$ZOMBOID"/Screenshots/pzopt-*.png "$out/" 2>/dev/null || true   # harness screenshots (options_tab rig)
+cp "$ZOMBOID"/Screenshots/pzopt-*.png "$out/" 2>/dev/null || true   # harness screenshots (the options_* rigs of the PZ OPTIMIZATION screen)
 [[ -d "$ZOMBOID/pzopt-hdr" ]] && mv "$ZOMBOID/pzopt-hdr" "$out/hdr"   # HDR frame dumps (tools/hdr/hdrframe.py)
 [[ -d "$ZOMBOID/pzopt-capture" ]] && mv "$ZOMBOID/pzopt-capture" "$out/capture"   # frame sequence (harness/ppl/capture.py)
 cp "$PZ_DIR/pzopt.properties" "$out/pzopt.properties"

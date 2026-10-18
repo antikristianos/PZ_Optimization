@@ -1,55 +1,64 @@
 # Settings
 
-[Back to the README](../../README.md) · [The PZ Optimization tab](#options--pz-optimization) ·
+[Back to the README](../../README.md) · [The PZ OPTIMIZATION screen](#the-pz-optimization-screen) ·
 [Frame cap](#frame-cap-uncapped-300-to-500-fps-menu-framerate) · [Upscaling and DLSS](#upscaling-fsr-10-and-dlss) ·
 [Performance overlay](#performance-overlay-f9--l3--r3) · [`pzopt.properties`](#pzoptproperties-and-the-key-table)
 
 Nothing needs configuring: the defaults are what the [benchmarks](benchmarks.md) were measured with.
 Three places change them, in order of precedence: `pzopt.properties` in the game folder
-(or `-Dpzopt.<key>=` JVM properties) wins over the Options tab, which wins over the built-in
+(or `-Dpzopt.<key>=` JVM properties) wins over the PZ OPTIMIZATION screen, which wins over the built-in
 default. A key set to `false` or `0` restores stock behaviour for that item alone.
 
-## Options > PZ Optimization
+## The PZ OPTIMIZATION screen
 
-Every setting is a control in one **PZ Optimization** tab (since 2026-10-04; the Optimizations, Enhancements and
-Profiler tabs of earlier builds are its three groups):
+Every setting lives in the **PZ OPTIMIZATION** item of the main menu (right below Options; the same item is in the
+pause menu during a game). Until 2026-10-18 the settings were a tab of the game's Options screen; that tab is gone.
+The screen has a sidebar on the left (a search box, then Optimizations, Enhancements, Profiler, Benchmark, Update and
+the mod compatibility check) and the selected page on the right: a list, and the selected row's details beside it.
 
-- **Home page**: the presets, the master switches and one tile per category with its state ("Recommended", "3 changed",
-  "2 on"). **Stock game** turns every optimization off: after the next launch the game runs its original code
-  everywhere, as if nothing were installed. **Recommended** puts every setting back to the build's defaults.
-  **Low-end hardware (4 cores or less)**, **Low-end hardware + best look at 60** and **Low-end hardware + FSR 1.0
-  upscaling** are the sets measured on a 4-core Core i5-6300HQ with a GTX 960M
+- **Home page**: the presets, Fix a problem, which settings the pages show, the before / after clips, Export / Import
+  settings and the uninstall. **Stock game** turns every optimization off: after the next launch the game runs its
+  original code everywhere, as if nothing were installed. **Recommended** puts every optimization back to the build's
+  defaults. **Low-end hardware (4 cores or less)**, **Low-end hardware + best look at 60** and **Low-end hardware + FSR
+  1.0 upscaling** are the sets measured on a 4-core Core i5-6300HQ with a GTX 960M
   ([`findings-low-end-mode-2026-10-07.md`](../findings-low-end-mode-2026-10-07.md)): render distance, no chunk worker
-  pool, trees baked only while walking, lighting updates 10/s, the UI redrawn 30/s.
-- **Performance** (the optimizations, on by default): smoothness and pacing, driving, world drawing, lighting /
-  cutaways / weather, zombies and hordes, boot and loading, menus / inventory / map, system / sound / mods. Applies on
-  the next launch (the game shows its usual restart dialog).
-- **Visuals** (the enhancements, off by default, as cards): image quality (upscaling, dynamic resolution, sprite
-  filtering, HDR output), lighting and shadows (per-pixel lighting, sun / moon / cloud shadows, ambient occlusion, god
-  rays), reflections and glass (water and puddles, mirrors and windows, car glass, wet blood), atmosphere and detail
-  (darkness and grading, foliage sway, relief, zombie outlines). Most apply at once.
-- **Tools**: the [performance overlay](#performance-overlay-f9--l3--r3), its fps colours, the console log filter.
-  Applies at once.
-- **Fix a problem**: what players report (stutter while driving, low fps in a big horde, a long boot, slow storms, laggy input, tearing,
-  slow menus), why it
-  happens, and the settings that help, wherever they live.
+  pool, trees baked only while walking, lighting updates 10/s, the UI redrawn 30/s. Each preset asks before it changes
+  anything.
+- **Optimizations** (on by default): smoothness and pacing, driving, world drawing, lighting / cutaways / weather,
+  zombies and hordes, boot and loading, menus / inventory / map, system / sound / mods. Applies on the next launch: the
+  screen offers **Restart now** or **Later** (a reminder with its own Restart now button stays at the bottom).
+- **Enhancements** (off by default): image quality (upscaling, dynamic resolution, sprite filtering, HDR output),
+  lighting and shadows (per-pixel lighting, voxel lighting, sun / moon / cloud shadows, ambient occlusion, god rays),
+  reflections and glass (water and puddles, mirrors and windows, car glass, wet blood), atmosphere and detail (darkness
+  and grading, foliage sway, relief, zombie outlines). Most apply at once; HDR output, per-pixel and voxel lighting,
+  reflections, car glass, mirrors and relief on the next launch.
+- **Profiler**: the [performance overlay](#performance-overlay-f9--l3--r3) (its first row shows or hides it, like F9),
+  its fps colours, the console log filter. Applies at once.
+- **Fix a problem**: what players report (stutter while driving, low fps in a big horde, a long boot, slow storms, laggy
+  input, tearing, slow menus), why it happens, and the settings that help, wherever they live.
 
-Every category has its own master switch at the top of its page: off, its settings read as stock (Performance: next
-launch; Visuals: at once) while your choices stay saved. **Simple / Advanced / Everything** sets how many settings a
-page shows; one search box finds any setting by name, key or what it does. Hover a control for what it does and its
-key name. Changes are kept in `Zomboid/pzopt/options.ini`; "Default" removes the key again. A key pinned in
-`pzopt.properties` shows as a disabled control whose tooltip names the file. **Export settings** copies every
-non-default setting as `key=value` text to the clipboard (and `Zomboid/pzopt/settings-export.ini`); **Import
-settings...** sets the controls from such a text.
+Each group has a master switch at the top of its page and every category its own: off, its settings read as stock
+(Optimizations: next launch; Enhancements and Profiler: at once) while your choices stay saved. **Simple / Advanced /
+Everything** (home page) sets how many settings a page shows. The search box finds any setting by name, key, what it
+does, a resource ("gpu", "load time") or a Java class that reads it (Ctrl+F; L3 on a controller opens the on-screen
+keyboard); pick a result to open its page. Each change is saved at once to `Zomboid/pzopt/options.ini`; **DEFAULT** puts
+a setting back to the build's default. A key pinned in `pzopt.properties` says so and cannot be changed there. **Reset ...
+to defaults** at the end of every group and category page does that for all of its settings. **Export settings** copies
+every non-default setting as `key=value` text to the clipboard (and `Zomboid/pzopt/settings-export.ini`); **Import
+settings...** sets every setting from such a text (the ones it does not list go back to the default).
 
-Right of the list, a preview panel follows the mouse: for the setting you point at it repeats what the setting does,
-shows its value since this boot and at the next launch, and draws one bar per resource (**CPU game thread, CPU render
-thread, other cores, GPU, VRAM, RAM, disk / caches, boot and load time, chunk arrival**) on an axis from *lowest*
-through *mid* (the stock game) to *max*: green bars grow left for less load, amber right for more, blue for idle cores
-put to work. With **Before / after clips** ticked in the header (off by default, remembered as `previewClips`) it also
-plays the **stock game and the optimized build side by side** on the same route, each run's live frame rate burned in.
+A setting's details say what it does, when it applies, its value now and at the next launch, its default, who pins it,
+the release it came with and the Java classes that read it, and draw its **effect on your hardware**: one bar per
+resource (**CPU game thread, CPU render thread, other cores, GPU, VRAM, RAM, disk / caches, boot and load time, chunk
+arrival**) on an axis from *lowest* through *mid* (the stock game) to *max*: green bars grow left for less load, amber
+right for more, blue for idle cores put to work. With the **before / after clips** on (SHOW CLIPS on any setting, or the
+home page row; off by default, remembered as `previewClips`) the details also play the **stock game and the optimized
+build side by side** on the same route, each run's live frame rate burned in. The details keep their layout from one
+row to the next, so nothing jumps while you move through a list.
 
-![The settings tab: the controls on the left, the preview panel with the stock and optimized clips and the effect bars on the right](../media/options-optimizations-tab.jpg)
+Everything works with a mouse, the keyboard (Escape closes) and a controller (D-pad or left stick to move, A to open
+or change, B back, X and Y the row's actions, LB / RB the sections, LT / RT a page, L3 search, R3 the button help; the
+hint bar at the bottom shows the buttons while a controller is in use).
 
 To compare against stock on your own machine, pick the **Stock game** preset, or put `enabled=false` in
 `pzopt.properties`; no reinstall is needed either way.
@@ -66,7 +75,7 @@ about 40 % uncapped on the desktop.
 
 ## Upscaling: FSR 1.0 and DLSS
 
-Options > PZ Optimization > Visuals > Image quality > **Upscaling** renders the world at a fraction of the screen size and
+PZ OPTIMIZATION > Enhancements > Image quality > **Upscaling** renders the world at a fraction of the screen size and
 scales it back up before the UI, the world text, the cursor and the game's own screen shader, which
 stay at full resolution (keys `upscaler`, `upscalerQuality`, `upscalerScalePct`, `fsrSharpnessPct`,
 `dlssPreset`, `upscalerObjectMv`; off by default, applied on the next launch).
@@ -83,10 +92,10 @@ draws the world with a sub-pixel jitter and feeds the camera's and each characte
 motion to NVIDIA's network, which accumulates detail across frames (1-px power lines and car
 lettering come back at 50 %); `bicubic` is the plain stretch the stock screen shader already does.
 
-**Turning it on.** Options > PZ Optimization > Visuals > Upscaling: set **Upscaler** to `fsr1` (or `dlss` on an
+**Turning it on.** PZ OPTIMIZATION > Enhancements > Image quality > Upscaling: set **Upscaler** to `fsr1` (or `dlss` on an
 RTX card once the shim is under `natives/`, see "Enabling DLSS" below), pick **Upscaler quality** (`quality` keeps most of the
 detail, `performance` halves both axes), optionally an explicit percentage, the FSR sharpening
-and the DLSS preset, then restart the game — the tab shows the stock "restart required" dialog.
+and the DLSS preset; each applies as soon as you change it.
 `console.txt` confirms it with one line, `[pzopt] upscaler: fsr1 at 50 % (performance)`; a mode
 that cannot run says why and continues as `fsr1` (`upscaler: dlss unavailable (...)`). The same
 keys work as `-Dpzopt.upscaler=fsr1` or in `pzopt.properties`.
@@ -107,7 +116,7 @@ not found); using fsr1 at 50 %` and runs as FSR 1.0. DLSS needs two files under 
 folder (next to `libLighting64.so`): the shim `libpzopt_ngx64.so`, built from `src/native/pzopt_ngx.cpp`
 against NVIDIA's DLSS SDK, and NVIDIA's DLSS library `libnvidia-ngx-dlss.so.<version>` from that SDK.
 
-The easy way: **Options > PZ Optimization > Visuals > Upscaling > Install DLSS files**. The button checks what your machine has, downloads
+The easy way: **PZ OPTIMIZATION > Enhancements > Image quality > Upscaling > NVIDIA DLSS files**. The button checks what your machine has, downloads
 the shim from this project's `dlss-linux-*` release and NVIDIA's DLSS library straight from NVIDIA's DLSS repository
 (never re-hosted here), checks both against their pinned sha256 and puts them in `natives/`; then pick Upscaler: dlss
 and restart the game. It needs an RTX card: on Linux x86-64 the proprietary NVIDIA driver and the Vulkan loader, on
@@ -147,7 +156,7 @@ Or build both yourself, on top of any install method (Workshop, installer, zip);
    (Deprecation warnings from the SDK headers are normal.) With a source build, `scripts/build.sh` does
    the same when the SDK checkout is at that path — `PZOPT_DLSS_SDK=<dir>` names another one,
    `PZOPT_DLSS=0` skips it — and `scripts/pzopt.sh install` copies both files in with the classes.
-4. Options > PZ Optimization > Visuals > Upscaling: **Upscaler** = `dlss`, a quality (`performance` = 50 %, or
+4. PZ OPTIMIZATION > Enhancements > Image quality > Upscaling: **Upscaler** = `dlss`, a quality (`performance` = 50 %, or
    `native` for DLAA anti-aliasing at full size), optionally a **DLSS model preset** ("Upscaler, NVIDIA DLSS: model preset") (`f` is the
    cheap one at 4K), restart the game. `console.txt` then has `[pzopt] upscaler: dlss at 50 % (performance)`
    followed a few frames later by `[pzopt] dlss: ready, 2560x1080 -> 5120x2160 (performance, preset default,
@@ -195,10 +204,11 @@ costs frames; use `fsr1` there.
 
 ## Performance overlay (F9 / L3 + R3)
 
-Tick **"Sample frame times and utilization"** in **Options > PZ Optimization > Tools** (every setting there applies when you press Apply, no restart), then press **F9** (key binding "Toggle performance overlay", after "Display FPS") or, on a
-controller, **L3 + R3** (both sticks pressed together).
-Sampling is off by default (F9 / L3 + R3 then only shows a notice pointing at the tick box): it is the
-build's own profiler, drawn by the game itself, so it reads the same on Windows and Linux,
+Press **F9** (key binding "Toggle performance overlay", after "Display FPS") or, on a
+controller, **L3 + R3** (both sticks pressed together), or use the first row of PZ OPTIMIZATION > Profiler > Performance
+overlay > Overlay. The overlay's sampling (**"Sample frame times and utilization"**; every Profiler setting applies at
+once) is off by default; showing the overlay switches it on and saves that. It is the build's own profiler, drawn by
+the game itself, so it reads the same on Windows and Linux,
 in the menus, on the loading screen and in the world, with no MangoHud or RivaTuner.
 
 ![The performance overlay in the world: fps, frame-time tail, utilization, verdict and frame graph](../media/performance-overlay.png)
@@ -229,7 +239,7 @@ in the menus, on the loading screen and in the world, with no MangoHud or RivaTu
   bottom, callees above, width = share of the time, siblings biggest first from the left; update
   green, render blue, lighting amber, pzopt frames magenta.
 
-Every element is a dropdown in the tab's Performance overlay group, off or one of its sizes:
+Every element is a setting of PZ OPTIMIZATION > Profiler > Performance overlay, off or one of its sizes:
 `overlayStats` (fps / tails / full), `overlayTree` (0 to 8 sub-phases per phase),
 `overlayVerdict` (short / detailed), `overlayPower` (the power line: CPU / GPU / APU / battery watts and the
 energy per frame, from the counters the system lets a user read), `overlayGraph` (240 / 480 / 960 frames), `overlayFlame`
@@ -265,7 +275,7 @@ fogPass=false
 ```
 
 The table below is a selection of the main keys; the build has about 1,000. Full list with comments:
-[`src/pzopt/pzopt/Config.java`](../../src/pzopt/pzopt/Config.java); the tab's search finds any of them by name.
+[`src/pzopt/pzopt/Config.java`](../../src/pzopt/pzopt/Config.java); the PZ OPTIMIZATION screen's search finds any of them by name.
 `dev*` keys are diagnostics and are not listed.
 
 | Key | Default | What it controls |

@@ -1,25 +1,32 @@
--- pzopt: the main menu's "PZ OPTIMIZATION" item and the PZ Optimization screen (2026-10-18).
---  One item in the main-menu column (stock style: ISLabel, UIFont.Large, the stock hover fade and sounds), right below
---  Options (below "Show performance overlay" when that item is there), with a small-font line under it: "Version <commit>",
---  or the updater's news ("Update available: <commit>", "Updating... 42 %", "Restart to finish the update", "Update
---  failed"). It opens PzoptMainMenu, a screen of its own over the whole window (like the stock Load / Options screens):
---  the title and the installed build, a sidebar on the left, the selected entry's page right of it, BACK.
---    OPTIMIZATIONS / ENHANCEMENTS / PROFILER  the three groups of the PZ Optimization options tab (Performance, Visuals,
---        Tools in pzopt_optimizations_layout.lua): the group's master switch, its categories, their subcategories, their
---        settings, each editable in place (a tick box or a chooser, saved through UserOptions like the tab does: live keys
---        at once, the others at the next launch; DEFAULT; OPEN IN OPTIONS opens the tab on that page)
+-- pzopt: the main menu's "PZ OPTIMIZATION" item and the PZ Optimization screen (2026-10-18), the only home of the pzopt
+-- settings (the game's Options screen had a PZ Optimization tab until 2026-10-18; its data and actions are
+-- pzopt_optimizations_options.lua's PzoptSettings).
+--  One item in the main-menu column and in the pause menu (stock style: ISLabel, UIFont.Large, the stock hover fade and
+--  sounds), right below Options, with a small-font line under it: "Version <commit>", or the updater's news ("Update
+--  available: <commit>", "Updating... 42 %", "Restart to finish the update", "Update failed"). It opens PzoptMainMenu, a
+--  screen of its own over the whole window (like the stock Load / Options screens): the title, the search box, a sidebar on
+--  the left, the selected entry's page right of it, BACK.
+--    home  the six entries below, the presets (Recommended, Stock game, the low-end sets), Fix a problem, the view
+--          (Simple / Advanced / Everything), the before / after clips, Export / Import settings, Uninstall
+--    OPTIMIZATIONS / ENHANCEMENTS / PROFILER  the three groups (pzopt_optimizations_layout.lua): the group's master switch,
+--        its categories (each with its own switch at the top of its page), their subcategories, their settings, each
+--        editable in place (a tick box, a chooser, the curve's numbers, the colour picker; saved through UserOptions: live
+--        keys at once, the others at the next launch, then the restart prompt; DEFAULT), with the impact chart and the
+--        before / after clips in the detail; Reset ... to defaults per group and category
 --    BENCHMARK  Setup (scenes and options as rows, the choosers, the name, Start), Past results (the runs; Open, Compare,
 --               baseline, folder), Compare (the rows of two runs with sections; Only what differs), Report (the scenes;
 --               charts, notes, findings; full report, share code, a friend's code, Run again); data: PzoptBench
 --    UPDATE                   the updater's state, builds and notes; Update now / Restart game / the release page
 --    MOD COMPATIBILITY CHECK  the overview, the Max performance / Max compatibility choice, one row per Java file
+--  Search: every setting by name, description, key, resource or Java class; the results page opens a setting on its page.
 --  Every page is a list (the rows, headings never selected) and the selected row's detail beside it (under it when the
---  window is narrow): its text, a chart (a report row), its controls and its buttons; every text wrapped, nothing cut.
---  Options hides the screen and it comes back on the same row when Options closes.
---  Mouse: hover + click (a sidebar entry selects its page, a row acts), BACK. Keyboard: Escape closes the open pzopt dialog,
---  else the screen. Controller, in explicit order (never the stock geometric moves): up / down in the sidebar (BACK under
---  the last entry), A or right into the page, up / down / left / right over its rows and columns, A acts, B or left (from
---  the first column) back to the sidebar, B in the sidebar closes the screen with the cursor on the PZ OPTIMIZATION item.
+--  window is narrow): its text, a chart (a report row, a setting's impact), its controls and its buttons; every text
+--  wrapped, nothing cut; on a settings page the clips and the text keep their place from row to row.
+--  Mouse: hover + click (a sidebar entry selects its page, a row acts), BACK. Keyboard: Ctrl+F the search, Escape leaves
+--  the search box, closes the open pzopt dialog, else the screen. Controller, in explicit order (never the stock geometric
+--  moves): up / down in the sidebar (BACK under the last entry), A or right into the page, up / down / left / right over
+--  its rows and columns, A acts, B or left (from the first column) back to the sidebar, B in the sidebar closes the
+--  screen with the cursor on the PZ OPTIMIZATION item; L3 the search (on-screen keyboard), R3 the help.
 --  This file also packs the main-menu column into short windows (fitMenuColumn) and starts the once-per-boot update check.
 -- Installed by scripts/pzopt.sh into <game dir>/media/lua/client/pzopt/ (loose game-dir Lua, no mod to enable).
 
@@ -223,6 +230,7 @@ local GROUPS = {
 
 local function opt(fn, key)
     local ok, v = pcall(function() return perf()[fn](perf(), key) end)
+    if ok and v == false then return false end
     return (ok and v) or ""
 end
 
@@ -238,7 +246,7 @@ local function settingsTree()
         for _, sec in ipairs(list) do
             for _, e in ipairs(sec.entries or {}) do
                 if e.key and not byKey[e.key] then
-                    byKey[e.key] = { e = e, page = page, section = sec.title or "" }
+                    byKey[e.key] = { e = e, page = page, section = sec.title or "", sec = sec }
                     table.insert(order, e.key)
                 end
             end
@@ -251,11 +259,13 @@ local function settingsTree()
         table.insert(t.groups, G)
         t.byId[g.id] = G
         for _, c in ipairs(g.cats or {}) do
-            local cat = { id = c.id, title = c.title, blurb = c.blurb or "", group = G, subs = {} }
+            -- the category's own switch (the layout's `master`, when this build knows the key; Tools: its group's)
+            local master = c.master and opt("isPzoptOptionKnown", c.master) == true and c.master or nil
+            local cat = { id = c.id, title = c.title, blurb = c.blurb or "", group = G, subs = {}, master = master }
             table.insert(G.cats, cat)
             t.byId[g.id .. "/" .. c.id] = cat
             for _, s in ipairs(c.subs or {}) do
-                local sub = { title = s.title, cat = cat, keys = {} }
+                local sub = { title = s.title, cat = cat, keys = {}, dlss = s.dlssButton }
                 table.insert(cat.subs, sub)
                 if s.sections then
                     for _, key in ipairs(order) do
@@ -321,6 +331,36 @@ local function settingsTree()
     return t
 end
 
+-- Simple / Advanced / Everything (the tab's views): which settings the pages list, by the layout's tiers (PzoptSettings.tier:
+-- 1 the features and main switches, 2 how something is done, 3 the tuning numbers); the master switches always show,
+-- search and Fix a problem show every match. Kept for the session, Simple first, like the tab.
+local VIEW = { level = 1 }
+local VIEW_NAMES = { "Simple", "Advanced", "Everything" }
+local VIEW_TIPS = {
+    "The settings worth knowing about: the features and the main switches.",
+    "Also the settings that change how something is done; the defaults are what was measured best.",
+    "Also the tuning numbers (budgets, thread counts, intervals). Change them to experiment.",
+}
+
+local function tierOf(key)
+    return PzoptSettings and PzoptSettings.tier(key) or 2
+end
+
+-- the keys of a list the current view shows, and how many it leaves out
+local function shownKeys(keys)
+    local t, hidden = {}, 0
+    for _, k in ipairs(keys) do
+        if tierOf(k) <= VIEW.level then table.insert(t, k) else hidden = hidden + 1 end
+    end
+    return t, hidden
+end
+
+local function catCount(cat)
+    local n = 0
+    for _, s in ipairs(cat.subs) do n = n + #(shownKeys(s.keys)) end
+    return n
+end
+
 -- a master switch: the value of the next launch (pinned > saved > default), the one in force, who pins it
 local function masterState(key)
     local pinned = opt("getPzoptOptionPinnedBy", key)
@@ -333,15 +373,32 @@ end
 -- the keys changed on this screen since the game started (the restart prompt names those still waiting for a restart)
 local TOUCHED = {}
 
-local function toggleMaster(gid)
-    local g = GROUPS[gid]
-    TOUCHED[g.master] = true
-    local on, _, pinned = masterState(g.master)
+-- a master switch flips (a group's or a category's): saved at once, a live one in force at once
+local function toggleMasterKey(key)
+    TOUCHED[key] = true
+    local on, _, pinned = masterState(key)
     if pinned ~= "" then return end
     local value = on and "false" or "true"
-    if value == opt("getPzoptOptionDefault", g.master) then value = "" end
-    pcall(function() perf():setPzoptOption(g.master, value) end) -- UserOptions saves it; a live key is in force at once
-    PzoptLogInfo("[pzopt] menu: " .. g.master .. " -> " .. (on and "false" or "true"))
+    if value == opt("getPzoptOptionDefault", key) then value = "" end
+    pcall(function() perf():setPzoptOption(key, value) end) -- UserOptions saves it; a live key is in force at once
+    PzoptLogInfo("[pzopt] menu: " .. key .. " -> " .. (on and "false" or "true"))
+end
+
+local function toggleMaster(gid)
+    toggleMasterKey(GROUPS[gid].master)
+end
+
+-- every master switch: key -> { live, label } (the groups', the categories' from the layout)
+local function masterInfo(key)
+    for _, g in pairs(GROUPS) do
+        if g.master == key then return { live = g.live, label = g.name .. " enabled" } end
+    end
+    for _, G in ipairs(settingsTree().groups) do
+        for _, c in ipairs(G.cats) do
+            if c.master == key then return { live = G.page ~= 1, label = c.title .. " enabled", cat = c } end
+        end
+    end
+    return nil
 end
 
 local function valueText(key, e)
@@ -360,7 +417,7 @@ local function updateShort()
     if s == "installed" then return "Restart to finish the update", true end
     if s == "error" then return updTag() ~= "" and "The update failed" or "The check failed", updTag() ~= "" end
     if s == "up-to-date" then return "Up to date", false end
-    if s == "checking" then return "Checking...", false end
+    if s == "checking" then return "Checking for updates", false end
     return "Not checked at this launch", false
 end
 
@@ -372,6 +429,8 @@ local RESTART_NOTE = "Takes effect on the next launch."
 local LIVE_NOTE = "Applies at once; no restart needed."
 
 local function settingKind(key, e)
+    if e and e.bezier then return "bezier" end
+    if e and e.colour then return "colour" end
     if e and e.choices then return "choice" end
     local def = opt("getPzoptOptionDefault", key)
     if def == "true" or def == "false" then return "bool" end
@@ -395,9 +454,13 @@ end
 
 local function settingStore(key, value)
     TOUCHED[key] = true
-    if value == opt("getPzoptOptionDefault", key) then value = "" end
-    pcall(function() perf():setPzoptOption(key, value) end)
-    PzoptLogInfo("[pzopt] menu: " .. key .. " -> " .. (value == "" and "(default)" or value))
+    if PzoptSettings then
+        PzoptSettings.set(key, value) -- (a choice equal to the default stays a choice while mod compatibility decides the key)
+    else
+        if value == opt("getPzoptOptionDefault", key) then value = "" end
+        pcall(function() perf():setPzoptOption(key, value) end)
+    end
+    PzoptLogInfo("[pzopt] menu: " .. key .. " -> " .. ((value == "" or value == opt("getPzoptOptionDefault", key)) and "(default)" or value))
 end
 
 -- the next value a press gives: a tick box flips, a combo moves to its next / previous choice
@@ -426,21 +489,57 @@ end
 -- apply live (every Performance key, the next-launch Visuals such as hdr, mirrors, car glass; the Optimizations master)
 local COMPAT_KEY = "modProfile" -- the MOD COMPATIBILITY CHECK page's choice (pzopt_mainscreen_compat.lua), next launch
 
+-- The Enhancements read at start-up (they pick the window or patch shaders when the game loads them) that a live master
+-- switch also gates: the Enhancements switch all of them, a category's switch its own (PzoptSettings.CATS.restart).
+local function startupKeys()
+    return (PzoptSettings and PzoptSettings.MASTERS[2].restartKeys) or {}
+end
+
+local function isStartupGate(key)
+    return key == "enhancementsEnabled" or (PzoptSettings and PzoptSettings.CATS.restart[key] ~= nil)
+end
+
+-- the value a start-up Enhancement has on the next launch: its own, or off while its group's or its category's switch is off
+local function effectiveNext(key)
+    local v, pinned = settingNext(key)
+    if pinned ~= "" then return v end
+    if not (masterState("enhancementsEnabled")) then return "false" end
+    local cm = PzoptSettings and PzoptSettings.CATS.masterOfKey(key)
+    if cm and opt("isPzoptOptionKnown", cm) == true and not (masterState(cm)) then return "false" end
+    return v
+end
+
+-- The changed keys that wait for a restart: the next launch's value differs from the one in force and the key does not
+-- apply live (every Optimizations key and category switch, the next-launch Enhancements such as hdr, mirrors, car glass,
+-- the Optimizations master). A live switch of the Enhancements waits only through the start-up features it moves.
 local function pendingRestart()
     local t = settingsTree()
-    local out = {}
-    for k in pairs(TOUCHED) do
-        local live = false
-        for _, g in pairs(GROUPS) do if g.master == k then live = g.live end end
+    local out, seen = {}, {}
+    local function consider(k)
+        if seen[k] then return end
+        seen[k] = true
+        local live, label = false, k
+        local m = masterInfo(k)
+        if m then live, label = m.live, m.label end
         local b = t.entry[k]
-        if b then live = settingLive(k, b.e, b.page) end
-        local nextV = settingNext(k)
-        if not live and nextV ~= opt("getPzoptOption", k) then
-            local label = (b and b.e and b.e.label) or k
-            for _, g in pairs(GROUPS) do if g.master == k then label = g.name .. " enabled" end end
-            if k == COMPAT_KEY then label = "Mod compatibility: " .. tostring(PzoptCompatApi.names[nextV] or nextV) end
+        if b then
+            live = settingLive(k, b.e, b.page)
+            label = (b.e and b.e.label) or k
+        end
+        if k == COMPAT_KEY then label = "Mod compatibility: " .. tostring(PzoptCompatApi.names[(settingNext(k))] or (settingNext(k))) end
+        if live then return end
+        local nextV = (b and b.page == 2) and effectiveNext(k) or (settingNext(k))
+        if nextV ~= opt("getPzoptOption", k) then
             table.insert(out, { key = k, label = label, want = nextV })
         end
+    end
+    local startup = false
+    for k in pairs(TOUCHED) do
+        consider(k)
+        if isStartupGate(k) then startup = true end
+    end
+    if startup then
+        for _, k in ipairs(startupKeys()) do consider(k) end
     end
     table.sort(out, function(a, b) return a.label < b.label end)
     return out
@@ -448,7 +547,11 @@ end
 
 -- ------------------------------------------------------------------ the nodes of the menu
 -- home; perf / vis / tools (a settings group), "<group>/<cat>", "<group>/<cat>/<sub index>"; bench and its pages
--- bench/setup, bench/history, bench/compare, bench/report; update; compat.
+-- bench/setup, bench/history, bench/compare, bench/report; update; compat; problems ("Fix a problem") and problems/<i>;
+-- search (the sidebar's search box's results).
+
+local C_HELP = { r = 0.85, g = 0.55, b = 0.95 }
+local SEARCH = { query = "" } -- what the search page shows (the crumbs name it)
 
 local TOP = {
     { id = "perf", label = "OPTIMIZATIONS" },
@@ -491,6 +594,7 @@ end
 
 local function colourOf(id)
     local top = topOf(id)
+    if top == "problems" then return C_HELP end
     local t = settingsTree()
     if t.byId[top] and GROUPS[top] then return t.byId[top].c end
     local e = topEntry(top)
@@ -512,6 +616,12 @@ local function titleOf(id)
     end
     if id == "update" then return "Update" end
     if id == "compat" then return "Mod compatibility check" end
+    if a == "problems" then
+        if not b then return "Fix a problem" end
+        local pr = ((PzoptSettingsLayout or {}).problems or {})[tonumber(b) or 0]
+        return pr and pr.title or id
+    end
+    if id == "search" then return "Search: " .. SEARCH.query end
     return id
 end
 
@@ -548,8 +658,8 @@ local PAGES = {}
 local function homeDesc(id)
     if id == "perf" or id == "vis" or id == "tools" then
         local G = settingsTree().byId[id]
-        return (G and G.note or "") .. " The " .. GROUPS[id].name .. " part of the PZ Optimization tab of Options: its master "
-            .. "switch, its categories and every setting in them, changed here or in Options."
+        return (G and G.note or "") .. " Its master switch, its categories (each with its own switch) and every setting in them, "
+            .. "changed here and saved at once."
     elseif id == "bench" then
         return "Measures this PC with built-in scenes that play by themselves: walking, driving at 120 km/h, a horde in Louisville. "
             .. "Frame times, stutters, a stock comparison, past results and a report to share."
@@ -562,6 +672,65 @@ local function homeDesc(id)
     return ""
 end
 
+-- the result of an action that changed settings (a preset, an import, a reset), in a dialog with OK
+local function showMessage(self, text)
+    local w = math.min(560, getCore():getScreenWidth() - 40)
+    local shown = getTextManager():WrapText(UIFont.Small, text, w - 40)
+    local lines = 1
+    for _ in string.gmatch(shown, "\n") do lines = lines + 1 end
+    local h = math.min(getCore():getScreenHeight() - 40, 90 + lines * fontH(UIFont.Small))
+    local modal = ISModalDialog:new((getCore():getScreenWidth() - w) / 2, (getCore():getScreenHeight() - h) / 2, w, h, shown, false, nil, nil)
+    modal:initialise()
+    modal:addToUIManager()
+    modal:setAlwaysOnTop(true)
+    modal:bringToTop()
+    self.messageModal = modal
+    local jd = mainJoypad()
+    if jd then
+        modal.prevFocus = jd.focus
+        jd.focus = modal
+        updateJoypadFocus(jd)
+    end
+    PzoptLogInfo("[pzopt] menu: message: " .. string.gsub(text, "\n", " "))
+end
+
+-- the before / after clips of the settings' detail (previewClips, off by default, saved at once)
+local function clipsOn()
+    return PzoptSettings and PzoptSettings.clipsOn() or false
+end
+
+local function clipsAction()
+    return { label = function() return clipsOn() and "HIDE CLIPS" or "SHOW CLIPS" end, quiet = true, act = function()
+        if PzoptSettings then PzoptSettings.setClipsOn(not clipsOn()) end
+        PzoptLogInfo("[pzopt] menu: before / after clips " .. (clipsOn() and "on" or "off"))
+    end }
+end
+
+local function viewRow()
+    return { id = "view", kind = "setting", label = "Settings shown",
+        value = function() return VIEW_NAMES[VIEW.level] end,
+        desc = function()
+            return "Which settings the pages list. " .. VIEW_NAMES[1] .. ": " .. VIEW_TIPS[1] .. " " .. VIEW_NAMES[2] .. ": " .. VIEW_TIPS[2] .. " "
+                .. VIEW_NAMES[3] .. ": " .. VIEW_TIPS[3] .. " <LINE> <LINE> Search and Fix a problem always show every match; the master "
+                .. "switches show in every view. Kept until the game closes."
+        end,
+        activate = function() VIEW.level = VIEW.level % 3 + 1 end,
+        controls = { { type = "chooser", label = "View", get = function() return VIEW_NAMES[VIEW.level] end,
+            set = function(dir) VIEW.level = ((VIEW.level - 1 + (dir or 1)) % 3) + 1 end } } }
+end
+
+local function clipsRow()
+    return { id = "clips", kind = "setting", label = "Before / after clips",
+        value = function() return clipsOn() and "On" or "Off" end,
+        desc = function()
+            return "Plays a short clip of the stock game and one with the setting on, side by side, at the top of a setting's "
+                .. "details. Off saves the memory the clips take (up to ~100 MB of video memory while this screen is open; freed "
+                .. "when it closes). Applies at once and is remembered."
+        end,
+        activate = function() clipsAction().act() end,
+        controls = { { type = "tick", label = "Play the clips", get = clipsOn, set = function() clipsAction().act() end } } }
+end
+
 PAGES.home = function(self)
     local p = { items = {} }
     for _, e in ipairs(TOP) do
@@ -570,35 +739,116 @@ PAGES.home = function(self)
         if e.id == "update" then value = function() return (updateShort()) end end
         table.insert(p.items, { id = e.id, label = titleOf(e.id), value = value, kind = "node", desc = function() return homeDesc(e.id) end })
     end
+    -- the presets (the tab's home page): each sets many settings at once, so it asks first
+    table.insert(p.items, { kind = "section", label = "Presets" })
+    for i, pr in ipairs(PzoptSettings and PzoptSettings.presets() or {}) do
+        local preset = pr
+        table.insert(p.items, { id = "preset:" .. i, kind = "row", label = preset.title,
+            desc = function() return esc(preset.tip) end,
+            actions = { { label = "APPLY", key = "y", confirm = "Apply \"" .. preset.title .. "\"? It changes many settings at once (saved now).",
+                act = function()
+                    TOUCHED.enabled = true
+                    for _, k in ipairs(PzoptSettings.pageKeys(1)) do TOUCHED[k] = true end
+                    for _, k in ipairs(PzoptSettings.catMasters(1)) do TOUCHED[k] = true end
+                    showMessage(self, preset.title .. ": " .. preset.apply())
+                end } } })
+    end
+    table.insert(p.items, { kind = "section", label = "Help" })
+    table.insert(p.items, { id = "problems", kind = "node", label = "Fix a problem",
+        value = function() return tostring(#((PzoptSettingsLayout or {}).problems or {})) end,
+        desc = function()
+            return "Stutter while driving, low fps in a horde, slow loading, laggy input... Pick what you notice: why it happens, and "
+                .. "the settings that help, wherever they live."
+        end })
+    table.insert(p.items, { kind = "section", label = "Tools" })
+    table.insert(p.items, viewRow())
+    table.insert(p.items, clipsRow())
+    table.insert(p.items, { id = "export", kind = "row", label = "Export settings",
+        desc = function()
+            return "Copies every setting that differs from the build's defaults (Optimizations, Enhancements, Profiler, their master "
+                .. "and category switches) to the clipboard as key=value text and saves it to Zomboid/pzopt/settings-export.ini. Import "
+                .. "settings reads it back, here or on another PC."
+        end,
+        actions = { { label = "EXPORT", key = "y", act = function() showMessage(self, PzoptSettings.exportSettings()) end } } })
+    table.insert(p.items, { id = "import", kind = "row", label = "Import settings",
+        desc = function()
+            return "Sets every setting from exported text: paste it into the box (it starts with the clipboard, or with "
+                .. "Zomboid/pzopt/settings-export.ini when the clipboard holds no settings). Settings the text does not list go back "
+                .. "to the build's defaults; settings pinned by pzopt.properties or -D stay. Saved at once."
+        end,
+        actions = { { label = "IMPORT...", key = "y", act = function() self:askImport() end } } })
+    table.insert(p.items, { id = "uninstall", kind = "row", label = "Uninstall PZ Optimization",
+        desc = function()
+            local why = PzoptSettings and PzoptSettings.uninstallUnavailable() or ""
+            return esc(PzoptSettings and PzoptSettings.UNINSTALL_TIP or "") .. (why ~= "" and (" <LINE> <LINE> <RGB:1,0.85,0.45> Not available now: " .. esc(why) .. ".") or "")
+        end,
+        actionsFn = function()
+            if not PzoptSettings or PzoptSettings.uninstallUnavailable() ~= "" then return {} end
+            return { { label = "UNINSTALL", danger = true, key = "y", confirm = PzoptSettings.UNINSTALL_CONFIRM, act = function() self:uninstall() end } }
+        end })
     return p
+end
+
+-- a master switch's row (a group's or a category's): its value, its description, A flips it
+local function masterRow(id, key, label, live, tip)
+    return { id = id, kind = "master", master = key,
+        label = label,
+        value = function() return (masterState(key)) and "On" or "Off" end,
+        desc = function()
+            local on, now, pinned = masterState(key)
+            local d = esc(tip) .. " " .. (live and LIVE_NOTE or RESTART_NOTE) .. " <LINE> <LINE> <RGB:0.66,0.66,0.70> Key: " .. key
+            if pinned ~= "" then d = d .. " <LINE> <RGB:1,0.85,0.45> Pinned by " .. esc(pinned) .. ", which wins: change it there."
+            elseif on ~= now and not live then d = d .. " <LINE> <RGB:1,0.85,0.45> Switched " .. (on and "on" or "off") .. ": applies when the game restarts." end
+            return d
+        end,
+        activate = function() toggleMasterKey(key) end,
+        controls = { { type = "tick", label = label, get = function() return (masterState(key)) end, set = function() toggleMasterKey(key) end } } }
+end
+
+local function groupMasterTip(a)
+    local m = PzoptSettings and PzoptSettings.MASTERS[({ perf = 1, vis = 2, tools = 3 })[a]]
+    return m and m.tip or ("The master switch: off, every " .. GROUPS[a].name .. " setting is the stock game's, whatever its own choice says "
+        .. "(the choices stay saved for when it is on again).")
+end
+
+-- "Reset ... to defaults": the keys back to the build's defaults, the switches on (asks first)
+local function resetRow(self, id, title, keysFn)
+    return { id = id, kind = "row", label = "Reset " .. title .. " to defaults",
+        desc = function()
+            return "Puts every setting of " .. esc(title) .. " back to the build's default on this machine and its switches on. "
+                .. "Saved at once."
+        end,
+        actions = { { label = "RESET", key = "y", confirm = "Reset every setting of " .. title .. " to the build's defaults?", act = function()
+            local keys = keysFn()
+            for _, k in ipairs(keys) do TOUCHED[k] = true end
+            local n = PzoptSettings.resetKeys(keys)
+            showMessage(self, title .. ": " .. n .. (n == 1 and " setting" or " settings") .. " back to the default.")
+        end } } }
 end
 
 local function groupPage(self, a)
     local t = settingsTree()
     local G, g = t.byId[a], GROUPS[a]
     local p = { items = {} }
-    table.insert(p.items, { id = "master:" .. a, kind = "master",
-        label = function() return g.name .. " enabled" end,
-        value = function() return (masterState(g.master)) and "On" or "Off" end,
-        desc = function()
-            local on, now, pinned = masterState(g.master)
-            local d = "The master switch: off, every " .. g.name .. " setting is the stock game's, whatever its own choice "
-                .. "says (the choices stay saved for when it is on again). " .. (g.live and LIVE_NOTE or RESTART_NOTE)
-            if pinned ~= "" then d = d .. " <LINE> <LINE> Pinned by " .. pinned .. ", which wins: change it there."
-            elseif on ~= now then d = d .. " <LINE> <LINE> Switched " .. (on and "on" or "off") .. ": applies when the game restarts." end
-            return d
-        end,
-        activate = function() toggleMaster(a) end,
-        controls = { { type = "tick", label = function() return g.name .. " enabled" end,
-            get = function() return (masterState(g.master)) end, set = function() toggleMaster(a) end } } })
+    table.insert(p.items, masterRow("master:" .. a, g.master, g.name .. " enabled", g.live, groupMasterTip(a)))
     for _, cat in ipairs(G and G.cats or {}) do
-        table.insert(p.items, { id = a .. "/" .. cat.id, label = cat.title, value = tostring(cat.count), kind = "node",
+        table.insert(p.items, { id = a .. "/" .. cat.id, label = cat.title, kind = "node",
+            value = function()
+                if cat.master and not (masterState(cat.master)) then return "off" end
+                return tostring(catCount(cat))
+            end,
             desc = function()
                 local subs = {}
-                for _, s in ipairs(cat.subs) do table.insert(subs, s.title .. " (" .. #s.keys .. ")") end
+                for _, s in ipairs(cat.subs) do table.insert(subs, s.title .. " (" .. #(shownKeys(s.keys)) .. ")") end
                 return esc(cat.blurb) .. " <LINE> <LINE> " .. esc(table.concat(subs, ", ")) .. "."
-            end, settings = { cat = cat.id } })
+            end })
     end
+    table.insert(p.items, resetRow(self, "reset:" .. a, g.name, function()
+        local keys = { g.master }
+        for _, k in ipairs(PzoptSettings.catMasters(G.page)) do table.insert(keys, k) end
+        for _, k in ipairs(PzoptSettings.pageKeys(G.page)) do table.insert(keys, k) end
+        return keys
+    end))
     return p
 end
 
@@ -606,16 +856,36 @@ local function catPage(self, a, b, id)
     local t = settingsTree()
     local cat = t.byId[a .. "/" .. b]
     local p = { items = {} }
+    if cat and cat.master then
+        local live = cat.group.page ~= 1
+        local entry = PzoptSettings and PzoptSettings.CATS.entry({ master = cat.master, title = cat.title }, live)
+        table.insert(p.items, masterRow("master:" .. id, cat.master, cat.title .. " enabled", live, entry and entry.tip or ""))
+    elseif cat and #cat.group.cats == 1 then -- (the Profiler's one category: its group's switch)
+        local g = GROUPS[a]
+        table.insert(p.items, masterRow("master:" .. id, g.master, g.name .. " enabled", g.live, groupMasterTip(a)))
+    end
     for i, s in ipairs(cat and cat.subs or {}) do
-        table.insert(p.items, { id = id .. "/" .. i, label = s.title, value = tostring(#s.keys), kind = "node",
+        local sub = s
+        table.insert(p.items, { id = id .. "/" .. i, label = sub.title, kind = "node",
+            value = function() return tostring(#(shownKeys(sub.keys))) end,
             desc = function()
                 local names = {}
-                for _, k in ipairs(s.keys) do
+                local keys, hidden = shownKeys(sub.keys)
+                for _, k in ipairs(keys) do
                     local e = t.entry[k] and t.entry[k].e
                     table.insert(names, esc(e and e.label or k) .. ": " .. esc(showValue((settingNext(k)), e)))
                 end
+                if hidden > 0 then table.insert(names, "<RGB:0.66,0.66,0.70> " .. hidden .. " more in the " .. VIEW_NAMES[3] .. " view") end
                 return table.concat(names, " <LINE> ")
-            end, settings = { cat = b, sub = i } })
+            end })
+    end
+    if cat then
+        table.insert(p.items, resetRow(self, "reset:" .. id, cat.title, function()
+            local keys = {}
+            if cat.master then table.insert(keys, cat.master) end
+            for _, s in ipairs(cat.subs) do for _, k in ipairs(s.keys) do table.insert(keys, k) end end
+            return keys
+        end))
     end
     return p
 end
@@ -656,44 +926,224 @@ local function overlayRow()
         controls = { { type = "tick", label = "Shown", get = shown, set = function() pcall(function() perf():togglePzoptOverlay() end) end } } }
 end
 
+-- A setting's detail text: what it does, when it applies, its values, who pins it, the release it came with, the Java
+-- classes that read it.
+local function settingDesc(k, e, page)
+    local v, pinned = settingNext(k)
+    local now = opt("getPzoptOption", k)
+    local def = opt("getPzoptOptionDefault", k)
+    local d = esc(e and e.tip or "") .. " <LINE> <LINE> <RGB:0.66,0.66,0.70> "
+        .. (settingLive(k, e, page) and LIVE_NOTE or RESTART_NOTE) .. " <LINE> "
+        .. "Next launch: " .. esc(showValue(v, e)) .. "    In use now: " .. esc(showValue(now, e)) .. "    Default: "
+        .. esc(showValue(def, e)) .. " <LINE> Key: " .. k
+    if pinned ~= "" then d = d .. " <LINE> <RGB:1,0.85,0.45> Pinned by " .. esc(pinned) .. ", which wins: change it there." end
+    local why = opt("getPzoptModCompatReason", k)
+    if why ~= "" and opt("getPzoptOptionSaved", k) == "" then
+        d = d .. " <LINE> <RGB:1,0.85,0.45> Mod compatibility switched it off: " .. esc(why) .. " (your choice here wins)."
+    end
+    if PzoptSettings then
+        local date = PzoptSettings.date(k)
+        local classes = PzoptSettings.classes(k)
+        d = d .. " <LINE> <RGB:0.66,0.66,0.70> " .. (date and ("Released " .. date) or "New in this version") .. ".  Java: "
+            .. esc(#classes > 0 and table.concat(classes, ", ") or "read by pzopt.Config only")
+    end
+    return d
+end
+
+-- the zoom curve's four numbers (x1, y1, x2, y2 of a CSS cubic-bezier, 0..1), each stepped by 0.05
+local function bezierControls(k)
+    local B = PzoptSettings and PzoptSettings.bezier
+    if not B then return {} end
+    local t = {}
+    for i, name in ipairs(B.axes) do
+        local axis = i
+        table.insert(t, { type = "number", label = name,
+            get = function()
+                local v = B.parse((settingNext(k))) or B.parse(opt("getPzoptOptionDefault", k)) or { 0, 0, 1, 1 }
+                return string.format("%.2f", v[axis])
+            end,
+            set = function(dir)
+                if opt("getPzoptOptionPinnedBy", k) ~= "" then return end
+                local v = B.parse((settingNext(k))) or B.parse(opt("getPzoptOptionDefault", k)) or { 0, 0, 1, 1 }
+                v[axis] = math.max(0, math.min(1, math.floor((v[axis] + 0.05 * (dir or 1)) * 20 + 0.5) / 20))
+                settingStore(k, B.format(v))
+            end })
+    end
+    return t
+end
+
+-- the colour picker (the stock one, as the tab had): the pad goes to it and comes back to the screen
+local function pickColour(self, k)
+    if opt("getPzoptOptionPinnedBy", k) ~= "" or not PzoptSettings then return end
+    require("ISUI/ISSliderPanel")
+    require("ISUI/ISColorPickerHSB")
+    if self.colourPicker then self.colourPicker:removeSelf() end
+    local rgb = PzoptSettings.colourRGB((settingNext(k)))
+    local picker = ISColorPickerHSB:new(0, 0, ColorInfo.new(rgb.r, rgb.g, rgb.b, 1))
+    picker:initialise()
+    picker.resetFocusTo = self
+    picker:setPickedFunc(function(_, colour)
+        local function channel(v) return math.floor(math.max(0, math.min(1, v)) * 255 + 0.5) end
+        settingStore(k, string.format("%02X%02X%02X", channel(colour.r), channel(colour.g), channel(colour.b)))
+        self.colourPicker = nil
+        if self.parent then self:refreshPage() end
+    end)
+    local D = self.detailRect
+    picker:setX(math.max(0, math.min(D[1] + 12, self.width - picker:getWidth())))
+    picker:setY(math.max(0, math.min(D[2] + D[4] - picker:getHeight() - 2 * self.btnH, self.height - picker:getHeight())))
+    self:addChild(picker)
+    picker:setCapture(true)
+    picker:setVisible(true)
+    picker:bringToTop()
+    self.colourPicker = picker
+    local jd = mainJoypad()
+    if jd then
+        jd.focus = picker
+        updateJoypadFocus(jd)
+    end
+end
+
+-- One setting as a list row: its value, its detail (text, impact chart, clips), its control(s), DEFAULT and the clips
+-- toggle. `where` (search, Fix a problem) names the page it lives on.
+local function settingItem(self, k, where)
+    local t = settingsTree()
+    local b0 = t.entry[k]
+    local e, page = b0 and b0.e, b0 and b0.page
+    local kind = settingKind(k, e)
+    local item = { id = k, label = e and e.label or k, kind = "setting", setting = k, sec = b0 and b0.sec,
+        value = function() return showValue((settingNext(k)), nil) end,
+        desc = function() return settingDesc(k, e, page) .. (where and (" <LINE> <RGB:0.66,0.66,0.70> On the page " .. esc(where)) or "") end }
+    if kind == "bool" or kind == "choice" or kind == "bezier" then
+        item.activate = function() settingStep(k, e, 1) end
+        item.controls = { { type = kind == "bool" and "tick" or "chooser", label = kind == "bool" and "On" or (kind == "bezier" and "Curve" or "Value"),
+            get = function() return kind == "bool" and (settingNext(k)) == "true" or showValue((settingNext(k)), nil) end,
+            set = function(dir) settingStep(k, e, dir or 1) end } }
+        if kind == "bezier" then
+            for _, c in ipairs(bezierControls(k)) do table.insert(item.controls, c) end
+            item.plot = true
+        end
+    elseif kind == "colour" then
+        item.activate = function() pickColour(self, k) end
+        item.controls = { { type = "colour", label = "Colour", get = function() return (settingNext(k)) end, set = function() pickColour(self, k) end } }
+    end
+    item.actions = { { label = "DEFAULT", key = "x", act = function()
+        if opt("getPzoptOptionPinnedBy", k) == "" then settingStore(k, opt("getPzoptOptionDefault", k)) end
+    end }, clipsAction() }
+    return item
+end
+
+-- where a key lives: "Optimizations > Driving > Car smoothness", and that subcategory's node id
+local function homeOf(k)
+    local t = settingsTree()
+    for _, G in ipairs(t.groups) do
+        for _, c in ipairs(G.cats) do
+            for i, s in ipairs(c.subs) do
+                for _, key in ipairs(s.keys) do
+                    if key == k then return G.name .. " / " .. c.title .. " / " .. s.title, G.id .. "/" .. c.id .. "/" .. i end
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
 local function subPage(self, a, b, c, id)
     local t = settingsTree()
     local s = t.byId[id]
-    local p = { items = {} }
+    local p = { items = {}, settingsPage = true }
     if a == "tools" and b == "overlay" and c == 1 then table.insert(p.items, overlayRow()) end
-    for _, k in ipairs(s and s.keys or {}) do
-        local b0 = t.entry[k]
-        local e, page = b0 and b0.e, b0 and b0.page
-        local kind = settingKind(k, e)
-        local item = { id = k, label = e and e.label or k, kind = "setting",
-            value = function() return showValue((settingNext(k)), nil) end,
+    local keys, hidden = shownKeys(s and s.keys or {})
+    for _, k in ipairs(keys) do table.insert(p.items, settingItem(self, k)) end
+    if s and s.dlss and PzoptSettings then
+        table.insert(p.items, { id = "dlss", kind = "row", label = "NVIDIA DLSS files",
+            value = function() return PzoptSettings.deps().state or "" end,
+            desc = function() local d = PzoptSettings.deps() return esc(d.title) .. " <LINE> <LINE> " .. esc(d.tip) end,
+            actionsFn = function()
+                local d = PzoptSettings.deps()
+                if not d.enabled then return {} end
+                return { { label = string.upper(d.title), key = "y", confirm = "Download the DLSS files (NVIDIA's library and the pzopt shim)?",
+                    act = function() PzoptSettings.depsInstall() end } }
+            end })
+        PzoptSettings.depsCheck()
+    end
+    if hidden > 0 then
+        table.insert(p.items, { id = "more", kind = "row", label = "Show " .. hidden .. " more (" .. VIEW_NAMES[3] .. " view)",
             desc = function()
-                local v, pinned = settingNext(k)
-                local now = opt("getPzoptOption", k)
-                local def = opt("getPzoptOptionDefault", k)
-                local d = esc(e and e.tip or "") .. " <LINE> <LINE> <RGB:0.66,0.66,0.70> "
-                    .. (settingLive(k, e, page) and LIVE_NOTE or RESTART_NOTE) .. " <LINE> "
-                    .. "Next launch: " .. esc(showValue(v, e)) .. "    In use now: " .. esc(showValue(now, e)) .. "    Default: "
-                    .. esc(showValue(def, e)) .. " <LINE> Key: " .. k
-                if pinned ~= "" then d = d .. " <LINE> <RGB:1,0.85,0.45> Pinned by " .. esc(pinned) .. ", which wins: change it there." end
-                local why = opt("getPzoptModCompatReason", k)
-                if why ~= "" and opt("getPzoptOptionSaved", k) == "" then
-                    d = d .. " <LINE> <RGB:1,0.85,0.45> Mod compatibility switched it off: " .. esc(why) .. " (your choice here wins)."
+                return hidden .. " settings of " .. esc(s.title) .. " are left out in the " .. VIEW_NAMES[VIEW.level] .. " view. A or SHOW ALL "
+                    .. "switches to " .. VIEW_NAMES[3] .. " (" .. VIEW_TIPS[3] .. ") until the game closes; the view is on the home page."
+            end,
+            activate = function() VIEW.level = 3 end,
+            actions = { { label = "SHOW ALL", key = "y", act = function() VIEW.level = 3 end } } })
+    end
+    if #p.items == 0 then table.insert(p.items, { kind = "note", label = "No settings here." }) end
+    return p
+end
+
+-- Fix a problem: what players report (the layout's `problems`), why it happens, and the settings that help
+PAGES.problems = function(self)
+    local p = { items = {} }
+    for i, pr in ipairs((PzoptSettingsLayout or {}).problems or {}) do
+        local problem = pr
+        table.insert(p.items, { id = "problems/" .. i, kind = "node", label = problem.title, value = tostring(#(problem.keys or {})),
+            desc = function() return esc(problem.cause) .. " <LINE> <LINE> " .. esc(problem.why) end })
+    end
+    return p
+end
+
+local function problemPage(self, i)
+    local pr = ((PzoptSettingsLayout or {}).problems or {})[i]
+    local p = { items = {}, settingsPage = true }
+    if not pr then return p end
+    p.head = function() return " <RGB:0.85,0.55,0.95> " .. esc(pr.cause) .. " <LINE> " end
+    for _, k in ipairs(pr.keys or {}) do
+        if settingsTree().entry[k] then table.insert(p.items, settingItem(self, k, (homeOf(k)))) end
+    end
+    return p
+end
+
+-- Search: the best matches of every setting, best first (PzoptSettings.search); A opens the setting on its own page
+local function searchRows()
+    local t = settingsTree()
+    if t.searchRows then return t.searchRows end
+    local rows = {}
+    for _, G in ipairs(t.groups) do
+        for _, c in ipairs(G.cats) do
+            for i, s in ipairs(c.subs) do
+                for _, k in ipairs(s.keys) do
+                    local b = t.entry[k]
+                    table.insert(rows, { entry = b.e, key = k, section = { title = b.section }, cat = { title = c.title },
+                        sub = { title = s.title }, node = G.id .. "/" .. c.id .. "/" .. i, where = G.name .. " / " .. c.title .. " / " .. s.title })
                 end
-                if kind == "other" then d = d .. " <LINE> <RGB:0.66,0.66,0.70> This one is set in Options (OPEN IN OPTIONS)." end
-                return d
-            end, settings = { cat = b, sub = c } }
-        if kind == "bool" or kind == "choice" then
-            item.activate = function() settingStep(k, e, 1) end
-            item.controls = { { type = kind == "bool" and "tick" or "chooser", label = kind == "bool" and "On" or "Value",
-                get = function() return kind == "bool" and (settingNext(k)) == "true" or showValue((settingNext(k)), nil) end,
-                set = function(dir) settingStep(k, e, dir or 1) end } }
-            item.actions = { { label = "DEFAULT", key = "x", act = function()
-                if opt("getPzoptOptionPinnedBy", k) == "" then settingStore(k, opt("getPzoptOptionDefault", k)) end
-            end } }
+            end
         end
+    end
+    t.searchRows = rows
+    return rows
+end
+
+PAGES.search = function(self)
+    local p = { items = {}, settingsPage = true }
+    local q = self.query or ""
+    local idx = self:searchIndex()
+    local hits = (idx and q:match("%w")) and PzoptSettings.search(idx, q) or nil
+    local list = {}
+    for row, score in pairs(hits or {}) do table.insert(list, { row = row, score = score }) end
+    table.sort(list, function(a, b) if a.score ~= b.score then return a.score > b.score end return a.row.key < b.row.key end)
+    for n, h in ipairs(list) do
+        if n > 60 then break end
+        local row = h.row
+        local item = settingItem(self, row.key, row.where)
+        item.value = function() return showValue((settingNext(row.key)), nil) end
+        item.searchNode = row.node
+        table.insert(item.actions, 1, { label = "OPEN ITS PAGE", key = "y", act = function() self:openSetting(row.node, row.key) end })
         table.insert(p.items, item)
     end
+    if #list == 0 then
+        table.insert(p.items, { kind = "note", label = q:match("%w") and ("Nothing matches \"" .. q .. "\".") or "Type in the search box (L3 with a controller)." })
+    elseif #list > 60 then
+        table.insert(p.items, { kind = "note", label = (#list - 60) .. " more: type more words to narrow it down." })
+    end
+    p.count = #list
     return p
 end
 
@@ -1020,6 +1470,7 @@ end
 local function pageOf(self, id)
     local a, b, c = split3(id)
     if PAGES[id] then return PAGES[id](self) end
+    if a == "problems" and b then return problemPage(self, tonumber(b)) end
     if GROUPS[a] and not b then return groupPage(self, a) end
     if GROUPS[a] and b and not c then return catPage(self, a, b, id) end
     if GROUPS[a] and c then return subPage(self, a, b, c, id) end
@@ -1268,7 +1719,7 @@ function PzoptMenuControl:prerender()
         self:drawRectBorder(0, math.floor((self.height - box) / 2), box, box, 0.9, 1, 1, 1)
         if on then self:drawRect(3, math.floor((self.height - box) / 2) + 3, box - 6, box - 6, 1, c.r, c.g, c.b) end
         self:drawText(clipText(UIFont.Small, label, self.width - box - 10), box + 8, ty, 1, 1, 1, 1, UIFont.Small)
-    elseif self.spec.type == "chooser" then
+    elseif self.spec.type == "chooser" or self.spec.type == "number" then
         local v = tostring(self.spec.get() or "")
         local lw = textW(UIFont.Small, label) + 16
         self:drawText(label, 0, ty, 0.8, 0.8, 0.82, 1, UIFont.Small)
@@ -1282,6 +1733,17 @@ function PzoptMenuControl:prerender()
         self:drawTextCentre(clipText(UIFont.Small, v, inner), bx + bw / 2, ty, 1, 1, 1, 1, UIFont.Small)
     elseif self.spec.type == "entry" then
         self:drawText(label, 0, ty, 0.8, 0.8, 0.82, 1, UIFont.Small)
+    elseif self.spec.type == "colour" then
+        -- the swatch of the colour (the default's while none is saved), its hex, "Change..." (the picker)
+        local v = tostring(self.spec.get() or "")
+        local lw = textW(UIFont.Small, label) + 16
+        self:drawText(label, 0, ty, 0.8, 0.8, 0.82, 1, UIFont.Small)
+        local rgb = PzoptSettings and PzoptSettings.colourRGB(v) or { r = 1, g = 1, b = 1 }
+        local sw = self.height * 2
+        self:drawRect(lw, 2, sw, self.height - 4, 1, rgb.r, rgb.g, rgb.b)
+        self:drawRectBorder(lw, 2, sw, self.height - 4, 0.8, 1, 1, 1)
+        local hex = "#" .. (PzoptSettings and PzoptSettings.colourHex(v) or v)
+        self:drawText(hex .. "   (A or click: change)", lw + sw + 10, ty, 1, 1, 1, 1, UIFont.Small)
     end
     if focused then self:drawRectBorder(-3, -2, self.width + 6, self.height + 4, 0.9, c.r, c.g, c.b) end
     if hot and self.spec.type ~= "entry" then self:drawRect(-3, -2, self.width + 6, self.height + 4, 0.06, 1, 1, 1) end
@@ -1296,9 +1758,9 @@ function PzoptMenuControl:onMouseUp(x, y)
     if not self.pressed then return end
     self.pressed = false
     local spec = self.spec
-    if spec.type == "tick" then
+    if spec.type == "tick" or spec.type == "colour" then
         spec.set()
-    elseif spec.type == "chooser" then
+    elseif spec.type == "chooser" or spec.type == "number" then
         local lw = textW(UIFont.Small, tostring(val(spec.label))) + 16
         spec.set(x < lw + (self.width - lw) / 2 and -1 or 1)
     end
@@ -1413,6 +1875,33 @@ function PzoptMainMenu:new(x, y, w, h)
     return o
 end
 
+function PzoptMainMenu:searchIndex()
+    if not self.searchIdx and PzoptSettings then self.searchIdx = PzoptSettings.searchIndex(searchRows()) end
+    return self.searchIdx
+end
+
+-- a setting by its key, on its page (the harness's tours, Fix a problem)
+function PzoptMainMenu:openKey(key)
+    local _, node = homeOf(key)
+    if node then self:openSetting(node, key) end
+    return node
+end
+
+-- the view (1 Simple, 2 Advanced, 3 Everything), the page shown again
+function PzoptMainMenu:setView(level)
+    VIEW.level = math.max(1, math.min(3, level))
+    self:refreshPage()
+end
+
+-- a search result or a problem's setting on its own page, the cursor on it (its tier shown even in a narrower view)
+function PzoptMainMenu:openSetting(node, key)
+    if tierOf(key) > VIEW.level then VIEW.level = tierOf(key) end
+    local from = self.selected
+    self:selectNode(node, "master", key)
+    if from == "search" or string.sub(from, 1, 9) == "problems/" then self.backTo[node] = from end -- B: back to the results
+    PzoptLogInfo("[pzopt] menu: opened " .. key .. " on " .. node)
+end
+
 -- After LATER: "Restart to apply N settings" and its RESTART NOW at the right end of the bar under the page (the
 -- controller's hints take what is left of it). Nil when nothing waits, the prompt is up or a restart cannot be offered.
 function PzoptMainMenu:reminder()
@@ -1456,9 +1945,10 @@ function PzoptMainMenu:sideRows()
             if e.id == top then
                 if GROUPS[top] then
                     for _, cat in ipairs(t.byId[top] and t.byId[top].cats or {}) do
-                        add(top .. "/" .. cat.id, cat.title, 1, false, tostring(cat.count))
+                        local off = cat.master and not (masterState(cat.master))
+                        add(top .. "/" .. cat.id, cat.title, 1, false, off and "off" or tostring(catCount(cat)))
                         if withSubs and b == cat.id then
-                            for i, s in ipairs(cat.subs) do add(top .. "/" .. cat.id .. "/" .. i, s.title, 2, false, tostring(#s.keys)) end
+                            for i, s in ipairs(cat.subs) do add(top .. "/" .. cat.id .. "/" .. i, s.title, 2, false, tostring(#(shownKeys(s.keys)))) end
                         end
                     end
                 elseif top == "bench" then
@@ -1505,6 +1995,8 @@ function PzoptMainMenu:createChildren()
     self.side = PzoptMenuSidebar:new(m, m, sideW, sh - 2 * m, self)
     self.side:initialise()
     self:addChild(self.side)
+    -- the search box under the title: every setting of the three groups (PzoptSettings.search), live as you type
+    self:createSearch(sideW, btnH)
     local backTitle = getText("UI_btn_back")
     self.back = ISButton:new(10, self.side.height - 10 - btnH, math.max(90, textW(UIFont.Small, backTitle) + 24), btnH, backTitle, self,
         function(target) target:close("the BACK button") end)
@@ -1557,46 +2049,121 @@ local function newText(self, x, y, w, h)
     return t
 end
 
+-- The impact chart and the before / after clips of a setting's detail: drawn by the options file's PzoptPreview
+-- (drawBars, drawClip: the same bars and clips the options tab had). That file loads after this one (name order), so the
+-- two classes derive from it the first time a detail needs them.
+local function previewClasses()
+    if PzoptMenuImpact or not PzoptPreview then return PzoptMenuImpact, PzoptMenuClips end
+    PzoptMenuImpact = PzoptPreview:derive("PzoptMenuImpact")
+    function PzoptMenuImpact:prerender()
+        ISPanel.prerender(self)
+        local x, y, w = self.pad, 6, self.width - 2 * self.pad
+        self:text("Effect on your hardware", x, y, C_TEXT, self.fontM)
+        y = y + self.hM + 4
+        if self.key then self:drawBars(x, y, w, PzoptSettings.effects(self.key)) end
+    end
+    PzoptMenuClips = PzoptPreview:derive("PzoptMenuClips")
+    function PzoptMenuClips:prerender()
+        ISPanel.prerender(self)
+        if not self.clip then return end
+        local info = PzoptSettings.clipInfo(self.clip)
+        local gap = self.pad
+        local now = getTimestampMs()
+        local x = math.floor((self.width - (2 * self.clipW + gap)) / 2)
+        -- a caption wider than its clip drops its part in brackets ("OPTIMIZED (every optimization on)" -> "OPTIMIZED")
+        local function caption(c)
+            if textW(UIFont.Small, c) <= self.clipW then return c end
+            return string.match(c, "^(.-) %(") or c
+        end
+        self:drawClip(x, 4, self.clipW, self.clipH, caption(info.sides[1]), info.stock, now, { r = 1, g = 0.62, b = 0.40 }) -- (amber as text)
+        self:drawClip(x + self.clipW + gap, 4, self.clipW, self.clipH, caption(info.sides[2]), info.opt, now, C_OPT)
+    end
+    return PzoptMenuImpact, PzoptMenuClips
+end
+
+-- the chart's height for `rows` bar rows (all of them when nil): the title, the rows, the x axis and its title
+local function chartHeight(rowH, rows)
+    local hS, hM = fontH(UIFont.Small), fontH(UIFont.Medium)
+    local axes = rows or (PzoptSettings and #PzoptSettings.AXES or 9)
+    return 6 + hM + 4 + axes * rowH + 6 + hS + 2 + hS + 6
+end
+
+-- the zoom curve beside its four numbers (PzoptBezierPlot from the options file reads `sliders`)
+local function newPlot(self, x, y, size, key)
+    if not PzoptBezierPlot or not PzoptSettings then return nil end
+    local plot = PzoptBezierPlot:new(x, y, size, size)
+    plot:initialise()
+    local function v(i)
+        local B = PzoptSettings.bezier
+        local t = B.parse((settingNext(key))) or B.parse(opt("getPzoptOptionDefault", key)) or { 0, 0, 1, 1 }
+        return t[i]
+    end
+    plot.sliders = {}
+    for i = 1, 4 do plot.sliders[i] = { getCurrentValue = function() return v(i) end } end
+    self:addChild(plot)
+    return plot
+end
+
 -- The detail of the list's selected row, in the detail rectangle: its text (the page's head first), the chart and the text
--- under it (a report row), its controls (choosers, tick boxes, the name), its action buttons at the bottom. Built again
--- whenever the selection or a value changes; the controller's focus in it is kept by position.
+-- under it (a report row), its controls (choosers, tick boxes, the name), its action buttons at the bottom. On a settings
+-- page the clips (on top while they are on) and the text keep their place from row to row (the options tab's rule); under
+-- the text the impact chart draws only the resources the setting moves, and the controls and buttons follow right under it.
+-- Built again whenever the selection or a value changes; the controller's focus in it is kept by position.
 function PzoptMainMenu:showDetail()
     for _, el in ipairs(self.detailEls) do
         el:setVisible(false)
         self:removeChild(el)
     end
     self.detailEls, self.focusables, self.actionButtons = {}, {}, {}
-    self.chartRect = nil
+    self.chartRect, self.impactChart = nil, nil
     local D = self.detailRect
     local it = self.list.items[self.list.selected or 0]
     local page = self.page or {}
-    -- actions and controls of the row
-    local actions = {}
-    if it then
-        if it.kind == "node" then
-            table.insert(actions, { label = "OPEN", act = function() self:activateItem(self.list.selected) end })
+    local fixed = page.settingsPage and PzoptSettings ~= nil
+    local function actionsOf(row)
+        local acts = {}
+        if not row then return acts end
+        if row.kind == "node" then
+            table.insert(acts, { label = "OPEN", act = function() self:activateItem(self.list.selected) end })
         end
-        for _, a in ipairs(it.actions or {}) do table.insert(actions, a) end
-        if it.actionsFn then for _, a in ipairs(it.actionsFn()) do table.insert(actions, a) end end
-        if it.settings then
-            table.insert(actions, { label = "OPEN IN OPTIONS", quiet = true, key = "y", act = function() self:openSettings(it.settings.cat, it.settings.sub) end })
-        end
+        for _, a in ipairs(row.actions or {}) do table.insert(acts, a) end
+        if row.actionsFn then for _, a in ipairs(row.actionsFn()) do table.insert(acts, a) end end
+        return acts
     end
+    local function buttonRows(acts)
+        local rows, rowW = { {} }, 0
+        for _, a in ipairs(acts) do
+            local title = tostring(val(a.label))
+            local w = math.max(100, textW(UIFont.Small, title) + 24)
+            if rowW > 0 and rowW + w > D[3] then
+                table.insert(rows, {})
+                rowW = 0
+            end
+            table.insert(rows[#rows], { a = a, title = title, w = w })
+            rowW = rowW + w + 8
+        end
+        if #rows[1] == 0 then rows = {} end
+        return rows
+    end
+    local actions = actionsOf(it)
     self.detailActions = actions
-    -- the buttons: in rows from the bottom up, as many per row as fit
-    local btnRows, rowW = { {} }, 0
-    for _, a in ipairs(actions) do
-        local title = tostring(val(a.label))
-        local w = math.max(100, textW(UIFont.Small, title) + 24)
-        if rowW > 0 and rowW + w > D[3] then
-            table.insert(btnRows, {})
-            rowW = 0
+    local btnRows = buttonRows(actions)
+    local ch = math.max(self.btnH, fontH(UIFont.Small) + 8)
+    local controls = it and it.controls or {}
+    -- the slots of a settings page: the most button rows and controls any of its rows has
+    local bandBtn, bandCtrl = #btnRows, #controls
+    if fixed then
+        for _, row in ipairs(page.items or {}) do
+            if selectable(row) then
+                bandBtn = math.max(bandBtn, #buttonRows(actionsOf(row)))
+                bandCtrl = math.max(bandCtrl, #(row.controls or {}))
+            end
         end
-        table.insert(btnRows[#btnRows], { a = a, title = title, w = w })
-        rowW = rowW + w + 8
     end
-    if #btnRows[1] == 0 then btnRows = {} end
+    -- the buttons: in rows from the bottom up, as many per row as fit
     local y = D[2] + D[4]
+    local bottom = y - bandBtn * (self.btnH + 6)
+    y = bottom + #btnRows * (self.btnH + 6)
     for r = #btnRows, 1, -1 do
         y = y - self.btnH
         local x = D[1]
@@ -1618,33 +2185,107 @@ function PzoptMainMenu:showDetail()
         end
         y = y - 6
     end
-    -- the controls above the buttons
-    local controls = it and it.controls or {}
-    local ch = math.max(self.btnH, fontH(UIFont.Small) + 8)
+    y = bottom
+    -- the controls above the buttons (a curve's numbers leave room for its plot on their right)
     local ctrlEls = {}
+    local plotSize = it and it.plot and math.min(4 * (ch + 6) - 6, math.floor(D[3] * 0.3)) or 0
+    local top = y - bandCtrl * (ch + 6)
+    y = top + #controls * (ch + 6)
     for i = #controls, 1, -1 do
         y = y - ch - 6
-        local c = PzoptMenuControl:new(D[1] + 4, y, math.min(D[3] - 8, math.max(300, math.floor(D[3] * 0.8))), ch, controls[i], self)
+        local w = math.min(D[3] - 8, math.max(300, math.floor(D[3] * 0.8)))
+        if plotSize > 0 and i > 1 then w = math.min(w, D[3] - plotSize - 20) end
+        local c = PzoptMenuControl:new(D[1] + 4, y, w, ch, controls[i], self)
         c:initialise()
         self:addChild(c)
         table.insert(self.detailEls, c)
         table.insert(ctrlEls, 1, c)
     end
-    if #controls > 0 or #btnRows > 0 then y = y - 6 end
+    if plotSize > 0 and #controls > 1 then
+        local plot = newPlot(self, D[1] + D[3] - plotSize - 4, top + (ch + 6), plotSize, it.setting)
+        if plot then table.insert(self.detailEls, plot) end
+    end
+    y = top
+    if bandCtrl > 0 or bandBtn > 0 then y = y - 6 end
+    -- a settings page: the impact chart above the controls, the clips at the top while they are on
+    local textTop = D[2]
+    if fixed then
+        local Impact, Clips = previewClasses()
+        local hS = fontH(UIFont.Small)
+        local avail = y - D[2]
+        local clipsOnNow = clipsOn() and Clips ~= nil
+        local clipH, clipW = 0, 0
+        if clipsOnNow then
+            clipW = math.floor((D[3] - 12 - 24) / 2)
+            clipH = math.floor(clipW * PzoptSettings.CLIP_H / PzoptSettings.CLIP_W)
+            local maxH = math.floor(avail * 0.34) - (hS + 2 + 4 + 8)
+            if clipH > maxH then
+                clipH = math.max(40, maxH)
+                clipW = math.floor(clipH * PzoptSettings.CLIP_W / PzoptSettings.CLIP_H)
+            end
+        end
+        local clipBand = clipsOnNow and (4 + hS + 2 + clipH + 8) or 0
+        -- the bars: taller rows while the text keeps at least six lines
+        local rowH = hS + 2
+        while rowH < 2 * hS + 8 and avail - clipBand - chartHeight(rowH + 2) > 8 * hS + 60 do rowH = rowH + 2 end
+        -- the text keeps the room of a full chart (it does not move between rows); the chart draws only the resources the
+        -- setting moves, right under the text, and the controls and buttons move up by what it leaves free; a setting that
+        -- moves none has no chart
+        local chartMax = chartHeight(rowH)
+        if Impact and avail - clipBand - chartMax > 4 * hS then
+            local key = it and (it.setting or it.master) or nil
+            local rows = key and PzoptSettings.effectRows(key) or 0
+            local top = y - chartMax
+            local used = 0
+            if rows > 0 then
+                local chartH = chartHeight(rowH, rows)
+                local chart = Impact:new(D[1], top, D[3], chartH)
+                chart:initialise()
+                chart.barRowH = rowH
+                chart.key = key
+                chart.backgroundColor = { r = 0.04, g = 0.04, b = 0.06, a = 0.85 }
+                chart.borderColor = { r = SIDE_BORDER.r, g = SIDE_BORDER.g, b = SIDE_BORDER.b, a = 1 }
+                self:addChild(chart)
+                table.insert(self.detailEls, chart)
+                self.impactChart = chart
+                used = chartH + 6
+            end
+            local free = chartMax + 6 - used
+            for _, el in ipairs(self.detailEls) do
+                if el ~= self.impactChart and el:getY() >= y then el:setY(el:getY() - free) end
+            end
+            y = top - 6
+        end
+        if clipsOnNow then
+            local clips = Clips:new(D[1], D[2], D[3], clipBand - 6)
+            clips:initialise()
+            clips.clipW, clips.clipH = clipW, clipH
+            local key = it and (it.setting or it.master)
+            clips.clip = key and PzoptSettings.clipOf(key, it.sec) or nil
+            clips.backgroundColor = { r = 0.04, g = 0.04, b = 0.06, a = 0.85 }
+            clips.borderColor = { r = SIDE_BORDER.r, g = SIDE_BORDER.g, b = SIDE_BORDER.b, a = 1 }
+            self:addChild(clips)
+            table.insert(self.detailEls, clips)
+            textTop = D[2] + clipBand
+        end
+    end
     -- the text, and the chart with the text under it (a report row)
-    local textH = y - D[2]
+    local textH = y - textTop
     local head = page.head and page.head() or nil
     local title = it and tostring(val(it.label)) or ""
     local body = breakLong(it and it.desc and it.desc() or (self.emptyText or "")) -- (a path, a long key list)
+    if fixed and clipsOn() and it and (it.setting or it.master) then -- what the clips above show
+        body = body .. " <LINE> <LINE> <RGB:0.66,0.66,0.70> Clips: " .. esc(PzoptSettings.clipInfo(PzoptSettings.clipOf(it.setting or it.master, it.sec)).title)
+    end
     -- a blank line under the heading: the next line is spaced for the small font and touched its descenders
     local text = (it and (" <H2> " .. esc(title) .. " <TEXT> <LINE> <LINE> ") or "") .. (head and (head .. " <LINE> ") or "")
         .. " <LINE> " .. body
     if it and it.chart then
         local t1 = math.floor(textH * 0.36)
         local t2 = math.floor(textH * 0.22)
-        local cy = D[2] + t1 + 6
+        local cy = textTop + t1 + 6
         self.chartRect = { D[1], cy, D[3], textH - t1 - t2 - 12 }
-        local tp = newText(self, D[1], D[2], D[3], t1)
+        local tp = newText(self, D[1], textTop, D[3], t1)
         tp.text = text
         tp:paginate()
         table.insert(self.detailEls, tp)
@@ -1662,7 +2303,7 @@ function PzoptMainMenu:showDetail()
         self:addChild(chartEl)
         table.insert(self.detailEls, chartEl)
     else
-        local tp = newText(self, D[1], D[2], D[3], math.max(fontH(UIFont.Small) * 3, textH))
+        local tp = newText(self, D[1], textTop, D[3], math.max(fontH(UIFont.Small) * 3, textH))
         tp.text = text
         tp:paginate()
         table.insert(self.detailEls, tp)
@@ -1672,7 +2313,7 @@ function PzoptMainMenu:showDetail()
     if page.progress then
         local pr = page.progress()
         if pr then
-            local bar = ISPanel:new(D[1] + 12, D[2] + textH - 26, D[3] - 24, 14)
+            local bar = ISPanel:new(D[1] + 12, textTop + textH - 26, D[3] - 24, 14)
             bar:initialise()
             bar.background = false
             bar.prerender = function(o)
@@ -1689,6 +2330,128 @@ function PzoptMainMenu:showDetail()
     if self.pane == "detail" then self:focusDetail(math.min(self.detailIndex or 1, #self.focusables)) end
     self.lastDesc = body
     if self.prompt or self.help then self:setPageShown(false) end
+end
+
+-- The sidebar's search box: names, descriptions, keys, resources and the Java classes of every setting (the tab's search).
+-- The results are the "search" page; clearing the box goes back to the page the search started from.
+function PzoptMainMenu:createSearch(sideW, btnH)
+    local pad = 12
+    local box = ISTextEntryBox:new("", pad, self.sideTop, sideW - 2 * pad, btnH)
+    box:initialise()
+    box:instantiate()
+    box:setClearButton(true)
+    local screen = self
+    box.onCommandEntered = function(o) -- Enter: the results' list takes the cursor
+        o:unfocus()
+        if screen.selected == "search" then
+            screen.pane = screen.list.selected and "master" or "side"
+            screen:traceFocus()
+        end
+    end
+    box.render = function(o)
+        ISTextEntryBox.render(o)
+        if o:getText() == "" and not o:isFocused() then
+            local hint = screen.joyfocus and "Search (L3)" or "Search settings (Ctrl+F)"
+            o:drawText(clipText(UIFont.Small, hint, o.width - 16), 8, math.floor((o.height - fontH(UIFont.Small)) / 2),
+                C_GREY.r, C_GREY.g, C_GREY.b, 1, UIFont.Small)
+        end
+    end
+    self.side:addChild(box)
+    self.search = box
+    self.searchTyped, self.searchAt, self.query = "", 0, ""
+    self.sideTop = self.sideTop + btnH + 10
+end
+
+-- the search box takes the keyboard (Ctrl+F, a click) or, with a controller, the game's on-screen keyboard (L3)
+function PzoptMainMenu:focusSearch()
+    local box = self.search
+    if not box then return end
+    local jd = self.joyfocus or mainJoypad()
+    if jd and self.joyfocus and OnScreenKeyboard and not OnScreenKeyboard.IsVisible() then
+        local osk = OnScreenKeyboard.Show(jd.player, box, jd)
+        osk.prevFocus = self -- the pad comes back here when it closes
+        jd.focus = osk
+        PzoptLogInfo("[pzopt] menu: search: on-screen keyboard")
+        return
+    end
+    box:focus()
+    PzoptLogInfo("[pzopt] menu: search: box focused")
+end
+
+-- Each frame: the text, once it has been still for 120 ms (one search per word, not per letter), shows its results;
+-- an empty box returns to where the search started. The index fills in idle frames meanwhile.
+function PzoptMainMenu:pollSearch()
+    local box = self.search
+    if not box then return end
+    local idx = self:searchIndex()
+    if idx and not self.searchReady then
+        for _ = 1, 12 do
+            if PzoptSettings.searchStep(idx) then self.searchReady = true break end
+        end
+    end
+    local text, now = box:getText() or "", getTimestampMs()
+    if text ~= self.searchTyped then
+        self.searchTyped, self.searchAt = text, now
+        return
+    end
+    if text == self.query or now - self.searchAt < 120 then return end
+    self:runSearch(text)
+end
+
+function PzoptMainMenu:runSearch(text)
+    self.query = text
+    SEARCH.query = text
+    if string.match(text, "%w") then
+        if self.selected ~= "search" then self.searchFrom = self.selected end
+        if self.selected == "search" then self:refreshPage() else self:selectNode("search", self.pane == "side" and "master" or nil) end
+        PzoptLogInfo("[pzopt] menu: search \"" .. text .. "\": " .. tostring(self.page and self.page.count or 0) .. " results")
+    elseif self.selected == "search" then
+        self:selectNode(self.searchFrom or "home", "master")
+    end
+end
+
+-- Import settings...: the pasted text (it starts with the clipboard or the last export) in a box; OK saves it
+function PzoptMainMenu:askImport()
+    local w = math.min(720, getCore():getScreenWidth() - 40)
+    local h = 2 * (math.max(25, fontH(UIFont.Small) + 6) + 20)
+    local box = ISTextBox:new((getCore():getScreenWidth() - w) / 2, getCore():getScreenHeight() / 2 - 200, w, h,
+        "Paste exported settings (settings not listed go back to the defaults; saved at once):",
+        PzoptSettings and PzoptSettings.importSource() or "", self, function(target, button)
+            if button.internal ~= "OK" then return end
+            local msg = PzoptSettings.importSettings(button.parent.entry:getText() or "")
+            for page = 1, 3 do
+                TOUCHED[PzoptSettings.MASTERS[page].key] = true
+                for _, k in ipairs(PzoptSettings.catMasters(page)) do TOUCHED[k] = true end
+                for _, k in ipairs(PzoptSettings.pageKeys(page)) do TOUCHED[k] = true end
+            end
+            if target.parent then target:refreshPage() end
+            showMessage(target, msg)
+        end)
+    box:setMultipleLine(true)
+    box:setNumberOfLines(12)
+    box:setMaxLines(100000)
+    box:initialise()
+    box:addToUIManager()
+    box:setAlwaysOnTop(true)
+    box:bringToTop()
+    self.importBox = box
+    local jd = mainJoypad()
+    if jd then
+        box.prevFocus = jd.focus
+        jd.focus = box
+        updateJoypadFocus(jd)
+    end
+end
+
+-- Uninstall PZ Optimization...: pzopt.Uninstall starts its helper, then the game quits the stock way (main menu only)
+function PzoptMainMenu:uninstall()
+    local ok, msg = PzoptSettings.uninstall()
+    if ok then
+        PzoptLogInfo("[pzopt] menu: uninstall started, quitting")
+        MainScreen.instance:quitToDesktop()
+    else
+        showMessage(self, msg)
+    end
 end
 
 -- values changed (a switch, a tick, the updater): the page's rows, the sidebar, the detail
@@ -2027,6 +2790,10 @@ function PzoptMainMenu:goUp()
         self:close("B at the top")
         return
     end
+    if self.selected == "search" and self.search then -- leaving the results empties the box
+        self.search:setText("")
+        self.searchTyped, self.query, SEARCH.query = "", "", ""
+    end
     local from = self.selected
     if self.pane == "side" and parent ~= "home" then
         self:selectNode(parent, "side")
@@ -2096,7 +2863,7 @@ function PzoptMainMenu:onJoypadDirLeft(joypadData)
     if self.prompt then self.promptIndex = 1 self:traceFocus() return end
     if self.pane == "detail" then
         local f = self.focusables[self.detailIndex or 1]
-        if f and f.el.spec and f.el.spec.type == "chooser" then
+        if f and f.el.spec and (f.el.spec.type == "chooser" or f.el.spec.type == "number") then
             f.el.spec.set(-1)
             self:refreshPage()
             return
@@ -2132,7 +2899,7 @@ function PzoptMainMenu:onJoypadDirRight(joypadData)
         self:focusDetail(1, true)
     elseif self.pane == "detail" then
         local f = self.focusables[self.detailIndex or 1]
-        if f and f.el.spec and f.el.spec.type == "chooser" then
+        if f and f.el.spec and (f.el.spec.type == "chooser" or f.el.spec.type == "number") then
             f.el.spec.set(1)
             self:refreshPage()
         elseif f and f.button and self.focusables[self.detailIndex + 1] and self.focusables[self.detailIndex + 1].button
@@ -2156,13 +2923,17 @@ function PzoptMainMenu:runAction(a)
 end
 
 function PzoptMainMenu:confirm(text, fn)
-    local w, h = math.min(560, getCore():getScreenWidth() - 40), 160
+    local w = math.min(560, getCore():getScreenWidth() - 40)
+    local lines = 1
+    for _ in string.gmatch(getTextManager():WrapText(UIFont.Small, text, w - 40), "\n") do lines = lines + 1 end
+    local h = math.min(getCore():getScreenHeight() - 40, math.max(160, 100 + lines * fontH(UIFont.Small)))
     local modal = ISModalDialog:new((getCore():getScreenWidth() - w) / 2, (getCore():getScreenHeight() - h) / 2, w, h, text, true, self,
         function(target, button) if button.internal == "YES" then fn() end end)
     modal:initialise()
     modal:addToUIManager()
     modal:setAlwaysOnTop(true)
     modal:bringToTop()
+    self.confirmModal = modal -- (the uninstall rig presses its Yes)
     local jd = mainJoypad()
     if jd then -- A = Yes, B = No; the pad comes back here after either
         modal.prevFocus = jd.focus
@@ -2213,20 +2984,6 @@ function PzoptMainMenu:scrollDetail(px)
     if not t then return end
     local maxScroll = math.max(0, t:getScrollHeight() - t:getHeight())
     t:setYScroll(math.max(-maxScroll, math.min(0, t:getYScroll() - px)))
-end
-
--- L3: to the top (the first row of the list, the first sidebar entry, the start of the text)
-function PzoptMainMenu:toTop()
-    if self.pane == "master" then
-        self.list:setSelected(self.list:firstSelectable() or 1)
-        self:showDetail()
-    elseif self.pane == "detail" then
-        if self.detailText then self.detailText:setYScroll(0) end
-        self:focusDetail(1)
-    else
-        self:focusSide(1)
-    end
-    self:traceFocus()
 end
 
 function PzoptMainMenu:onJoypadDown(button, joypadData)
@@ -2295,7 +3052,7 @@ function PzoptMainMenu:onJoypadDown(button, joypadData)
     elseif button == Joypad.Start then -- everything is saved as it changes: Start closes the menu, or restarts for the waiting ones
         if #pendingRestart() > 0 then self:askRestart() else self:close("Start") end
     elseif button == Joypad.LStickButton or button == Joypad.RStickButton then
-        -- L3 (to the top) and R3 (the help) act a moment after the press, unless the other stick is pressed too: L3 + R3
+        -- L3 (search) and R3 (the help) act a moment after the press, unless the other stick is pressed too: L3 + R3
         -- together is the performance overlay's chord (pzopt.Overlay), which keeps working here
         local now = getTimestampMs()
         local p = self.stickPress
@@ -2319,7 +3076,7 @@ function PzoptMainMenu:pollPad()
     local p = self.stickPress
     if p and getTimestampMs() - p.t >= 350 then
         self.stickPress = nil
-        if p.b == Joypad.LStickButton then self:toTop() else self:setHelp(true) end
+        if p.b == Joypad.LStickButton then self:focusSearch() else self:setHelp(true) end
     end
     local jd = self.joyfocus
     if not jd or not jd.id or self.help then return end
@@ -2385,7 +3142,8 @@ function PzoptMainMenu:hints()
     else
         local f = self.focusables[self.detailIndex or 1]
         if f and f.button then add(T.AButton, tostring(f.el.title)) end
-        if f and f.el.spec and f.el.spec.type == "chooser" then add(BT[Joypad.DPadLeft], "Change") end
+        if f and f.el.spec and (f.el.spec.type == "chooser" or f.el.spec.type == "number") then add(BT[Joypad.DPadLeft], "Change") end
+        if f and f.el.spec and f.el.spec.type == "colour" then add(T.AButton, "Pick a colour") end
         if f and f.el.spec and f.el.spec.type == "tick" then add(T.AButton, "Toggle") end
         add(T.BButton, "List")
     end
@@ -2399,6 +3157,7 @@ function PzoptMainMenu:hints()
     add(BT[Joypad.Back], self.pane == "side" and "Page" or "Sidebar")
     local nPend = #pendingRestart()
     add(BT[Joypad.Start], nPend > 0 and ("Restart (" .. nPend .. ")") or "Close")
+    add(BT[Joypad.LStickButton], "Search")
     add(BT[Joypad.RStickButton], "Help")
     return out
 end
@@ -2408,13 +3167,13 @@ local HELP_LINES = {
     { "A", "open, toggle, press" },
     { "B", "back one level: detail, list, sidebar, close" },
     { "X", "the row's second action (Default, Compare, Only what differs, Copy share code...)" },
-    { "Y", "the row's main action (Open in Options, Start benchmark, Open, Update now...), asks first when it restarts or installs" },
+    { "Y", "the row's main action (Apply a preset, Start benchmark, Open, Update now...), asks first when it restarts, installs or changes many settings" },
     { "LB / RB", "previous / next section of the sidebar" },
     { "LT / RT", "a page up / down in the list or the text" },
     { "Right stick", "scroll the detail's text" },
     { "View (Back)", "the focus between the sidebar and the page" },
     { "Menu (Start)", "close the menu (every change is saved as you make it)" },
-    { "L3", "to the top" },
+    { "L3", "search every setting (the on-screen keyboard)" },
     { "R3", "this help" },
 }
 
@@ -2539,6 +3298,7 @@ function PzoptMainMenu:prerender()
         self:drawRectBorder(self.contentX, self.hintY, self.contentW, self.hintH, 1, SIDE_BORDER.r, SIDE_BORDER.g, SIDE_BORDER.b)
     end
     self:pollPad()
+    self:pollSearch()
     -- a value shown in the list, the sidebar or the detail can change under it (the updater, a download): once a second
     local now = getTimestampMs()
     if now >= (self.nextRefresh or 0) then
@@ -2552,34 +3312,6 @@ function PzoptMainMenu:prerender()
             if self.detailText then self.detailText:setYScroll(scroll) end
         end
     end
-end
-
--- Options: the stock Options item's click (its sound, its clean-up), then our tab on the category, the controller's focus
--- on the tab page; the screen comes back on the same page when Options closes (screenTick)
-function PzoptMainMenu:openSettings(catId, sub)
-    local ms = MainScreen.instance
-    local mo = ms and ms.mainOptions
-    if not mo or not ms.optionsOption then return end
-    self.settingsOpen = true
-    self.returnTo = { self.selected, self.pane, self.list.selected, self.detailIndex }
-    self:setVisible(false)
-    MainScreen.onMenuItemMouseDownMainMenu(ms.optionsOption, 0, 0)
-    if not mo:isVisible() then -- the stock click refused (intro delay): the screen stays
-        self.settingsOpen = false
-        self:setVisible(true)
-        return
-    end
-    local found = PzoptOptionsTab and mo.tabs and mo.tabs:activateView(PzoptOptionsTab)
-    if found and PzoptOptionsNavigate then
-        if catId then PzoptOptionsNavigate(mo, "cat", catId, sub or 0) else PzoptOptionsNavigate(mo, "home") end
-    end
-    local jd = mainJoypad()
-    if found and jd and mo.tabs:getActiveView() then
-        jd.focus = mo.tabs:getActiveView()
-        updateJoypadFocus(jd)
-    end
-    PzoptLogInfo("[pzopt] menu: settings opened" .. (found and (" on the " .. tostring(PzoptOptionsTab) .. " tab, "
-        .. tostring(catId or "home") .. (sub and ("/" .. sub) or "")) or " (tab not found)"))
 end
 
 -- the readability rig and the harness: show a page
@@ -2605,6 +3337,8 @@ local syncJoypadRow
 -- B at the top / BACK / Escape: the main-menu column again, the controller's cursor on the PZ OPTIMIZATION item
 function PzoptMainMenu:close(why)
     local ms = MainScreen.instance
+    if self.colourPicker then self.colourPicker:removeSelf() self.colourPicker = nil end
+    pcall(function() getPerformance():releasePzoptGifs() end) -- the clips' textures (decoded again on the next visit)
     self:setVisible(false)
     if self.parent then self.parent:removeChild(self) end
     if ms then
@@ -2645,7 +3379,6 @@ function PzoptMainMenu.show(restore)
         ms:addChild(s)
         ms.pzoptMenuScreen = s
     end
-    s.settingsOpen = false
     s:setVisible(true)
     s:bringToTop()
     if ms.bottomPanel then ms.bottomPanel:setVisible(false) end
@@ -2673,11 +3406,6 @@ end
 local function screenTick(ms)
     local s = ms.pzoptMenuScreen
     if not s then return end
-    if s.settingsOpen then
-        if ms.mainOptions and ms.mainOptions:isVisible() then return end
-        PzoptMainMenu.show(s.returnTo)
-        return
-    end
     if not s:isVisible() then return end
     if ms.bottomPanel and ms.bottomPanel:isVisible() then ms.bottomPanel:setVisible(false) end
     if UIManager.isModalVisible() then return end
@@ -2858,6 +3586,10 @@ local function onEscape(ms)
         end
     end
     local s = ms.pzoptMenuScreen
+    if s and s:isVisible() and s.search and s.search:isFocused() then
+        s.search:unfocus()
+        return true
+    end
     if s and s:isVisible() then
         -- an Escape right after a controller press (a trigger: Steam's desktop controller layout can send it as a key) is
         -- that press, not the keyboard's: the controller's own button decides
@@ -2870,6 +3602,63 @@ local function onEscape(ms)
     end
     return false
 end
+
+-- devUninstallDrive (dev rig, Config key; harness/uninstall-e2e.sh): once the main menu is up, the real controls in order:
+-- the PZ OPTIMIZATION screen, its home page's Uninstall PZ Optimization... row, its UNINSTALL button, Yes. Each step is
+-- logged ("[pzopt-e2e] ...") and held a few seconds for the script's screenshot; Yes starts pzopt.Uninstall and quits.
+local uninstallDrive = { step = 0, at = 0 }
+local function uninstallDriveTick()
+    local d = uninstallDrive
+    if d.step < 0 then return end
+    if d.step == 0 then
+        local ok, v = pcall(function() return getPerformance():getPzoptOption("devUninstallDrive") end)
+        if not ok or v ~= "true" then d.step = -1 return end
+        d.step, d.at = 1, getTimestampMs() + 4000
+        return
+    end
+    if getTimestampMs() < d.at then return end
+    local ms = MainScreen.instance
+    if not ms or ms.inGame or not ms.pzoptMenuOption then return end
+    if d.step == 1 then
+        local s = PzoptMainMenu.show()
+        if not s then return end
+        s:selectNode("home", "master")
+        for i, it in ipairs(s.list.items) do if it.id == "uninstall" then s.list:setSelected(i) end end
+        s:showDetail()
+        local b = nil
+        for _, f in ipairs(s.actionButtons or {}) do if f.title == "UNINSTALL" then b = f end end
+        if not b then
+            print("[pzopt-e2e] uninstall drive: no UNINSTALL button on the screen's home page (" .. tostring(s.lastDesc) .. ")")
+            d.step = -1
+            return
+        end
+        d.button = b
+        print("[pzopt-e2e] screen shown: button \"" .. tostring(b.title) .. "\" enabled=" .. tostring(b.enable) .. " visible="
+            .. tostring(b:isReallyVisible()) .. " detail=" .. tostring(s.lastDesc))
+        getCore():TakeFullScreenshot("pzopt-e2e-A-screen.png")
+        d.step, d.at = 2, getTimestampMs() + 3000
+    elseif d.step == 2 then
+        d.button:forceClick()
+        d.step, d.at = 3, getTimestampMs() + 1500
+    elseif d.step == 3 then
+        local s = PzoptMainMenu.instance()
+        local m = s and s.confirmModal
+        if not m then
+            print("[pzopt-e2e] uninstall drive: the button opened no dialog")
+            d.step = -1
+            return
+        end
+        print("[pzopt-e2e] dialog shown: " .. string.gsub(tostring(m.text), "\n", " | "))
+        getCore():TakeFullScreenshot("pzopt-e2e-A-dialog.png")
+        d.step, d.at = 4, getTimestampMs() + 3000
+    elseif d.step == 4 then
+        local m = PzoptMainMenu.instance().confirmModal
+        d.step = -1
+        print("[pzopt-e2e] pressing Yes at " .. getTimestampMs())
+        m:onClick(m.yes)
+    end
+end
+Events.OnFETick.Add(function() pcall(uninstallDriveTick) end)
 
 local function install()
     if not MainScreen or MainScreen.pzoptMenuItem then return end
@@ -2918,6 +3707,10 @@ local function install()
     end
     local stockKeyRelease = MainScreen.onKeyRelease
     function MainScreen:onKeyRelease(key, ...)
+        if key == Keyboard.KEY_F and isCtrlKeyDown() and self.pzoptMenuScreen and self.pzoptMenuScreen:isVisible() then
+            self.pzoptMenuScreen:focusSearch()
+            return
+        end
         if key == Keyboard.KEY_ESCAPE and not self.inGame and not UIManager.isModalVisible() then
             local okEsc, done = pcall(onEscape, self)
             if okEsc and done then return end
@@ -2962,6 +3755,12 @@ local function install()
         Events.OnKeyPressed.Remove(stockToggle)
         Events.OnKeyPressed.Add(toggle)
     end
+    -- Ctrl+F in a game (the pause menu's screen: MainScreen.onKeyRelease is the main menu's)
+    Events.OnKeyPressed.Add(function(key)
+        local ms = MainScreen.instance
+        local s = ms and ms.inGame and ms.pzoptMenuScreen
+        if key == Keyboard.KEY_F and isCtrlKeyDown() and s and s:isVisible() then pcall(function() s:focusSearch() end) end
+    end)
 end
 
 install()

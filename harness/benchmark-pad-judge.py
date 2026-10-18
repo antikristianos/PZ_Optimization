@@ -18,10 +18,10 @@ from pathlib import Path
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-PRESS = re.compile(r"press (\S+) -> focus=(\S+) row=(\d+) col=(\d+) el=(.*?)(?: list=(\S+))?(?: option=(\S+))?(?: scroll=(\S+))?(?: value=(\S+))?(?: page=(\S+))? open=(\S+)(?: modal=(\S+))?$")
-SCREENS = ["MainScreen", "PzoptMainMenu", "ISPanelJoypad", "ISTextBox", "ISModalDialog"]  # the column, the PZ Optimization screen, Options' tab page, the share-code box
-PAGES = ["home", "perf", "perf/drive", "perf/drive/1", "vis", "bench", "bench/setup", "bench/history", "bench/compare", "bench/report",
-         "update", "compat"]
+PRESS = re.compile(r"press (\S+) -> focus=(\S+) row=(\d+) col=(\d+) el=(.*?)(?: list=(\S+))?(?: option=(\S+))?(?: scroll=(\S+))?(?: value=(\S+))?(?: page=(\S+))?(?: search=(\S+))?(?: text=(\S+))? open=(\S+)(?: modal=(\S+))?$")
+SCREENS = ["MainScreen", "PzoptMainMenu", "OnScreenKeyboardPanel", "ISTextBox", "ISModalDialog"]  # the column, the PZ Optimization screen, the on-screen keyboard of its search, the share-code box, confirms
+PAGES = ["home", "perf", "perf/drive", "perf/drive/1", "vis", "search", "problems", "problems/1", "bench", "bench/setup",
+         "bench/history", "bench/compare", "bench/report", "update", "compat"]
 
 
 def main():
@@ -91,14 +91,14 @@ def main():
         from typesafe_client import ask, choice, fmt, noul
         q = {
             "all_pages": noul("Did the pad reach every page of the PZ Optimization screen (`pages_missing` empty) and the other "
-                              "screens (`screens_reached` lists MainScreen, PzoptMainMenu, ISPanelJoypad for Options and ISTextBox "
-                              "for the share-code box)?"),
+                              "screens (`screens_reached` lists MainScreen, PzoptMainMenu, OnScreenKeyboardPanel for the search's "
+                              "on-screen keyboard, ISTextBox for the share-code box and ISModalDialog for the confirms)?"),
             "checks_pass": noul("Did every scripted check pass (`checks_failed` 0)?"),
             "buttons_reachable": noul("Does `controls_focused` show each page's rows and detail controls (the setup page: scenes, "
                                       "options, Passes, Between passes, Name, START BENCHMARK, PAST RESULTS; past results: OPEN, "
                                       "COMPARE, SET AS BASELINE, SHOW RESULTS FOLDER; the comparison: Only what differs; the report: "
-                                      "COPY SHARE CODE, COMPARE A CODE, PAST RESULTS; a setting: its control, DEFAULT, OPEN IN OPTIONS)?"),
-            "b_closes": noul("Did B go back each time (`b_closed` lists the share-code box, Options and the screen back to "
+                                      "COPY SHARE CODE, COMPARE A CODE, PAST RESULTS; a setting: its control, DEFAULT, SHOW CLIPS / HIDE CLIPS; the search: the keys typed on the on-screen keyboard, a result's OPEN ITS PAGE)?"),
+            "b_closes": noul("Did B go back each time (`b_closed` lists the share-code box, the on-screen keyboard, the confirms and the screen back to "
                              "MainScreen; B inside the screen moves between its pages, which `checks_ok` confirms)?"),
             "every_button": noul("Was every controller button pressed (`buttons_pressed` holds a, b, x, y, lb, rb, lt, rt, back, start, "
                                  "l3, r3, l3+r3 (the overlay chord), up, down, left, right, lsup, lsdown, rsup, rsdown), each press changing something or "

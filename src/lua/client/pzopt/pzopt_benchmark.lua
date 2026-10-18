@@ -483,6 +483,35 @@ local function readStops()
     for _, id in ipairs({ "perf", "perf/smooth", "perf/smooth/1", "vis", "vis/light", "tools", "tools/overlay/1", "bench", "update", "compat" }) do
         add("pzmenu-" .. id:gsub("/", "-"), function() PzoptMainMenu.instance():select(id) end)
     end
+    -- the pages the options tab had (2026-10-18): the home page's presets and tools, a category's own switch, Fix a problem,
+    -- the search's results, a setting's detail with the before / after clips, the zoom curve's numbers, the colour row
+    add("pzmenu-home-tools", function() PzoptMainMenu.instance():selectNode("home", "master", "uninstall") end)
+    add("pzmenu-perf-drive", function() PzoptMainMenu.instance():select("perf/drive") end)
+    add("pzmenu-problems", function() PzoptMainMenu.instance():select("problems") end)
+    add("pzmenu-problems-1", function() PzoptMainMenu.instance():select("problems/1") end)
+    add("pzmenu-search", function()
+        local m = PzoptMainMenu.instance()
+        m.search:setText("fog")
+        m:runSearch("fog")
+    end)
+    add("pzmenu-clips", function()
+        local m = PzoptMainMenu.instance()
+        m.search:setText("")
+        m:runSearch("")
+        if PzoptSettings then PzoptSettings.setClipsOn(true) end
+        m:openKey("vehicleSmooth")
+    end)
+    add("pzmenu-zoom-curve", function()
+        if PzoptSettings then PzoptSettings.setClipsOn(false) end
+        PzoptMainMenu.instance():openKey("zoomEase")
+    end)
+    add("pzmenu-colour", function() PzoptMainMenu.instance():openKey("occludedOutlineColour") end)
+    -- the impact chart draws only the resources a setting moves: two (fogScalePct), the most of any (chunkGridWidth, five),
+    -- none (vehicleSmooth: no chart, the controls right under the text)
+    add("pzmenu-chart-few", function() PzoptMainMenu.instance():openKey("fogScalePct") end)
+    add("pzmenu-chart-many", function() PzoptMainMenu.instance():openKey("chunkGridWidth") end)
+    add("pzmenu-chart-none", function() PzoptMainMenu.instance():openKey("vehicleSmooth") end)
+    add("pzmenu-view-simple", function() PzoptMainMenu.instance():setView(1) end)
     -- a next-launch setting changed: the restart prompt, then LATER (the reminder in the breadcrumbs' line), then back
     add("pzmenu-restart-prompt", function()
         local m = PzoptMainMenu.instance()
@@ -605,7 +634,8 @@ local pad = { last = nil, nextPoll = 0 }
 local function padName(el)
     if not el then return "-" end
     local function named(v) return v ~= nil and v ~= "" and v or nil end -- a tick box's title is "" (its label is its option)
-    local n = named(el.title) or named(el.name) or (el.options and named(el.options[el.joypadIndex or 1])) or el.Type or "?"
+    -- (the on-screen keyboard's letter keys draw their character: chLower)
+    local n = named(el.title) or named(el.name) or named(el.chLower) or (el.options and named(el.options[el.joypadIndex or 1])) or el.Type or "?"
     return tostring(n):gsub("%s+", " ")
 end
 
@@ -632,6 +662,11 @@ local function padTrace()
         end
         if f.Type == "PzoptMainMenu" then
             sel = sel .. " page=" .. tostring(f.selected) .. (f.help and "+help" or "") .. (f.prompt and "+prompt" or "")
+            if f.query and f.query ~= "" then sel = sel .. " search=" .. string.gsub(f.query, "%s+", "_") end
+        end
+        -- the game's on-screen keyboard (L3 in the PZ Optimization screen: its search box): what it holds so far
+        if (f.Type == "OnScreenKeyboardPanel" or f.Type == "OnScreenKeyboardEntry") and OnScreenKeyboard then
+            sel = sel .. " text=" .. string.gsub(tostring(OnScreenKeyboard.GetCurrentText() or ""), "%s+", "_")
         end
         -- a dialog whose D-pad scrolls its text (the update and compatibility pages): where the text is
         if (f.Type == "PzoptCompatDialog" or f.Type == "PzoptUpdateDialog") and f.text then

@@ -294,7 +294,7 @@ Shadowed classes: 139 game classes (names below without the leading `zombie.`) p
 
 The edited sources live under `src/overrides/` with every change marked `// pzopt:` and
 described in prose in [`docs/override-edits.md`](../override-edits.md); the new helper code
-is the `pzopt` package under `src/pzopt/`, the options tab and frame-cap Lua under `src/lua/`.
+is the `pzopt` package under `src/pzopt/`, the PZ OPTIMIZATION screen and frame-cap Lua under `src/lua/`.
 
 Safety rails:
 

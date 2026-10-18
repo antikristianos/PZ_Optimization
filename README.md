@@ -59,7 +59,7 @@ Runs: <a href="https://pzo.diegov.dev/d/pzopt-compare/compare?var-runs=daily-sto
 > - **Subscribing is not enough.** This replaces game classes; it needs the one-time install below.
 > - **Mods: untested, unsupported.** Other mods may work alongside it; nobody checks them and problems with them are not fixed.
 > - **Multiplayer: untested, unsupported.** It installs on your client only; joining a server may work, may not.
-> - Something wrong? Options > PZ Optimization > "Stock game" preset, restart, then tell us on [Discord](https://discord.gg/W32aAnKpK).
+> - Something wrong? main menu > PZ OPTIMIZATION > "Stock game" preset, restart, then tell us on [Discord](https://discord.gg/W32aAnKpK).
 
 <p align="center">
 <img src="docs/workshop/images/72-install-script.avif" width="49%" alt="2 minute install: subscribe, enable the mod, copy the command, paste it, quit, play">
@@ -70,7 +70,7 @@ Runs: <a href="https://pzo.diegov.dev/d/pzopt-compare/compare?var-runs=daily-sto
 2. Mods (main menu): enable **PZ_Optimization**; a window shows your install command.
 3. **Copy the command**, paste it into PowerShell (Windows) or a terminal (Linux, macOS), Enter.
 4. Quit the game; the installer copies the files when it has closed.
-5. Start the game, disable the mod again. Options has a new **PZ Optimization** tab.
+5. Start the game, disable the mod again. The main menu has a new **PZ OPTIMIZATION** item.
 
 No window? Windows (PowerShell):
 
@@ -148,7 +148,7 @@ the launcher's garbage collector and heap.</i>
 Updates arrive in the main menu (**PZ OPTIMIZATION > UPDATE**, one click; the item reads "UPDATE AVAILABLE" when one is offered). After a game update the next start removes a
 build made for the old version by itself (or installs the matching one from the Workshop item) and starts the game again.
 
-**To remove it:** Options > PZ Optimization > **Uninstall PZ Optimization**. Game does not start, or already
+**To remove it:** main menu > PZ OPTIMIZATION > **Uninstall PZ Optimization**. Game does not start, or already
 unsubscribed? Steam > Project Zomboid > Manage > **Browse local files**, double-click **Uninstall-PZ-Optimization.cmd**
 (Linux, macOS: `bash uninstall-pz-optimization.bash` there), or paste
 `irm https://github.com/xD3I/PZ_Optimization/releases/latest/download/uninstall.ps1 | iex` into PowerShell
@@ -162,7 +162,7 @@ Unsubscribing and "Verify integrity of game files" leave these files in the game
 | [Install guide](docs/guide/install.md) | requirements, the four install methods, checking that it loaded, uninstall, the updater, game updates |
 | [Benchmarks](docs/guide/benchmarks.md) | every scene on every machine (desktop, Windows, macOS, handheld, old laptop), the other mods, boot and load, frame pacing, latency, audio |
 | [Features](docs/guide/features.md) | every optimization and enhancement with its before / after card |
-| [Settings](docs/guide/settings.md) | the PZ Optimization tab, frame caps, upscaling and DLSS, the performance overlay, `pzopt.properties` |
+| [Settings](docs/guide/settings.md) | the PZ OPTIMIZATION screen, frame caps, upscaling and DLSS, the performance overlay, `pzopt.properties` |
 | [How it works](docs/guide/how-it-works.md) | what each optimization changes in the game, the install without touching the jar, what was measured and dropped |
 | [Limitations and roadmap](docs/guide/limitations.md) | what is not tested, known issues, what is next |
 | [Benchmark harness](docs/guide/harness.md) | the hands-off run rig, the run queue, Jev's verdicts, the repository layout |

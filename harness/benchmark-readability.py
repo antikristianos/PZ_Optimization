@@ -169,9 +169,12 @@ def main():
     if not a.no_jev:
         from typesafe_client import ask, choice, fmt, noul
         q = {
-            "tour_complete": noul("Did the tour reach every screen (`stops` at least 19, `screens` includes menu, pzmenu, pzmenu-perf, "
+            "tour_complete": noul("Did the tour reach every screen (`stops` at least 30, `screens` includes menu, pzmenu, pzmenu-perf, "
                                   "pzmenu-perf-smooth, pzmenu-perf-smooth-1, pzmenu-vis, pzmenu-vis-light, pzmenu-tools, pzmenu-bench, "
-                                  "pzmenu-update, pzmenu-compat, panel, history, runs, runs-all, report and report-code) with a screenshot "
+                                  "pzmenu-update, pzmenu-compat, pzmenu-home-tools, pzmenu-perf-drive, pzmenu-problems, pzmenu-problems-1, "
+                                  "pzmenu-search, pzmenu-clips, pzmenu-zoom-curve, pzmenu-colour, pzmenu-chart-few, pzmenu-chart-many, "
+                                  "pzmenu-chart-none, panel, history, runs, runs-all, "
+                                  "report and report-code; a tour over the pause menu has the ig- stops instead) with a screenshot "
                                   "per stop (`screenshots` equals `stops`)?"),
             "nothing_overflows": noul("Does every text stay inside the screen, its dialog and the box that clips it "
                                       "(`off_screen.total`, `outside_dialog.total` and `clipped_by_its_box.total` all 0)?"),

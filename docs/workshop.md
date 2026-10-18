@@ -301,7 +301,7 @@ steamcmd `item.vdf` route is gone (2026-09-24).
 
 - Nothing on the Workshop can write to the game folder; the install stays one command (the helper
   window, or `irm .../install.ps1 | iex` / `curl .../install.sh | bash`, which find the Workshop copy
-  in the game's library themselves). The uninstall is in the game (Options > Optimizations).
+  in the game's library themselves). The uninstall is in the game (main menu > PZ OPTIMIZATION > Uninstall PZ Optimization...).
 - The three Lua files under `pzopt-classes/media/lua/` are not loaded from the item (they are
   not under `42/media/`); they reach the game with the class files, as on the GitHub path.
 - A game update makes the runtime guard turn the classes off until a build for the new

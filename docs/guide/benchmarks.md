@@ -206,7 +206,7 @@ of their day (the tables above are current).
 (YouTube, 2 min, with sound). Same PC, same save, same routes: stock with every optimization
 off and the frame cap removed on the left, the same build with the overrides on and uncapped
 on the right. Six scenes in order: boot and load, the 120 km/h highway drive, the Options >
-Optimizations tab (now PZ Optimization > Performance), the spinning Rosewood route, heavy fog, a thunderstorm. The in-game
+Optimizations tab (now PZ OPTIMIZATION > Optimizations in the main menu), the spinning Rosewood route, heavy fog, a thunderstorm. The in-game
 overlay shows the live frame time; the big number is the 1 s average from its log, the
 results card at the end the whole-route numbers below.
 
@@ -293,7 +293,7 @@ Measured end to end: a virtual keyboard, mouse and Xbox pad (uinput) press, the 
 that put the frame on screen (X Present). Stock reads the keyboard one frame late (`GameKeyboard` used the previous
 poll), and every frame used input polled right after the previous frame was shown, however long the frame limiter then
 idled. Two fixes are on by default: **fresh keyboard** (`keyboardFresh`) and **input latch** (`inputLatch`: the game asks
-the render thread for a fresh poll the moment its frame starts). Three are options in Options > PZ Optimization > Performance > Smoothness and pacing > Input
+the render thread for a fresh poll the moment its frame starts). Three are options in PZ OPTIMIZATION > Optimizations > Smoothness and pacing > Input
 latency:
 
 - **Low-latency mode** (`reflexSleep` + `reflexCapFps=-1`): what NVIDIA Reflex does. Each frame measures how long it
@@ -306,7 +306,7 @@ latency:
   through NVML while a world is loaded, as Reflex's On + Boost does; the driver drops it when the game exits. ~28 W more
   at a 60 fps cap.
 - **Cursor latch**, **aim hold** and the other measured options (`cursorLatch`, `aimHoldMs`, `gpuMaxFrames`,
-  `vsyncAdaptive`, `vblankLock`) are described in the tab.
+  `vsyncAdaptive`, `vblankLock`) are described in the PZ OPTIMIZATION screen.
 
 NVIDIA Reflex itself is an SDK for Direct3D and Vulkan; there is none for OpenGL, which the game uses, so these are
 Reflex's methods rebuilt with OpenGL and NVML. Every run and the techniques that did not help (the driver's
@@ -337,7 +337,7 @@ the game's own per-frame stamps (`harness/pacing.py`):
   steady frames exactly on their slot at 60 fps, 84 % at 80 (M1 Pro). It adds ~10-15 ms of latency, hence opt-in.
 
 Windows (borderless already covers the screen there) and AMD FreeSync are not measured yet; on Windows set Variable
-refresh rate = on in Options > PZ Optimization > Performance > Smoothness and pacing. Every run: [docs/archive/2026-09-24/findings-vrr-2026-09-24.md](../archive/2026-09-24/findings-vrr-2026-09-24.md).
+refresh rate = on in PZ OPTIMIZATION > Optimizations > Smoothness and pacing. Every run: [docs/archive/2026-09-24/findings-vrr-2026-09-24.md](../archive/2026-09-24/findings-vrr-2026-09-24.md).
 
 ### Clear audio: no clipping under gunfire (2026-09-24)
 
@@ -361,7 +361,7 @@ twice a second; `harness/audio-judge.py` looks for cutoffs, gaps, dropouts, clic
   when a noise expired, and hearing is read once: sound code on the game thread 1.35 ms -> 0.24 ms a frame. FMOD's own
   threads stay at 0.1 of a core.
 
-All of them are in Options > PZ Optimization > Performance > System, sound and mods > Sound. Every run: [docs/findings-sound-2026-09-24.md](../findings-sound-2026-09-24.md).
+All of them are in PZ OPTIMIZATION > Optimizations > System, sound and mods > Sound. Every run: [docs/findings-sound-2026-09-24.md](../findings-sound-2026-09-24.md).
 
 ### Ambient occlusion at almost no cost (2026-09-24)
 
@@ -381,7 +381,7 @@ re-bakes reuse the kept AO. A frame that bakes nothing pays nothing, and so does
   tail: 220 fps, p99 14.2-14.8 ms with AO on against 218 fps, 14.2-14.7 ms off. The trade-off: when the game thread
   misses the cap (a fast drive at max zoom), new chunks get their AO a little late.
 
-Off by default because it changes the picture: Options > PZ Optimization > Visuals > Lighting and shadows > Ambient occlusion (strength on floors, walls, objects and vegetation, reach and detail
+Off by default because it changes the picture: PZ OPTIMIZATION > Enhancements > Lighting and shadows > Ambient occlusion (strength on floors, walls, objects and vegetation, reach and detail
 there too), applies on the next launch. Windows and Linux; macOS too since the OpenGL 4.1 core context (2026-10-01). Every
 run: [docs/findings-ambient-occlusion-2026-09-24.md](../findings-ambient-occlusion-2026-09-24.md).
 
@@ -411,7 +411,7 @@ a steady time after the game moment it shows, so frames leave the game evenly.
 | Laptop: 1 % low / p99 | 26 fps / 38.5 ms | 66 fps / 15.3 ms |
 
 The cost: present pacing adds ~1.7 ms from the game step to the screen on average (~2.6 ms on a typical frame, less
-than one 240 Hz frame; frames already late go out at once). Options > PZ Optimization > Performance > Smoothness and pacing > Even frame
+than one 240 Hz frame; frames already late go out at once). PZ OPTIMIZATION > Optimizations > Smoothness and pacing > Even frame
 delivery, `off` for stock timing. A second pass removed the chunk-load stalls (a trashed house's room scan, new chunks lit one per frame, occlusion
 counts on worker threads). The route is still not locked at 240. Every run, including the techniques measured and not
 adopted: [docs/findings-town-drive-2026-09-24.md](../findings-town-drive-2026-09-24.md).

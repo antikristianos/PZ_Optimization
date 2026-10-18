@@ -8,7 +8,7 @@ when the feature shipped, with its date: the numbers on a card are those of its 
 
 ## Optimizations
 
-On by default unless the card says otherwise; each one has its own switch in Options > PZ Optimization > Performance
+On by default unless the card says otherwise; each one has its own switch in PZ OPTIMIZATION > Optimizations
 ([Settings](settings.md)). How each works: [How it works](how-it-works.md).
 
 <p align="center">
@@ -49,7 +49,7 @@ On by default unless the card says otherwise; each one has its own switch in Opt
 
 ## Enhancements
 
-Modern graphics built for the game's own renderer, each **off by default**: Options > PZ Optimization > Visuals. Most
+Modern graphics built for the game's own renderer, each **off by default**: PZ OPTIMIZATION > Enhancements. Most
 cost a fraction of a millisecond a frame on the desktop
 ([`findings-enhancement-costs-2026-10-08.md`](../findings-enhancement-costs-2026-10-08.md)); the Visuals master switch
 turns them all off at once.

@@ -24,7 +24,7 @@
   hosting with the overrides installed has not been exercised. Do not install on a dedicated server.
 - **Fog pass (experimental).** With `fogPass` on (the default) power lines can flicker
   slightly in heavy fog while the camera moves; frame captures do not show it, the maintainer
-  does at 240 Hz. Untick "Fog drawn in one pass (experimental)" in the tab for stock fog.
+  does at 240 Hz. Untick "Fog drawn in one pass (experimental)" in PZ OPTIMIZATION > Optimizations > Lighting, cutaways and weather > Fog for stock fog.
 - **Carport roofs.** The per-frame roof toggle of a detached carport with zombies around is
   debounced, not understood; `--prop devCutawayLog=true` logs every decision.
 - **Four-core machines.** The recalc pool, the native lighting thread and the collector compete with the game thread

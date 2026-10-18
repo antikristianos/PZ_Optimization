@@ -8,7 +8,7 @@ import java.util.Locale;
  * Technique 24: what each Visuals feature costs on this PC, in one pass. The camera stands still at the Rosewood spot and
  * turns 120 degrees a second (one full turn per measured window, so every window sees the same views); every feature
  * that applies live (Config.isLive) is switched to its other state for a window between windows in the player's own
- * state, through Harness's live_set (what the options screen's Apply does). Each window: {@link #SETTLE_S} s unmeasured
+ * state, through Harness's live_set (what the PZ OPTIMIZATION screen does on a change). Each window: {@link #SETTLE_S} s unmeasured
  * (shader compiles, re-bakes), then {@link #MEASURE_S} s measured. The cost of a feature = its window's mean frame time
  * minus the mean of the two neighbouring base windows (drift cancels to first order), plus the GPU time the same way.
  * The player's options file is written by every switch: BenchPlan saves it before the run and the next process puts it

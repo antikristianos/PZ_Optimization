@@ -75,7 +75,7 @@ fi
 # Loose Lua under src/lua/ ships next to the classes: install copies build/classes/ onto the
 # game dir, so build/classes/media/lua/client/pzopt/*.lua lands in media/lua/client/pzopt/.
 if [[ -d "$SRC/lua" ]]; then
-  # the Optimizations tab's search index of which Java classes read each Config key
+  # the PZ OPTIMIZATION screen's search index of which Java classes read each Config key
   python3 "$REPO/scripts/option-classes.py"
   # ...and the release date of each key (the "Release date" sort), from the release tags
   python3 "$REPO/scripts/option-dates.py"
@@ -87,7 +87,7 @@ if [[ -d "$SRC/lua" ]]; then
   java -cp "$JAR" "$REPO/scripts/LuaDebugCompile.java" "${lua_files[@]}" \
     || { echo "LUA DEBUG COMPILE FAILED: split the function named above (scripts/LuaDebugCompile.java)" >&2; exit 1; }
 fi
-# Other loose media (src/media/ui/pzopt/compare/*.gif: the Optimizations tab's stock-vs-optimized clips,
+# Other loose media (src/media/ui/pzopt/compare/*.gif: the PZ OPTIMIZATION screen's stock-vs-optimized clips,
 # harness/menu-gifs.py) lands under the game dir's media/ the same way.
 if [[ -d "$SRC/media" ]]; then
   mkdir -p "$OUT/media"

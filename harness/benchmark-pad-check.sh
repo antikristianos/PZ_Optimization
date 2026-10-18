@@ -6,9 +6,10 @@
 # put back after; devBenchmarkUi=pad: every change of what the pad drives is a BENCHPAD line in console.txt). The script
 # reads that trace after each press and walks the PZ Optimization screen (pzopt_mainscreen_menu.lua: the sidebar tree,
 # breadcrumbs, list | detail; the trace's row is the sidebar row, 100 + the list row or 200 + the detail button): home
-# list, OPEN, B closes onto the item; the sidebar (a group opens its categories, a category its subcategories), a
-# category's page, a subcategory's settings, a setting's OPEN IN OPTIONS (Options on that page, B comes back), B up one
-# level at a time; Enhancements' page; the benchmark's pages, UPDATE, MOD COMPATIBILITY CHECK in the sidebar (each shows
+# list, OPEN, B closes onto the item; the search (L3: the on-screen keyboard, "fog" typed with the D-pad, RT accepts; a
+# result's page and back), a preset's confirm (No), Fix a problem and a problem's settings; the sidebar (a group opens its
+# categories, a category its subcategories), a category's page (its own switch first), a subcategory's settings, a
+# setting's chooser, DEFAULT and the before / after clips on and off, B up one level at a time; Enhancements' page; the benchmark's pages, UPDATE, MOD COMPATIBILITY CHECK in the sidebar (each shows
 # its page without taking the pad), the compatibility and update pages with the pad (B closes them; never A in the update
 # page: A there is "Update now"); the benchmark's setup page and from it every benchmark screen as before (setup rows and
 # buttons, Past results, the run comparison, the report and its code box), back up to home and the column. A is pressed
@@ -92,7 +93,8 @@ try() {
 # a confirm (it restarts, installs or opens a window outside the game) answered No
 confirm_no() { expect focus_is ISModalDialog; press b 1.0; expect focus_is PzoptMainMenu; }
 # the buttons every page shares, the cursor on its list: the left stick (the D-pad's moves), LT / RT (a page), the right
-# stick (the detail's text), View (sidebar <-> page), L3 (to the top), R3 (the help, R3 again closes it)
+# stick (the detail's text), View (sidebar <-> page), L3 (the search's on-screen keyboard, B closes it), R3 (the help, R3
+# again closes it)
 sweep() {
   try lsdown 0.8 "the end of the list"
   try lsup 0.8 "the top of the list"
@@ -102,11 +104,25 @@ sweep() {
   try rsup 0.9 "the detail's text fits its box"
   press back 0.6; expect side_is
   press back 0.6; expect row_is "1[0-9][0-9]"
-  try down 0.5 "a list of one row"; try l3 1.0 "already at the top"
+  press l3 1.2; expect focus_is OnScreenKeyboardPanel
+  press b 0.8; expect focus_is PzoptMainMenu
   press r3 1.0; expect sh -c "grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q 'page=[^ ]*+help '"
   press r3 0.8; expect sh -c "! grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q '+help '"
 }
 console_has() { grep -aq "$1" "$ZD/console.txt"; }
+# the game's on-screen keyboard: the D-pad to the key at row r, column c (rows: 1 the digits, 2 q..\, 3 Caps a..', 4 Shift
+# z../, as the trace's row= / col= count them), wherever the cursor started; then el must be that key
+osk_key() {
+  local tr=$1 tc=$2 ch=$3 r c
+  for _ in $(seq 1 30); do
+    read -r r c < <(last | sed -n 's/.* row=\([0-9]*\) col=\([0-9]*\) .*/\1 \2/p')
+    [[ -z "$r" ]] && break
+    if [[ "$r" == "$tr" && "$c" == "$tc" ]]; then break; fi
+    if (( r < tr )); then press down 0.35; elif (( r > tr )); then press up 0.35
+    elif (( c < tc )); then press right 0.35; else press left 0.35; fi
+  done
+  expect el_is "$ch"
+}
 count_of() { grep -ac "$1" "$ZD/console.txt"; }
 
 # an update offered (--prop devUpdateOffer=true): the item says so and opens the UPDATE page itself; never A on UPDATE NOW
@@ -151,6 +167,32 @@ press down 0.5; expect el_is "Enhancements"   # off the top, so an L3 alone woul
 chord_l3r3; expect sh -c "grep -a '$OVL' '$ZD/console.txt' | tail -1 | grep -q 'shown'"
 chord_l3r3; expect sh -c "grep -a '$OVL' '$ZD/console.txt' | tail -1 | grep -q 'hidden'"
 press up 0.5; expect el_is "Optimizations"
+# L3: the search box takes the game's on-screen keyboard; "fog" typed with the D-pad and A, RT (released) accepts: the
+# results page, Y = OPEN ITS PAGE (the setting on its own page), B back to the results, B again home (the box emptied)
+press l3 1.2; expect focus_is OnScreenKeyboardPanel
+osk_key 3 5 f; press a 0.5
+osk_key 2 9 o; press a 0.5
+osk_key 3 6 g; press a 0.5
+expect sh -c "grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q 'text=fog '"
+press rt 1.5
+expect focus_is PzoptMainMenu; expect page_is search
+expect sh -c "grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q ' search=fog '"
+expect row_is 101
+press y 1.0; expect sh -c "grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q 'page=\(perf\|vis\|tools\)/'"
+expect console_has "menu: opened [a-zA-Z]* on "
+press b 0.8; expect page_is search
+press b 0.8; expect page_is home
+expect sh -c "! grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q ' search='"
+# the home page's presets (Y applies, after a confirm: No here) and Fix a problem (a problem's page: its settings)
+walk down "Recommended (every optimization on)" 14; expect el_is "Recommended (every optimization on)"
+press y 1.0; confirm_no
+walk down "Fix a problem" 8; expect el_is "Fix a problem"
+press_a_on "Fix a problem" 0.8; expect page_is problems
+press_a_on "Stutter while driving" 0.8; expect page_is problems/1
+expect el_is "Vehicles drawn between physics steps"
+press b 0.6; expect page_is problems; expect el_is "Stutter while driving"
+press b 0.6; expect page_is home; expect el_is "Fix a problem"
+walk up "Optimizations" 24; expect el_is "Optimizations"
 press rb 0.8; expect page_is perf   # the sections: RB the next one, LB back
 press lb 0.8; expect page_is home
 walk up "Optimizations" 6
@@ -169,8 +211,10 @@ press left 0.6; expect el_is "OPTIMIZATIONS"; expect page_is perf
 press down 0.5; expect el_is "Smoothness and pacing"
 press down 0.5; expect el_is "Frame pacing"
 walk down "Driving" 6; expect el_is "Driving"; expect page_is perf/drive
-# a category's page: its subcategories; A opens one: its settings, each editable in its detail
-press right 0.6; expect el_is "Car smoothness"
+# a category's page: its own switch first (never A on it here), its subcategories; A opens one: its settings, each editable
+# in its detail
+press right 0.6; expect el_is "Driving enabled"
+press down 0.5; expect el_is "Car smoothness"
 press_a_on "Car smoothness" 0.8; expect page_is perf/drive/1
 expect row_is 101
 sweep
@@ -189,11 +233,10 @@ press x 0.8   # DEFAULT (the detail's X)
 expect sh -c "[ \$(grep -ac '\[pzopt\] menu: [a-zA-Z]* -> ' '$ZD/console.txt') -ge $((n0 + 2)) ]"
 expect console_has "menu: vehicleSmooth -> (default)"
 press down 0.5; expect el_is "DEFAULT"
-press right 0.5; expect el_is "OPEN IN OPTIONS"
-press_a_on "OPEN IN OPTIONS" 3.0; expect sh -c "! grep -a BENCHPAD '$ZD/console.txt' | tail -1 | grep -q '^focus=\(PzoptMainMenu\|MainScreen\) '"
-expect console_has "menu: settings opened on the .* tab, drive/1"
-press b 1.5; expect focus_is PzoptMainMenu
-expect el_is "OPEN IN OPTIONS"
+# the before / after clips (saved at once, the run's own empty options file): on, then off again
+press right 0.5; expect el_is "SHOW CLIPS"
+press_a_on "SHOW CLIPS" 1.5; expect console_has "menu: before / after clips on"; expect el_is "HIDE CLIPS"
+press_a_on "HIDE CLIPS" 1.0; expect console_has "menu: before / after clips off"; expect el_is "SHOW CLIPS"
 press b 0.5; expect row_is 101
 # B goes up a level each time: the category (on Car smoothness), the group (on Driving), home (on Optimizations)
 press b 0.6; expect el_is "Car smoothness"

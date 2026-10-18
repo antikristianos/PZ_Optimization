@@ -27,6 +27,11 @@ import java.util.Properties;
  *                            pixelLight / reflections pick at start-up (default true)
  *   profilerEnabled true/false  the Profiler tab's master switch: false reads overlaySampling, overlay and overlayLog as
  *                            false (no overlay, samplers or frame log; harness runs still measure). Live (default true)
+ *   cat<Category>Enabled true/false  a category's master switch (2026-10-16), one per category of the PZ Optimization tab
+ *                            (PERFORMANCE_CATEGORY_MASTERS: catSmooth / Drive / World / Weather / Zombies / Load / Ui / System,
+ *                            next launch; VISUALS_CATEGORY_MASTERS: catImage / Light / Refl / Atmos, live). false reads the
+ *                            category's keys listed in GATED at their stock value (Visuals: off), like the tab masters; the
+ *                            Tools category's switch is profilerEnabled (default true)
  *   consoleLog  all|warnings|errors|off  which [pzopt] lines reach console.txt / the debug console (pzopt.Log): all, only
  *                            warnings and errors, only errors, or none, so other mods' output stays readable (2026-10-01,
  *                            a player's request). Not tied to profilerEnabled. Live; harness runs pin it to all (default all)
@@ -382,11 +387,21 @@ public final class Config {
    private static final java.util.HashSet<String> LIVE = new java.util.HashSet<>();
    private static boolean loadingLive;
    /**
-    * The Enhancements and Profiler tabs' master switches (2026-09-28): key -> {master, value while the master is off}.
-    * Off, these keys read as their off value unless -D or pzopt.properties pins them (harness runs keep their props);
-    * the player's own choices stay in options.ini for when the master is on again. Declared before the first read.
+    * The Enhancements and Profiler tabs' master switches (2026-09-28) and the category ones (2026-10-16): key -> {value
+    * while a master is off, its masters...}. Off, these keys read as their off value unless -D or pzopt.properties pins
+    * them (harness runs keep their props); the player's own choices stay in options.ini for when the master is on again.
+    * Declared before the first read.
     */
    private static final java.util.Map<String, String[]> GATED = gated();
+   /**
+    * The category master switches of the PZ Optimization tab (2026-10-16), one per category of
+    * pzopt_optimizations_layout.lua (its {@code master} field; the Tools group has one category, its switch is
+    * profilerEnabled). The Performance ones apply on the next launch, the Visuals ones at once (registered in loadLive).
+    * Declared before the first read (the static block after ENABLED registers the Performance ones).
+    */
+   static final String[] PERFORMANCE_CATEGORY_MASTERS = {"catSmoothEnabled", "catDriveEnabled", "catWorldEnabled",
+      "catWeatherEnabled", "catZombiesEnabled", "catLoadEnabled", "catUiEnabled", "catSystemEnabled"};
+   static final String[] VISUALS_CATEGORY_MASTERS = {"catImageEnabled", "catLightEnabled", "catReflEnabled", "catAtmosEnabled"};
    private static final Properties props = load();
    /** The player's Options > Optimizations choices (Zomboid/pzopt/options.ini), below props and -D. */
    private static final Properties userProps = UserOptions.load();
@@ -400,6 +415,13 @@ public final class Config {
    private static final Properties compatProps = ModCompat.scan(upper("modCompat") != null ? upper("modCompat") : MOD_COMPAT_DEFAULT);
    /** Master switch, read by {@link Overrides#enabled()}; false = stock behaviour everywhere. */
    public static final boolean ENABLED = bool("enabled", true);
+
+   static {
+      for (String master : PERFORMANCE_CATEGORY_MASTERS) {
+         bool(master, true); // registered for the options tab; read through raw() by the keys it gates (GATED)
+      }
+   }
+
    public static final boolean PARALLEL = bool("parallel", true);
    public static final int WORKERS = clampWorkers(integer("workers", defaultWorkers(Runtime.getRuntime().availableProcessors())));
    public static final boolean INSTRUMENT = bool("instrument", false);
@@ -2122,6 +2144,9 @@ public final class Config {
       // the two tabs' master switches (2026-09-28): off, their feature keys read as off (GATED, raw)
       ENHANCEMENTS_ENABLED = bool("enhancementsEnabled", true);
       PROFILER_ENABLED = bool("profilerEnabled", true);
+      for (String master : VISUALS_CATEGORY_MASTERS) {
+         bool(master, true); // live like enhancementsEnabled
+      }
       // The Enhancements tab's keys (2026-09-25): upscaling, the HDR sliders (not hdr / hdrAuto: on Linux they pick the
       // window the game starts with), ambient occlusion; pzopt.Enhancements applies a change (UserOptions.set)
       UPSCALER = string("upscaler", "off").trim().toLowerCase(java.util.Locale.ROOT);
@@ -2366,8 +2391,12 @@ public final class Config {
          return v;
       }
       String[] gate = GATED.get(key);
-      if (gate != null && !masterOn(gate[0])) {
-         return gate[1];
+      if (gate != null) {
+         for (int i = 1; i < gate.length; i++) {
+            if (!masterOn(gate[i])) {
+               return gate[0];
+            }
+         }
       }
       v = userProps.getProperty(key);
       return v != null ? v : compatProps.getProperty(key);
@@ -2382,7 +2411,7 @@ public final class Config {
       return v != null ? v : userProps.getProperty(key);
    }
 
-   /** A tab master switch (enhancementsEnabled / profilerEnabled), read through the usual order; on unless "false". */
+   /** A master switch (a group's or a category's), read through the usual order; on unless "false". */
    private static boolean masterOn(String master) {
       String v = raw(master);
       return v == null || !v.trim().equalsIgnoreCase("false");
@@ -2398,27 +2427,110 @@ public final class Config {
             "torchSource", "false", "mirrors", "false", "voxelLight", "false"},
          // everything that makes the overlay measure or show (Overlay.configure; harness runs still measure)
          {"profilerEnabled", "overlaySampling", "false", "overlay", "false", "overlayLog", "false"},
+         // The Visuals categories: the same feature switches, by category (a key is off when either switch is off)
+         {"catImageEnabled", "upscaler", "off", "dynRes", "false", "spriteFilter", "stock", "hdr", "false", "hdrAuto", "false"},
+         {"catLightEnabled", "pixelLight", "false", "torchSource", "false", "sunShadows", "false", "ambientOcclusion", "false", "godRays", "false", "voxelLight", "false"},
+         {"catReflEnabled", "reflections", "false", "ripples", "false", "mirrors", "false", "carGlass", "false", "bloodWet", "false"},
+         {"catAtmosEnabled", "darknessFloorPct", "0", "memoryTint", "false", "colorGrading", "false", "foliageSway", "false", "relief", "false",
+            "occludedZombieOutlines", "false"},
+         // The Performance categories: each key at its stock value (the tab's "off = stock" / "0 = stock" entries). Left
+         // out: tuning numbers of a gated switch (inert once it is off), the worker pools shared across categories
+         // (parallel, workers, loadWorkers, frameThreads, charDrawThreads, fileThreads), guards against races and stock
+         // crashes (guardedCallbacks, modelLockPerInstance, entityUpdateSafeStates, ragdollCorpseGuard, ragdollQuitSweep,
+         // luaWorkerGate), and what is not an optimization (mod compatibility, the multiplayer checksum, updates, the
+         // garbage collector's launcher settings).
+         {"catSmoothEnabled", "presentPacing", "off", "limiterSleep", "false", "frameClockSmooth", "false", "borderlessFullscreen", "false",
+            "vrr", "off", "vrrCap", "false", "macGlCore", "false", "macPresent", "off", "inputLatch", "false", "keyboardFresh", "false",
+            "reflexSleep", "false", "reflexBoost", "false", "reflexCapFps", "0", "vblankLock", "false", "gpuMaxFrames", "0",
+            "frameStartGate", "false", "vsyncAdaptive", "false", "cursorLatch", "false", "aimHoldMs", "150",
+            "frameQueue", "false"},
+         {"catDriveEnabled", "vehicleSmooth", "off", "driveCameraLate", "false", "driveLookSmooth", "false", "cameraScreenPixels", "false",
+            "physicsStepHz", "100", "physicsStepMode", "fixed", "wake", "false", "chunkHandoffDivisor", "0", "hotsaveStaged", "false",
+            "hotsaveIntervalSec", "0", "chunkGridWidth", "0", "driveTreeCutaway", "true", "treeRebakeLazy", "false", "treeCutawayReach", "false",
+            "handoffRecalcFast", "false", "propIdCache", "false", "slackWork", "false"},
+         {"catWorldEnabled", "treesInChunkTexture", "false", "treeBakePass", "false", "treeAppend", "false", "windowsInChunkTexture", "false",
+            "translucentTilesInChunkTexture", "false", "windSpriteSway", "false", "curtainDepthNudgePct", "0", "bakeScheduler", "false",
+            "bakeBudgetAdaptive", "false", "occlusionGrantedOnly", "false", "bakeMipLevels", "0", "renderChunkTopUp", "0", "bakeBudget", "0",
+            "rebakeBudget", "0", "zoomRetain", "false", "zoomEaseMs", "0", "bloodBake", "off", "bloodAppend", "false", "bloodFadeFix", "false",
+            "bloodRebakeCoalesceMs", "0", "fliesToggleFix", "false", "persistentVbo", "false", "persistentVboSlots", "1", "vboBatchKb", "4",
+            "vboFastQuads", "false",
+            "bakeNoSync", "false"},
+         {"catWeatherEnabled", "lightInfoChunkGate", "false", "lightInfoOncePerFrame", "false", "lightSwitchCheckFrames", "0",
+            "visBlurReduce", "false", "lightingBudget", "0", "lightingRebakeMs", "0", "losLightPrefetch", "false", "cutawayFast", "false",
+            "roofHideDebounceFrames", "0", "cutawayRadius", "0", "cutawayVisitPrefilter", "false", "cutawayInvalidateChanged", "false",
+            "gridStackInterval", "0", "occlusionSkipLightingOnly", "false", "visPolyAsync", "false", "translucentOrderCache", "false",
+            "fogPass", "false", "weatherMaskIdleSkip", "false", "weatherFxScalePct", "100", "rainTiles", "false", "puddleCache", "false",
+            "rainSplashesFast", "false", "puddleEarlyZ", "false", "puddleVbo", "false"},
+         {"catZombiesEnabled", "animBonesParallel", "false", "actionEvalParallel", "false", "charDrawPrep", "false", "animatorParallel", "false",
+            "headOnWorker", "false", "animatorPipeline", "false", "animBatchAsync", "false", "lightingReadParallel", "false",
+            "separateParallel", "false", "skinTransformsPrecompute", "false", "skinPalettePrecompute", "false", "shadowPrep", "false",
+            "aoContextParallel", "false", "playerLosFast", "false", "ecsLookupFast", "false", "actionConditionFast", "false",
+            "zombieCullSortFast", "false", "vehicleCull", "false", "zombieSpotFast", "false", "zombieAtlasFast", "false", "separateFast", "false",
+            "edgeTestFast", "false", "sleepCheckMemo", "false", "stateParamMemo", "false", "actionGroupCache", "false", "boneIndexCache", "false",
+            "lazyPose", "false", "poolStatsBatched", "false", "actionSnapshotFilter", "false", "emitterParamSkip", "false",
+            "profilerThreadMemo", "false", "zombieLodDynamic", "false", "zombieSimLodTiles", "0", "zombieCheckSpread", "0",
+            "entityUpdateParallel", "false", "entityUpdatePipeline", "false", "emitterDefer", "false", "physicsDefer", "false",
+            "animalLosFast", "false", "renderPrepParallel", "false", "pplPackParallel", "false", "pplTorchNearChunk", "false",
+            "schedulerClassifyParallel", "false", "zombieStatsFold", "false",
+            "postupdateParallel", "false", "randPerWorker", "false", "playerLosParallel", "false", "schedulerFillParallel", "false",
+            "lookupMemo", "false", "nearVehicleGrid", "false", "renderLastFast", "false", "separateEdgeCache", "false", "luaSilentSkip", "false",
+            "ragdollGate", "false", "bodyModelCache", "false", "hordeBatch", "off", "atlasBatch", "false", "renderPrewarm", "false",
+            "bodyAtlasPrewarm", "false", "zombieLodSpriteLight", "0", "zombieFirstSightSprite", "false", "zombieSpawnSpread", "false",
+            "burstGovernor", "false"},
+         {"catLoadEnabled", "noLoadingScreen", "false", "resumeShot", "false", "centerFirstLoad", "false", "noLoadFade", "false",
+            "noIntroWait", "false", "noClickToStart", "false", "aotCache", "false", "fmodAsync", "false", "preloadAnimSets", "false",
+            "bootPump", "false", "earlyModels", "false", "luaPrecompile", "false", "animClipCache", "false", "packIndex", "false",
+            "scriptParserFast", "false", "itemParamSwitch", "false", "earlyTilePacks", "false", "parallelDepthMaps", "false",
+            "loaderCpuFixes", "false", "shaderCache", "false", "shaderWarmup", "false", "mipmapArrays", "false", "tileDefPreload", "false",
+            "skipIdChecks", "false", "voronoiFast", "false", "texCompress", "driver", "textureBufferMb", "50"},
+         {"catUiEnabled", "uiRetained", "false", "uiRetainedChildren", "false", "uiTickStagger", "false", "uiLuaFast", "false",
+            "hotsaveWarmup", "false", "mapStreetCache", "false", "mapStreetMemo", "false", "mapVisitedFast", "false", "luaIndexCache", "false",
+            "luaInternConstants", "false", "luaSkipEmpty", "false"},
+         {"catSystemEnabled", "corePlacement", "off", "gpuPstate", "off", "jitSteady", "false", "lightingSyncPark", "false",
+            "audioLimiter", "false", "soundTickHz", "0", "emitterIdleSkip", "false", "worldSoundCleanupFast", "false", "hearingHoist", "false",
+            "soundZoneCache", "false", "worldSoundFast", "false",
+            "workerQosMac", "utility"},
       };
+      // key -> {value while a master is off, its masters...}
       for (String[] g : groups) {
          for (int i = 1; i < g.length; i += 2) {
-            m.put(g[i], new String[] {g[0], g[i + 1]});
+            String[] gate = m.get(g[i]);
+            if (gate == null) {
+               m.put(g[i], new String[] {g[i + 1], g[0]});
+            } else if (!gate[0].equals(g[i + 1])) {
+               throw new IllegalStateException("gated key " + g[i] + ": " + gate[0] + " under " + gate[1] + ", " + g[i + 1] + " under " + g[0]);
+            } else {
+               String[] more = java.util.Arrays.copyOf(gate, gate.length + 1);
+               more[gate.length] = g[0];
+               m.put(g[i], more);
+            }
          }
       }
       return m;
    }
 
-   /** The keys a tab master switch turns off, or null when {@code key} is not one. */
+   /** The keys a master switch (a group's or a category's) turns off, or null when {@code key} is not one. */
    static java.util.List<String> gatedBy(String key) {
       java.util.List<String> keys = null;
       for (java.util.Map.Entry<String, String[]> e : GATED.entrySet()) {
-         if (e.getValue()[0].equals(key)) {
-            if (keys == null) {
-               keys = new java.util.ArrayList<>();
+         String[] gate = e.getValue();
+         for (int i = 1; i < gate.length; i++) {
+            if (gate[i].equals(key)) {
+               if (keys == null) {
+                  keys = new java.util.ArrayList<>();
+               }
+               keys.add(e.getKey());
+               break;
             }
-            keys.add(e.getKey());
          }
       }
       return keys;
+   }
+
+   /** The value a gated key reads while one of its masters is off (tests), or null when no master gates it. */
+   static String gatedValue(String key) {
+      String[] gate = GATED.get(key);
+      return gate == null ? null : gate[0];
    }
 
    private static <T> T register(String key, T effective, T def) {
