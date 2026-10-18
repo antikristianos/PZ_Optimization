@@ -527,6 +527,7 @@ public final class Scene {
       ThumpRig.tick(p, nowNs); // thump=N: zombies thumping a door off-screen (the thump-burst repro)
       CarGlassRig.tick(p, nowNs); // car_rig=N: a ring of parked cars around the player (the car glass rig)
       GateRig.tick(p, nowNs); // gate=auto|place: the double gate toggled / everything re-baked in turn
+      DoorRig.tick(p, nowNs); // find=sundoor: the sunlit door toggled open / closed
       CarSiege.tick(p, nowNs); // siege=N: zombies around the player's parked car (the "crowd the car, never attack" repro)
       BrawlRig.tick(p, nowNs); // brawl=N: hostile zombies round a visible player (the zombie behaviour check, 2026-10-13)
       MeleeRig.tick(p, nowNs); // melee=N: the player swings a melee weapon at standing zombies (the phasing repro, 2026-10-18)
@@ -694,6 +695,7 @@ public final class Scene {
    /** Reset the per-run counters (route start), so the strike cadence is counted from the route. */
    static void routeStart(long nowNs) {
       GateRig.routeStart(nowNs);
+      DoorRig.routeStart(nowNs);
       lastThunderNs = nowNs;
       thunderCount = 0;
       if (helicopter) {

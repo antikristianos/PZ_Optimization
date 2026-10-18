@@ -72,6 +72,9 @@ import zombie.vehicles.BaseVehicle;
  *   find     translucent dev: at route start list the Translucent-flagged objects within 16 tiles (sprite, class, depth
  *                      flags, the floor above); with find_box=x0,y0,x1,y1 every object in that box on levels 0-2, with its
  *                      attached and overlay sprites (gas canopy lights, 2026-09-28)
+ *   find     sundoor   dev (god rays through open doors, pzopt.DoorRig): the exterior door the key light comes in
+ *                      through, the player door_dist (3) squares into its room, the door toggled every door_toggle (3) s;
+ *                      door_cover=any also takes doors under a porch roof, door_at=x,y,z,N|W pins one
  *   upstairs Z         dev: at route start move the player to the nearest loaded indoor square at level Z (issue #12)
  *   upstairs_at S      dev: with upstairs, make that move S seconds into the route instead (a Stats mark "upstairs")
  *   pause_at S         dev: pause the game (speed 0, as the player's pause) S seconds into the route; the route stops too
@@ -653,6 +656,14 @@ public final class Harness {
                   int[] spot = GodRays.findSunWindow(p); // dev: god rays, into a room the light comes into through its windows
                   if (spot != null) {
                      x = spot[0] + 0.5F; // the route walks on from there (else its next teleport puts the player back)
+                     y = spot[1] + 0.5F;
+                     routeZ = spot[2];
+                  }
+               }
+               if ("sundoor".equals(HarnessFlags.get("find", ""))) {
+                  int[] spot = DoorRig.setup(p); // dev: god rays, a sunlit exterior door toggled open / closed, the player in its room
+                  if (spot != null) {
+                     x = spot[0] + 0.5F;
                      y = spot[1] + 0.5F;
                      routeZ = spot[2];
                   }
