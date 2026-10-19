@@ -187,6 +187,8 @@ public final class Benchmark {
             case "folder" -> BenchPlan.dir().getAbsolutePath();
             case "hud" -> hud();
             case "abort" -> abort(arg);
+            case "cancel" -> cancel();
+            case "isAuto" -> BenchPlan.option("auto") ? "1" : "0";
             case "reportShown" -> reportShown();
             case "auto" -> autoRequested();
             case "devUi" -> Config.DEV_BENCHMARK_UI;
@@ -298,6 +300,7 @@ public final class Benchmark {
       p.setProperty("attempts", "0");
       p.setProperty("mode", ab ? "ab" : "standard");
       p.setProperty("created_ms", Long.toString(System.currentTimeMillis()));
+      p.setProperty("build", BenchPlan.currentBuild()); // another build aborts the plan instead of resuming it
       for (String k : new String[] {"uncapped", "timedemo", "screenshot", "hud", "auto", "warmup"}) {
          p.setProperty(k, "1".equals(o.get(k)) ? "1" : "0");
       }
@@ -502,13 +505,23 @@ public final class Benchmark {
       if (p == null) {
          return "";
       }
-      p.setProperty("state", "aborted");
-      p.setProperty("abort_reason", why == null || why.isEmpty() ? "cancelled" : why);
-      BenchPlan.write(p);
-      BenchPlan.restoreLatestSave(p);
-      BenchPlan.restoreUserOptions(p);
-      BenchPlan.restoreFile(p, "game_options", new File(UserOptions.zomboidDir(), "options.ini"));
+      BenchPlan.abort(p, why);
       return "ok";
+   }
+
+   /**
+    * The player's stop during a pass's countdown at the main menu (Escape, a click or B; Workshop 2026-10-18: "how to stop
+    * benchmark in game"). The plan is aborted with its worlds and the player's files put back; this process is a pass
+    * (Harness flags and Config pins from the plan: it must not play on), so the Lua quits it and a restart follows
+    * ("restart"), or the player starts the game again by hand ("quit").
+    */
+   private static String cancel() {
+      String run = BenchPlan.abortRunning("stopped by the player");
+      if (run == null) {
+         return "";
+      }
+      passDone = true; // menu() answers quit from now on
+      return Restart.relaunch() ? "restart" : "quit";
    }
 
    private static String reportShown() {

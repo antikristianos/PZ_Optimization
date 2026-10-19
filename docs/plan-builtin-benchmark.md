@@ -99,6 +99,32 @@ Every technique that changes what a pass measures gets an A/B of its own, one te
 | 24 feature sweep | `sweep:2` | per-feature cost, repeatability between the two passes |
 | observer cost of the phase profile (25 Hz stack sampler) | `spin:5` vs `spin:5` + `gameThreadProfileHz=0` | fps against the CI |
 
+## Stopping a run (2026-10-19)
+
+Two Workshop comments on 2026-10-18 within twenty minutes: "I am in an endless benchmark bootloop. Everytime I start the
+game, it autostarts the benchmark. The benchmark doesn't fully load probably due to a mod conflict. [...] I uninstalled
+and then reinstalled but still the same" and "how to stop benchmark in game bruh, estimated 1hr to benchmark". The plan
+(`Zomboid/pzopt/benchmark/plan.properties`) is claimed at every start while its state is `running`; a pass process went
+straight from the countdown overlay into its world, read no key, and a world that could not load (a mod's error at
+world start) made every launch a pass: the crash guard skipped a step after two deaths and the next step died the same
+way (two launches per step of the plan), every claim refreshed `updated_ms` so the 20-minute stale rule never fired, and
+neither Uninstall nor BootRepair nor the installers look at `Zomboid/pzopt`, so a reinstall resumed the plan. Now:
+
+- **Esc, a mouse click or B** during the pass's countdown at the main menu stops the whole run (`Benchmark` "cancel" ->
+  `BenchPlan.abortRunning`: the plan aborted, the pass worlds deleted, `latestSave.ini` / the options files restored); the
+  process is a pass (Harness flags and Config pins from the plan) so it quits and `Restart` relaunches a normal game. Every
+  pass shows its countdown for at least `STOP_GRACE_S` (4) s with the hint line; unattended runs (`auto=1`) keep 0 s and
+  ignore input.
+- **Two deaths on one step abort the run**, not the step (`BenchPlan.MAX_ATTEMPTS`), with the failed pass on record
+  (`BenchResults.writeFailed`) and the player's files back at once.
+- **A claim no longer stamps the plan** (`BenchPlan.writeClaim`): a player relaunching a dying game does not keep the plan
+  fresh, so a plan untouched for 20 minutes is stale as documented.
+- **Another build aborts the plan** (`build=` key, the pzopt commit that planned it) instead of resuming it.
+- **Uninstall aborts a running plan** (`Uninstall.start`, with the restores: no pzopt process follows an uninstall) and
+  **BootRepair abandons one** (`BenchPlan.abandon`, plain file access before game code) when it removes or replaces the install.
+
+A player stuck on an old build: delete `plan.properties`, the next start is a normal game. `tests/pzopt/BenchPlanTest`.
+
 ## Status (2026-10-18)
 
 All 30 are implemented (classes: `src/CLAUDE.md` "Bench*"); measurements in `docs/findings-builtin-benchmark-2026-10-18.md`.

@@ -26,8 +26,12 @@ import java.util.Properties;
  * Keys: run (id), state (running | report | done | aborted), steps (scenario/config/pass,...; config A = PZ
  * Optimization as the player set it, B = stock, W = warm-up, not timed), step (next index), claim / claim_pid /
  * attempts (crash guard: a process that dies before advancing leaves its claim; the next one counts an attempt and
- * skips the step after {@link #MAX_ATTEMPTS}), options (uncapped, timedemo, cooldown, screenshot, hud, auto), updated_ms
- * (a plan untouched for {@link #STALE_MS} is abandoned, so a player who quit mid-run gets a normal game).
+ * aborts the whole run at {@link #MAX_ATTEMPTS}: a world that cannot load fails every step the same way, and skipping
+ * step by step was two launches per step with no way out, Workshop "endless benchmark bootloop" 2026-10-18), build (the
+ * pzopt commit that planned the run: another build aborts it), options (uncapped, timedemo, cooldown, screenshot, hud,
+ * auto), updated_ms (progress only, never a claim: a plan untouched for {@link #STALE_MS} is abandoned, so a player who
+ * quit mid-run gets a normal game). A running plan is also aborted by the player (Escape / a click / B during the pass's
+ * countdown at the main menu, Benchmark "cancel"), by Uninstall and by BootRepair ({@link #abandon}).
  */
 public final class BenchPlan {
    static final int MAX_ATTEMPTS = 2;
@@ -69,11 +73,25 @@ public final class BenchPlan {
       return p;
    }
 
-   /** Written whole beside the plan, then renamed over it: a crash mid-write never leaves half a plan. */
+   /** Written whole beside the plan, then renamed over it: a crash mid-write never leaves half a plan. Stamps progress. */
    static synchronized void write(Properties p) {
+      write(p, true);
+   }
+
+   /**
+    * A step's claim: written without the progress stamp, so a player relaunching a game that dies in every pass does
+    * not keep the plan fresh for the stale rule (the claim is the only write of a process that never got anywhere).
+    */
+   static synchronized void writeClaim(Properties p) {
+      write(p, false);
+   }
+
+   private static synchronized void write(Properties p, boolean progress) {
       File f = planFile();
       f.getParentFile().mkdirs();
-      p.setProperty("updated_ms", Long.toString(System.currentTimeMillis()));
+      if (progress || p.getProperty("updated_ms") == null) {
+         p.setProperty("updated_ms", Long.toString(System.currentTimeMillis()));
+      }
       File tmp = new File(f.getParentFile(), "plan.properties.tmp");
       try (OutputStream out = new FileOutputStream(tmp)) {
          p.store(out, "PZ Optimization built-in benchmark");
@@ -145,6 +163,14 @@ public final class BenchPlan {
          plan = p;
          return;
       }
+      String planned = p.getProperty("build", "");
+      String build = currentBuild();
+      if (!planned.isEmpty() && !build.isEmpty() && !planned.equals(build)) {
+         Log.warn("benchmark: plan " + p.getProperty("run") + " was made by build " + planned + ", this is " + build + "; abandoned");
+         abortNow(p, "the installed build changed (" + planned + " -> " + build + ")");
+         plan = p;
+         return;
+      }
       long updated = Long.parseLong(p.getProperty("updated_ms", "0"));
       if (System.currentTimeMillis() - updated > STALE_MS) {
          Log.warn("benchmark: plan " + p.getProperty("run") + " untouched for " + (System.currentTimeMillis() - updated) / 60000 + " min; abandoned");
@@ -166,9 +192,15 @@ public final class BenchPlan {
          attempts++;
          Log.warn("benchmark: step " + step + " did not finish in the last process (attempt " + attempts + ")");
          if (attempts >= MAX_ATTEMPTS) {
-            BenchResults.writeFailed(p.getProperty("run"), step, steps.get(step), "the game ended during this pass " + attempts + " times");
-            step++;
-            attempts = 0;
+            // the run, not the step: a world that cannot load (a mod, a crash) fails every step alike, and every launch
+            // would be another pass until the plan ran out (Workshop, 2026-10-18: "endless benchmark bootloop")
+            String why = "the game ended during pass " + (step + 1) + " of " + steps.size() + " (" + String.join("/", steps.get(step)) + ") "
+                  + attempts + " times in a row";
+            BenchResults.writeFailed(p.getProperty("run"), step, steps.get(step), why);
+            Log.warn("benchmark: run " + p.getProperty("run") + " abandoned: " + why + "; this is a normal game");
+            abortNow(p, why);
+            plan = p;
+            return;
          }
       } else {
          attempts = 0;
@@ -185,12 +217,97 @@ public final class BenchPlan {
       p.setProperty("claim", Integer.toString(step));
       p.setProperty("claim_pid", Long.toString(ProcessHandle.current().pid()));
       p.setProperty("attempts", Integer.toString(attempts));
-      write(p);
+      writeClaim(p);
       myStep = step;
       myParts = steps.get(step);
       plan = p;
       restoreAtExit(p); // a pass process only: the report process is the player's menu again, their changes there stay
       Log.info("benchmark: this process runs step " + step + " of " + steps.size() + ": " + String.join("/", myParts) + " (run " + p.getProperty("run") + ")");
+   }
+
+   /** The pzopt commit of this build, "" when unknown (a plan carries the one that made it). */
+   static String currentBuild() {
+      String c = BuildInfo.get("commit");
+      return c == null ? "" : c.trim();
+   }
+
+   /**
+    * Ends a run: the state, the reason, and the player's files back (latestSave.ini, their options file, the game's
+    * options.ini). The worlds of the passes go at the next normal start (the finished-uncleaned branch of decide).
+    */
+   static synchronized void abort(Properties p, String why) {
+      p.setProperty("state", "aborted");
+      p.setProperty("abort_reason", why == null || why.isEmpty() ? "cancelled" : why);
+      write(p);
+      restoreLatestSave(p);
+      restoreUserOptions(p);
+      restoreFile(p, "game_options", new File(UserOptions.zomboidDir(), "options.ini"));
+   }
+
+   /** abort, plus what the next start would otherwise do: the passes' worlds deleted, the plan marked cleaned. */
+   private static synchronized void abortNow(Properties p, String why) {
+      abort(p, why);
+      p.setProperty("cleaned", "1");
+      write(p);
+      deleteWorlds();
+   }
+
+   /**
+    * Aborts a running or unreported plan now, with its worlds: Uninstall (no pzopt process comes after it to clean up)
+    * and the player's cancel. Returns the aborted run's id, or null when nothing was running.
+    */
+   static synchronized String abortRunning(String why) {
+      Properties p = read();
+      String state = p.getProperty("state", "");
+      if (!"running".equals(state) && !"report".equals(state)) {
+         return null;
+      }
+      abortNow(p, why);
+      if (plan != null && plan != p) {
+         plan.setProperty("state", "aborted");
+      }
+      Log.info("benchmark: run " + p.getProperty("run") + " aborted: " + why);
+      return p.getProperty("run");
+   }
+
+   /**
+    * BootRepair's abandon (JDK only, before any game code; the folder given, not UserOptions): a running plan is marked
+    * aborted so the repaired or removed install never resumes a benchmark the player cannot stop. The player's files
+    * come back at the next pzopt start (finished-uncleaned branch); a stock game after a removal reads its own options.
+    * Returns a log line, or null when no plan was running.
+    */
+   static String abandon(File zomboidDir, String reason) {
+      File f = new File(zomboidDir, "pzopt" + File.separator + "benchmark" + File.separator + "plan.properties");
+      if (!f.isFile()) {
+         return null;
+      }
+      Properties p = new Properties();
+      try (InputStream in = new FileInputStream(f)) {
+         p.load(in);
+      } catch (IOException e) {
+         return "benchmark plan unreadable (" + e + ")";
+      }
+      String state = p.getProperty("state", "");
+      if (!"running".equals(state) && !"report".equals(state)) {
+         return null;
+      }
+      p.setProperty("state", "aborted");
+      p.setProperty("abort_reason", reason);
+      p.setProperty("updated_ms", Long.toString(System.currentTimeMillis()));
+      try (OutputStream out = new FileOutputStream(f)) {
+         p.store(out, "PZ Optimization built-in benchmark");
+      } catch (IOException e) {
+         return "benchmark plan " + p.getProperty("run") + " could not be marked aborted (" + e + ")";
+      }
+      return "benchmark run " + p.getProperty("run") + " was " + state + "; aborted (" + reason + ")";
+   }
+
+   /** Tests only: the next decide() reads the plan again. */
+   static synchronized void resetForTests() {
+      decided = false;
+      myStep = -1;
+      myParts = null;
+      plan = null;
    }
 
    /** True when this process runs a benchmark step. */

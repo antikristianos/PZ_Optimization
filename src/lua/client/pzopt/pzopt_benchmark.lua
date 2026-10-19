@@ -199,6 +199,23 @@ local function quitGame(why)
     getCore():quit()
 end
 
+-- Stopping a run (2026-10-19, Workshop "endless benchmark bootloop" / "how to stop benchmark in game"): every pass shows its
+-- countdown over the main menu for at least STOP_GRACE_S seconds, and Escape, a mouse click or the controller's B during it
+-- aborts the whole plan (Benchmark "cancel": the plan, the pass worlds and the player's files), then this process ends and
+-- the game restarts as a normal game (the process is a pass: Harness flags and pins from the plan). Unattended runs
+-- (benchmarkAuto, harness/benchmark-run.sh) are not stopped by input.
+local STOP_GRACE_S = 4
+local function wantsStop()
+    local ok, stop = pcall(function()
+        if isKeyDown(Keyboard.KEY_ESCAPE) then return true end
+        if isMouseButtonDown(0) then return true end
+        local jd = JoypadState.getMainMenuJoypad()
+        if jd and jd.id and jd.id >= 0 and jd:isBPressed() then return true end -- JoypadData.isBPressed: the pad's B now
+        return false
+    end)
+    return ok and stop == true
+end
+
 -- the readability rig's state and tour step (devBenchmarkUi=read), defined with the rig further down; menuTick runs it
 local read = { mode = nil, stop = 0, logging = false, name = "", nextLog = {} }
 local readTick
@@ -265,8 +282,10 @@ local function menuTick(self)
         local c = split(call("menu"), "\t")
         if c[1] == "world" then
             menu.world = c
-            menu.startAt = now + (tonumber(c[12]) or 0) * 1000
-            if (tonumber(c[12]) or 0) > 0 then print("[pzopt] benchmark: cooling down " .. c[12] .. " s before the pass") end
+            local cool = tonumber(c[12]) or 0
+            menu.auto = call("isAuto") == "1"
+            menu.startAt = now + math.max(cool, menu.auto and 0 or STOP_GRACE_S) * 1000
+            if cool > 0 then print("[pzopt] benchmark: cooling down " .. c[12] .. " s before the pass") end
         elseif c[1] == "quit" then
             quitGame("pass done")
         elseif c[1] == "report" then
@@ -285,6 +304,21 @@ local function menuTick(self)
             elseif dev == "restart" then menu.devRestart = { step = 0 }
             elseif dev == "pad" then read.padOn = true end
         end
+    end
+    if menu.stopped then
+        if now >= menu.stopped.at then
+            print("[pzopt] benchmark: stopped by the player; quitting" .. (menu.stopped.restart and " (the game restarts)" or ""))
+            menu.stopped.at = math.huge
+            getCore():quit()
+        end
+        return
+    end
+    if menu.world and not menu.auto and wantsStop() then
+        local r = call("cancel")
+        print("[pzopt] benchmark: stopped by the player during the countdown (" .. tostring(r) .. ")")
+        menu.world = nil
+        menu.stopped = { at = now + 1500, restart = r == "restart" }
+        return
     end
     if menu.world and now >= menu.startAt then
         -- the idle gate: other programs must leave the CPU alone first (pzopt.BenchIdle, at most 90 s)
@@ -702,10 +736,17 @@ end
 
 -- the cool-down screen between passes (technique 19) and the "starting" notice: drawn over the main menu
 local function menuOverlay(self)
+    local w, h = getCore():getScreenWidth(), getCore():getScreenHeight()
+    if menu.stopped then
+        self:drawRect(0, 0, w, h, 0.7, 0, 0, 0)
+        getTextManager():DrawStringCentre(UIFont.Large, w / 2, h / 2 - FONT_LARGE, "Benchmark stopped", 1, 1, 1, 1)
+        local line2 = menu.stopped.restart and "The game restarts as a normal game..." or "The game closes; start it again for a normal game."
+        getTextManager():DrawStringCentre(UIFont.Medium, w / 2, h / 2 + 4, line2, 0.8, 0.8, 0.8, 1)
+        return
+    end
     if not menu.world then return end
     local c = menu.world
     local left = math.max(0, math.ceil((menu.startAt - getTimestampMs()) / 1000))
-    local w, h = getCore():getScreenWidth(), getCore():getScreenHeight()
     self:drawRect(0, 0, w, h, 0.7, 0, 0, 0)
     local line1 = string.format("Benchmark pass %s of %s: %s (%s)", c[7], c[8], c[9], c[10])
     local line2 = left > 0 and string.format("Cooling down: %d s", left) or "Loading the benchmark world..."
@@ -716,6 +757,11 @@ local function menuOverlay(self)
     getTextManager():DrawStringCentre(UIFont.Medium, w / 2, h / 2 + 4, line2, 0.8, 0.8, 0.8, 1)
     readDirect("overlay", UIFont.Large, w / 2, h / 2 - FONT_LARGE, line1, "centre")
     readDirect("overlay", UIFont.Medium, w / 2, h / 2 + 4, line2, "centre")
+    if left > 0 and not menu.auto then
+        local line3 = "Esc, a click or (B) stops the benchmark"
+        getTextManager():DrawStringCentre(UIFont.Small, w / 2, h / 2 + 4 + FONT_MEDIUM + 8, line3, 0.65, 0.65, 0.65, 1)
+        readDirect("overlay", UIFont.Small, w / 2, h / 2 + 4 + FONT_MEDIUM + 8, line3, "centre")
+    end
 end
 
 -- ------------------------------------------------------------------ HUD during a pass (technique 26)
@@ -1220,7 +1266,7 @@ local function install()
     local stockRender = MainScreen.render
     function MainScreen:render(...)
         stockRender(self, ...)
-        if menu.world then pcall(menuOverlay, self) end
+        if menu.world or menu.stopped then pcall(menuOverlay, self) end
     end
 end
 
